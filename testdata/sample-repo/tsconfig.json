@@ -1,0 +1,14 @@
+{
+  // tsconfig sample — exercised by NeuroFS project-signal tests.
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "commonjs",
+    "strict": true,
+    "baseUrl": ".",
+    "paths": {
+      "@app/*": ["src/*"],
+      "@config/*": ["config/*"]
+    }
+  },
+  "include": ["src/**/*"]
+}

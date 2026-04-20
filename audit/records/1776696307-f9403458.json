@@ -1,0 +1,142 @@
+{
+  "question": "implement audit diff command to compare two audit records and print metric deltas in CLI",
+  "model": "claude-manual",
+  "timestamp": "2026-04-20T16:45:07.861289+02:00",
+  "bundle_hash": "f940345895c5e5539d624f5d580afbbc0f5128f1bac0d5d69ece68fbcfdeeace",
+  "fragments": [
+    {
+      "rel_path": "internal/cli/audit.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 228,
+      "content": "// file: internal/cli/audit.go\n// lang: go\n// representation: signature\n\n// import: context\n// import: encoding/json\n// import: fmt\n// import: os\n// import: path/filepath\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAuditCmd(...) { ... }\nfunc newAuditReplayCmd(...) { ... }\nfunc loadBundleJSON(...) { ... }\nfunc rebuildBundle(...) { ... }\nfunc parseFacts(...) { ... }\nfunc printReplaySummary(...) { ... }\nfunc printDriftList(...) { ... }\nfunc splitCitations(...) { ... }\nfunc writeJSON(...) { ... }\nfunc truncateLine(...) { ... }\nfunc minInt(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/stats.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 190,
+      "content": "// file: internal/cli/stats.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: path/filepath\n// import: sort\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/indexer\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newStatsCmd(...) { ... }\nfunc printLangBreakdown(...) { ... }\nfunc printTopBySymbols(...) { ... }\nfunc printAuditSummary(...) { ... }\nfunc humanBytes(...) { ... }\nfunc joinStrings(...) { ... }\nfunc humanSince(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/audit/types.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 79,
+      "content": "// file: internal/audit/types.go\n// lang: go\n// representation: signature\n\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/models\ntype Citation struct/interface { ... }\ntype DriftReport struct/interface { ... }\ntype AuditFragment struct/interface { ... }\ntype AuditRecord struct/interface { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/scan.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 84,
+      "content": "// file: internal/cli/scan.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/indexer\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newScanCmd(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/ask.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 159,
+      "content": "// file: internal/cli/ask.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: io\n// import: os\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAskCmd(...) { ... }\nfunc pctFloat(...) { ... }\nfunc writeExplain(...) { ... }\nfunc truncate(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/bench.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 96,
+      "content": "// file: internal/cli/bench.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: path/filepath\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/benchmark\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newBenchCmd(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/pack.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 186,
+      "content": "// file: internal/cli/pack.go\n// lang: go\n// representation: signature\n\n// import: encoding/json\n// import: fmt\n// import: os\n// import: path/filepath\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newPackCmd(...) { ... }\nfunc writeBundleJSON(...) { ... }\nfunc writeBundle(...) { ... }\nfunc effectiveFormat(...) { ... }\nfunc buildRepoSummary(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/root.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 32,
+      "content": "// file: internal/cli/root.go\n// lang: go\n// representation: signature\n\n// import: github.com/spf13/cobra\nfunc New(...) { ... }\n"
+    }
+  ],
+  "response": "### 1. Diseño técnico\n\n- **Función pura** `audit.DiffRecords(a, b AuditRecord) Diff` en `internal/audit/diff.go`. Sin I/O, fácil de testear.\n- **Struct `Diff`** con:\n  - Metadata: `SameBundle`, `SameQuestion`, `SameModel` (booleans para que el CLI decida si avisar).\n  - Scalar deltas: `GroundedDelta`, `DriftDelta`, `RecallDelta` (B − A), más `RecallApplies` para no mostrar recall cuando ninguno de los records tenía facts.\n  - Tres `SetDiff{Added, Removed}`: uno por bucket (`Paths`, `APIs`, `Symbols`). `Added = in B, not in A`; `Removed = in A, not in B`.\n- **Convención de signo**: positivos = B más alto que A. Así \"grounded +10%\" y \"drift -5%\" son ambas buenas noticias; el usuario interpreta por nombre, no por signo.\n- **CLI**: `neurofs audit diff \u003ca.json\u003e \u003cb.json\u003e` con `--json \u003cpath\u003e` opcional. Nueva subcomando colgado del parent `audit`. No toca `replay`.\n- **Bundle hash distinto** no es error — es exactamente el caso \"reindexé entre corridas\"; lo marcamos visible pero seguimos.\n\n### 2. Archivos a tocar\n- [internal/audit/diff.go](internal/audit/diff.go) — nuevo.\n- [internal/audit/diff_test.go](internal/audit/diff_test.go) — nuevo.\n- [internal/cli/audit.go](internal/cli/audit.go) — añadir `newAuditDiffCmd()` + `printDiffSummary()`; registrar bajo el parent.\n\n### 3. Código\n\nAhora el subcomando CLI.\n\nAll green. Ahora el demo: necesito un segundo record para diff. Reuso el bundle stemming y genero una segunda respuesta con menos alucinaciones.\n\n### 4. Cómo probarlo\n\n### 5. Ejemplo de salida CLI\n\nDiff funciona. Lectura correcta: respuesta B perdió grounding (-16.7) pero redujo drift (-7.1) y eliminó 3 símbolos alucinados (`internal/ranking/deep_stem.go`, `path_match`, `symbol_match`) — cambio mixto que el reviewer puede juzgar con datos concretos.\n\nComprobemos también la salida JSON:\n\nTodo funciona end-to-end.\n\n**Resumen final**\n\n- [internal/audit/diff.go](internal/audit/diff.go) — `DiffRecords` puro + `SetDiff`/`Diff` structs.\n- [internal/audit/diff_test.go](internal/audit/diff_test.go) — 5 tests cubriendo scalars, set diffs, recall skip, bundle mismatch, empty bucket.\n- [internal/cli/audit.go](internal/cli/audit.go:33) — nuevo subcomando `diff` registrado bajo `audit`, con `--json` opcional.\n- Tests: `go test ./... → all green`. Build limpio.\n- Demo: comparar dos records del mismo bundle mostró los deltas correctamente y un diff en JSON parseable.\n\nSin tocar `replay`, sin inventar estado nuevo, sin superficies adicionales.",
+  "citations": [
+    {
+      "raw": "internal/audit/diff.go",
+      "rel_path": "internal/audit/diff.go",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "a.js",
+      "rel_path": "a.js",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "b.js",
+      "rel_path": "b.js",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "internal/audit/diff_test.go",
+      "rel_path": "internal/audit/diff_test.go",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "internal/cli/audit.go",
+      "rel_path": "internal/cli/audit.go",
+      "valid": true
+    },
+    {
+      "raw": "internal/ranking/deep_stem.go",
+      "rel_path": "internal/ranking/deep_stem.go",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "internal/cli/audit.go:33",
+      "rel_path": "internal/cli/audit.go",
+      "line": 33,
+      "valid": true
+    }
+  ],
+  "drift": {
+    "unknown_paths": [
+      "a.js",
+      "a.json",
+      "b.js",
+      "b.json",
+      "internal/audit/diff.go",
+      "internal/audit/diff_test.go",
+      "internal/ranking/deep_stem.go"
+    ],
+    "unknown_apis": [
+      "audit.DiffRecords"
+    ],
+    "unknown_symbols": [
+      "APIs",
+      "DiffRecords",
+      "DriftDelta",
+      "GroundedDelta",
+      "RecallApplies",
+      "RecallDelta",
+      "SameBundle",
+      "SameModel",
+      "SameQuestion",
+      "SetDiff",
+      "newAuditDiffCmd",
+      "path_match",
+      "printDiffSummary",
+      "symbol_match"
+    ],
+    "known_count": 3,
+    "unknown_count": 22,
+    "rate": 0.88
+  },
+  "grounded_ratio": 0.2857142857142857
+}

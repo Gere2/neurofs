@@ -1,0 +1,453 @@
+{
+  "query": "implement audit diff command to compare two audit records and print metric deltas in CLI",
+  "budget": 3500,
+  "fragments": [
+    {
+      "rel_path": "internal/cli/audit.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/audit.go\n// lang: go\n// representation: signature\n\n// import: context\n// import: encoding/json\n// import: fmt\n// import: os\n// import: path/filepath\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAuditCmd(...) { ... }\nfunc newAuditReplayCmd(...) { ... }\nfunc loadBundleJSON(...) { ... }\nfunc rebuildBundle(...) { ... }\nfunc parseFacts(...) { ... }\nfunc printReplaySummary(...) { ... }\nfunc printDriftList(...) { ... }\nfunc splitCitations(...) { ... }\nfunc writeJSON(...) { ... }\nfunc truncateLine(...) { ... }\nfunc minInt(...) { ... }\n",
+      "tokens": 228,
+      "score": 18.415791526731137,
+      "reasons": [
+        {
+          "signal": "filename_match",
+          "detail": "audit",
+          "weight": 3
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "newAuditCmd",
+          "weight": 2.5
+        },
+        {
+          "signal": "import_match",
+          "detail": "github.com/neuromfs/neuromfs/internal/audit",
+          "weight": 1
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "printReplaySummary",
+          "weight": 2.5
+        },
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/audit",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 0.6402311781917384
+        },
+        {
+          "signal": "content_match",
+          "detail": "diff",
+          "weight": 0.18818298880919998
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.37636597761840007
+        },
+        {
+          "signal": "content_match",
+          "detail": "two",
+          "weight": 0.3069132355649289
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.5645489664276
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 0.551366191310072
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.18818298880919998
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/stats.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/stats.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: path/filepath\n// import: sort\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/indexer\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newStatsCmd(...) { ... }\nfunc printLangBreakdown(...) { ... }\nfunc printTopBySymbols(...) { ... }\nfunc printAuditSummary(...) { ... }\nfunc humanBytes(...) { ... }\nfunc joinStrings(...) { ... }\nfunc humanSince(...) { ... }\n",
+      "tokens": 190,
+      "score": 15.201990096310414,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "printAuditSummary",
+          "weight": 2.5
+        },
+        {
+          "signal": "import_match",
+          "detail": "github.com/neuromfs/neuromfs/internal/audit",
+          "weight": 1
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "printLangBreakdown",
+          "weight": 2.5
+        },
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 0.7069871437325074
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.3821098018522301
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.9281410777250481
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 1.0026422711483975
+        },
+        {
+          "signal": "content_match",
+          "detail": "metric",
+          "weight": 0.19105490092611505
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.19105490092611505
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/audit/types.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/audit/types.go\n// lang: go\n// representation: signature\n\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/models\ntype Citation struct/interface { ... }\ntype DriftReport struct/interface { ... }\ntype AuditFragment struct/interface { ... }\ntype AuditRecord struct/interface { ... }\n",
+      "tokens": 79,
+      "score": 9.6518912373281,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "audit",
+          "weight": 1.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "AuditFragment",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "AuditRecord",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 1.151292546497023
+        },
+        {
+          "signal": "content_match",
+          "detail": "diff",
+          "weight": 0.5493061443340548
+        },
+        {
+          "signal": "content_match",
+          "detail": "two",
+          "weight": 0.34657359027997264
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.8047189562170501
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/scan.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/scan.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/indexer\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newScanCmd(...) { ... }\n",
+      "tokens": 84,
+      "score": 8.775321276293862,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.6931471805599453
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.5493061443340548
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 1.3862943611198906
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.34657359027997264
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/ask.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/ask.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: io\n// import: os\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAskCmd(...) { ... }\nfunc pctFloat(...) { ... }\nfunc writeExplain(...) { ... }\nfunc truncate(...) { ... }\n",
+      "tokens": 159,
+      "score": 8.46701118176224,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 0.3659601228074982
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.46179026019983027
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.5361218895516656
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 1.0722437791033312
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.23089513009991514
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/bench.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/bench.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: os\n// import: path/filepath\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/benchmark\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newBenchCmd(...) { ... }\n",
+      "tokens": 96,
+      "score": 8.444439727056967,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/benchmark",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.8047189562170501
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 0.6931471805599453
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.34657359027997264
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/pack.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/pack.go\n// lang: go\n// representation: signature\n\n// import: encoding/json\n// import: fmt\n// import: os\n// import: path/filepath\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newPackCmd(...) { ... }\nfunc writeBundleJSON(...) { ... }\nfunc writeBundle(...) { ... }\nfunc effectiveFormat(...) { ... }\nfunc buildRepoSummary(...) { ... }\n",
+      "tokens": 186,
+      "score": 8.280023306772367,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/packager",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 0.19569372686616185
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 0.3913874537323237
+        },
+        {
+          "signal": "content_match",
+          "detail": "records",
+          "weight": 0.31016721870923475
+        },
+        {
+          "signal": "content_match",
+          "detail": "print",
+          "weight": 0.5870811805984855
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.19569372686616185
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/root.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/root.go\n// lang: go\n// representation: signature\n\n// import: github.com/spf13/cobra\nfunc New(...) { ... }\n",
+      "tokens": 32,
+      "score": 8.038668407239102,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "cli",
+          "weight": 1.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/cli",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "audit",
+          "weight": 0.34657359027997264
+        },
+        {
+          "signal": "content_match",
+          "detail": "command",
+          "weight": 1.1989476363991853
+        },
+        {
+          "signal": "content_match",
+          "detail": "cli",
+          "weight": 0.6931471805599453
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "files_considered": 59,
+    "files_included": 8,
+    "tokens_used": 1134,
+    "tokens_budget": 3500,
+    "compression_ratio": 10.061669829222012
+  }
+}

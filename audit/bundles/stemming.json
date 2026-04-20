@@ -1,0 +1,183 @@
+{
+  "query": "explain how the ranker handles stemming",
+  "budget": 3000,
+  "fragments": [
+    {
+      "rel_path": "internal/ranking/stem.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/ranking/stem.go\n// lang: go\n// representation: signature\n\n// import: strings\nfunc stemWord(...) { ... }\nfunc termVariants(...) { ... }\nfunc anyContains(...) { ... }\nfunc anyContainsReverse(...) { ... }\n",
+      "tokens": 55,
+      "score": 8.542453324894,
+      "reasons": [
+        {
+          "signal": "filename_match",
+          "detail": "stemming",
+          "weight": 3
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/ranking",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "ranker",
+          "weight": 0.34657359027997264
+        },
+        {
+          "signal": "content_match",
+          "detail": "handles",
+          "weight": 0.5493061443340548
+        },
+        {
+          "signal": "content_match",
+          "detail": "stemming",
+          "weight": 0.34657359027997264
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/ranking/ranking_test.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/ranking/ranking_test.go\n// lang: go\n// representation: signature\n\n// import: testing\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\nfunc TestRankByFilename(...) { ... }\nfunc TestRankBySymbol(...) { ... }\nfunc TestRankEmptyQuery(...) { ... }\nfunc TestRankEmptyIndex(...) { ... }\nfunc TestRankEntryPointBonus(...) { ... }\nfunc TestRankDependencyMatch(...) { ... }\nfunc TestRankPathAliasExpansion(...) { ... }\nfunc TestRankReasonsPopulated(...) { ... }\nfunc TestRankStemmingUtilityToUtils(...) { ... }\nfunc TestRankStemmingReverse(...) { ... }\nfunc TestRankStemmingPlurals(...) { ... }\nfunc TestRankFocusBoost(...) { ... }\nfunc TestRankFocusMultiplePrefixes(...) { ... }\nfunc TestRankChangedBoost(...) { ... }\nfunc hasSignal(...) { ... }\n",
+      "tokens": 219,
+      "score": 7.504430823463609,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "TestRankStemmingUtilityToUtils",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/ranking",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "handles",
+          "weight": 0.1579642617502154
+        },
+        {
+          "signal": "content_match",
+          "detail": "stemming",
+          "weight": 0.5464665617133935
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/ranking/ranking.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/ranking/ranking.go\n// lang: go\n// representation: signature\n\n// import: math\n// import: os\n// import: path/filepath\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/tokenbudget\nfunc Rank(...) { ... }\nfunc RankWithOptions(...) { ... }\nfunc scoreFile(...) { ... }\nfunc expandByImports(...) { ... }\nfunc applyProjectSignals(...) { ... }\nfunc addEntryPointBonus(...) { ... }\nfunc applyDependencyMatch(...) { ... }\nfunc pathsMatchEntry(...) { ... }\nfunc resolveAlias(...) { ... }\nfunc enrichWithContent(...) { ... }\nfunc applyFocusBoost(...) { ... }\nfunc applyChangedBoost(...) { ... }\nfunc parseFocusPrefixes(...) { ... }\nfunc Tokenise(...) { ... }\nfunc SignalWeights(...) { ... }\nfunc tokenise(...) { ... }\nfunc stripExt(...) { ... }\ntype Options struct/interface { ... }\n",
+      "tokens": 234,
+      "score": 5.402373649280603,
+      "reasons": [
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/ranking",
+          "weight": 4
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/ranking",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "explain",
+          "weight": 0.13368365644537716
+        },
+        {
+          "signal": "content_match",
+          "detail": "ranker",
+          "weight": 0.1686899928352264
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/cli/ask.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/cli/ask.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: io\n// import: os\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAskCmd(...) { ... }\nfunc pctFloat(...) { ... }\nfunc writeExplain(...) { ... }\nfunc truncate(...) { ... }\n",
+      "tokens": 159,
+      "score": 3.7628153757149114,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "writeExplain",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "explain",
+          "weight": 0.7319202456149965
+        },
+        {
+          "signal": "content_match",
+          "detail": "ranker",
+          "weight": 0.23089513009991514
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/project/project.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/project/project.go\n// lang: go\n// representation: signature\n\n// import: encoding/json\n// import: os\n// import: path/filepath\n// import: sort\n// import: strings\nfunc Scan(...) { ... }\nfunc Encode(...) { ... }\nfunc Decode(...) { ... }\nfunc IsEmpty(...) { ... }\nfunc EntryPoints(...) { ... }\nfunc Label(...) { ... }\nfunc readPackageJSON(...) { ... }\nfunc readTSConfig(...) { ... }\nfunc extractBinEntries(...) { ... }\nfunc sortedKeys(...) { ... }\nfunc normalisePaths(...) { ... }\nfunc normaliseEntry(...) { ... }\nfunc firstNonEmpty(...) { ... }\nfunc stripJSONComments(...) { ... }\ntype Info struct/interface { ... }\ntype packageJSON struct/interface { ... }\ntype tsConfig struct/interface { ... }\n",
+      "tokens": 178,
+      "score": 1.539372111139788,
+      "reasons": [
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/project",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "explain",
+          "weight": 0.16997233461499395
+        },
+        {
+          "signal": "content_match",
+          "detail": "handles",
+          "weight": 0.2693997765247939
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "files_considered": 56,
+    "files_included": 5,
+    "tokens_used": 925,
+    "tokens_budget": 3000,
+    "compression_ratio": 12.520710059171599
+  }
+}

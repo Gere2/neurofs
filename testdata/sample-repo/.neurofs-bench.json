@@ -1,0 +1,36 @@
+[
+  {
+    "question": "how does authentication work",
+    "expects": ["src/auth.ts"],
+    "note": "core auth layer — jwt + middleware"
+  },
+  {
+    "question": "where is password hashing implemented",
+    "expects": ["src/crypto.ts"]
+  },
+  {
+    "question": "how is a new user registered",
+    "expects": ["src/user.ts", "src/api.ts"],
+    "note": "either the repo or the route wiring is acceptable"
+  },
+  {
+    "question": "listing and creating products",
+    "expects": ["src/products.ts"]
+  },
+  {
+    "question": "how are orders created and stock decremented",
+    "expects": ["src/orders.ts"]
+  },
+  {
+    "question": "what does the architecture look like",
+    "expects": ["docs/architecture.md"]
+  },
+  {
+    "question": "what utility helpers are available in python",
+    "expects": ["src/utils.py"]
+  },
+  {
+    "question": "where do we mount the express routes",
+    "expects": ["src/api.ts"]
+  }
+]

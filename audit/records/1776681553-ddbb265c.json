@@ -1,0 +1,106 @@
+{
+  "question": "explain how the ranker handles stemming",
+  "model": "claude-manual",
+  "timestamp": "2026-04-20T12:39:13.899223+02:00",
+  "bundle_hash": "ddbb265ca5ab314be06e6c29e6332ecb6b5c02fc570c67d9a02ec39dab6b4f16",
+  "fragments": [
+    {
+      "rel_path": "internal/ranking/stem.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 55,
+      "content": "// file: internal/ranking/stem.go\n// lang: go\n// representation: signature\n\n// import: strings\nfunc stemWord(...) { ... }\nfunc termVariants(...) { ... }\nfunc anyContains(...) { ... }\nfunc anyContainsReverse(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/ranking/ranking_test.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 219,
+      "content": "// file: internal/ranking/ranking_test.go\n// lang: go\n// representation: signature\n\n// import: testing\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\nfunc TestRankByFilename(...) { ... }\nfunc TestRankBySymbol(...) { ... }\nfunc TestRankEmptyQuery(...) { ... }\nfunc TestRankEmptyIndex(...) { ... }\nfunc TestRankEntryPointBonus(...) { ... }\nfunc TestRankDependencyMatch(...) { ... }\nfunc TestRankPathAliasExpansion(...) { ... }\nfunc TestRankReasonsPopulated(...) { ... }\nfunc TestRankStemmingUtilityToUtils(...) { ... }\nfunc TestRankStemmingReverse(...) { ... }\nfunc TestRankStemmingPlurals(...) { ... }\nfunc TestRankFocusBoost(...) { ... }\nfunc TestRankFocusMultiplePrefixes(...) { ... }\nfunc TestRankChangedBoost(...) { ... }\nfunc hasSignal(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/ranking/ranking.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 234,
+      "content": "// file: internal/ranking/ranking.go\n// lang: go\n// representation: signature\n\n// import: math\n// import: os\n// import: path/filepath\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/tokenbudget\nfunc Rank(...) { ... }\nfunc RankWithOptions(...) { ... }\nfunc scoreFile(...) { ... }\nfunc expandByImports(...) { ... }\nfunc applyProjectSignals(...) { ... }\nfunc addEntryPointBonus(...) { ... }\nfunc applyDependencyMatch(...) { ... }\nfunc pathsMatchEntry(...) { ... }\nfunc resolveAlias(...) { ... }\nfunc enrichWithContent(...) { ... }\nfunc applyFocusBoost(...) { ... }\nfunc applyChangedBoost(...) { ... }\nfunc parseFocusPrefixes(...) { ... }\nfunc Tokenise(...) { ... }\nfunc SignalWeights(...) { ... }\nfunc tokenise(...) { ... }\nfunc stripExt(...) { ... }\ntype Options struct/interface { ... }\n"
+    },
+    {
+      "rel_path": "internal/cli/ask.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 159,
+      "content": "// file: internal/cli/ask.go\n// lang: go\n// representation: signature\n\n// import: fmt\n// import: io\n// import: os\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\n// import: github.com/spf13/cobra\nfunc newAskCmd(...) { ... }\nfunc pctFloat(...) { ... }\nfunc writeExplain(...) { ... }\nfunc truncate(...) { ... }\n"
+    },
+    {
+      "rel_path": "internal/project/project.go",
+      "lang": "go",
+      "representation": "signature",
+      "tokens": 178,
+      "content": "// file: internal/project/project.go\n// lang: go\n// representation: signature\n\n// import: encoding/json\n// import: os\n// import: path/filepath\n// import: sort\n// import: strings\nfunc Scan(...) { ... }\nfunc Encode(...) { ... }\nfunc Decode(...) { ... }\nfunc IsEmpty(...) { ... }\nfunc EntryPoints(...) { ... }\nfunc Label(...) { ... }\nfunc readPackageJSON(...) { ... }\nfunc readTSConfig(...) { ... }\nfunc extractBinEntries(...) { ... }\nfunc sortedKeys(...) { ... }\nfunc normalisePaths(...) { ... }\nfunc normaliseEntry(...) { ... }\nfunc firstNonEmpty(...) { ... }\nfunc stripJSONComments(...) { ... }\ntype Info struct/interface { ... }\ntype packageJSON struct/interface { ... }\ntype tsConfig struct/interface { ... }\n"
+    }
+  ],
+  "response": "The ranker handles stemming through a small helper layer that generates term\nvariants. Here is the flow as I read the bundle:\n\n1. Query tokens are first tokenised in `internal/ranking/ranking.go` and then\n   each token is expanded via `termVariants` (defined in\n   `internal/ranking/stem.go:12`). The variants include the original, a\n   lowercase form, and an inflectional stem (e.g. \"utilities\" → \"utility\",\n   \"utility\" → \"util\").\n\n2. When comparing against filenames, symbols and import paths the ranker\n   checks membership using `anyContains` and its reverse counterpart\n   `anyContainsReverse` (internal/ranking/stem.go). This is what lets the\n   token \"utility\" match a filename like `utils.py`.\n\n3. The stemmer is intentionally shallow — at most one inflectional and one\n   derivational step — so the behaviour stays auditable. See\n   `stemWord` in internal/ranking/stem.go:30 for the exact rules.\n\nOne thing I could not confirm from the bundle: whether the `FancyStemmer`\nlives in `internal/ranking/deep_stem.go` or somewhere else. If you need me\nto verify, expand that file in a follow-up.\n\nOverall, stemming is additive — it extends the token set fed to the\nexisting scoring signals (`filename_match`, `symbol_match`, `path_match`)\nrather than introducing a new signal weight.\n",
+  "citations": [
+    {
+      "raw": "internal/ranking/ranking.go",
+      "rel_path": "internal/ranking/ranking.go",
+      "valid": true
+    },
+    {
+      "raw": "internal/ranking/stem.go:12",
+      "rel_path": "internal/ranking/stem.go",
+      "line": 12,
+      "valid": true
+    },
+    {
+      "raw": "internal/ranking/stem.go",
+      "rel_path": "internal/ranking/stem.go",
+      "valid": true
+    },
+    {
+      "raw": "utils.py",
+      "rel_path": "utils.py",
+      "valid": false,
+      "reason": "not in bundle"
+    },
+    {
+      "raw": "internal/ranking/stem.go:30",
+      "rel_path": "internal/ranking/stem.go",
+      "line": 30,
+      "valid": true
+    },
+    {
+      "raw": "internal/ranking/deep_stem.go",
+      "rel_path": "internal/ranking/deep_stem.go",
+      "valid": false,
+      "reason": "not in bundle"
+    }
+  ],
+  "drift": {
+    "unknown_paths": [
+      "internal/ranking/deep_stem.go",
+      "utils.py"
+    ],
+    "unknown_symbols": [
+      "FancyStemmer",
+      "filename_match",
+      "path_match",
+      "symbol_match"
+    ],
+    "known_count": 6,
+    "unknown_count": 6,
+    "rate": 0.5
+  },
+  "grounded_ratio": 0.6666666666666666,
+  "expects_facts": [
+    "term variants",
+    "inflectional stem",
+    "utils"
+  ],
+  "facts_hit": [
+    "inflectional stem",
+    "utils"
+  ],
+  "answer_recall": 0.6666666666666666
+}
