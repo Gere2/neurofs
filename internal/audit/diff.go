@@ -32,6 +32,15 @@ type Diff struct {
 	ModeA    string `json:"mode_a,omitempty"`
 	ModeB    string `json:"mode_b,omitempty"`
 
+	// Human annotations on both sides. Pass-through for display; we don't
+	// try to diff free-form prose. Empty strings render as "—" in the UI.
+	TitleA string `json:"title_a,omitempty"`
+	TitleB string `json:"title_b,omitempty"`
+	BriefA string `json:"brief_a,omitempty"`
+	BriefB string `json:"brief_b,omitempty"`
+	NoteA  string `json:"note_a,omitempty"`
+	NoteB  string `json:"note_b,omitempty"`
+
 	GroundedDelta float64 `json:"grounded_delta"`
 	DriftDelta    float64 `json:"drift_delta"`
 	RecallDelta   float64 `json:"recall_delta"`
@@ -55,6 +64,12 @@ func DiffRecords(a, b AuditRecord) Diff {
 		SameMode:      a.Mode == b.Mode && a.Mode != "",
 		ModeA:         a.Mode,
 		ModeB:         b.Mode,
+		TitleA:        a.Title,
+		TitleB:        b.Title,
+		BriefA:        a.Brief,
+		BriefB:        b.Brief,
+		NoteA:         a.Note,
+		NoteB:         b.Note,
 		GroundedDelta: b.GroundedRatio - a.GroundedRatio,
 		DriftDelta:    b.Drift.Rate - a.Drift.Rate,
 	}

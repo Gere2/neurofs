@@ -80,4 +80,17 @@ type AuditRecord struct {
 	ExpectsFacts []string `json:"expects_facts,omitempty"`
 	FactsHit     []string `json:"facts_hit,omitempty"`
 	AnswerRecall float64  `json:"answer_recall,omitempty"`
+
+	// Human annotations. Metrics tell us how disciplined the answer was;
+	// these tell us what the human was trying to do, why, and what they
+	// concluded once the dust settled. All three are optional and
+	// omitempty — legacy records on disk decode cleanly with zero values,
+	// and audit logic ignores them entirely.
+	//
+	//   Title — short label ("008 ui hardening")
+	//   Brief — multi-line task description / intent captured at pack time
+	//   Note  — post-hoc conclusion written after inspecting the audit
+	Title string `json:"title,omitempty"`
+	Brief string `json:"brief,omitempty"`
+	Note  string `json:"note,omitempty"`
 }

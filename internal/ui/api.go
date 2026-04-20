@@ -302,6 +302,14 @@ type replayReq struct {
 	Mode       string `json:"mode"`  // strategy | build | review | ""
 	Facts      string `json:"facts"` // comma-separated
 	Save       bool   `json:"save"`
+
+	// Human annotations captured from the UI. All optional; empty strings
+	// simply leave the corresponding field on the record unset. Length
+	// caps are applied server-side so a textarea paste cannot bloat the
+	// on-disk JSON past a reasonable limit.
+	Title string `json:"title"`
+	Brief string `json:"brief"`
+	Note  string `json:"note"`
 }
 
 type replayResp struct {
@@ -356,6 +364,13 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Annotations are applied after audit.Run so the audit package stays
+	// focused on evaluation — these fields are pure record metadata. We
+	// trim + cap to keep pathological pastes off disk.
+	rec.Title = clampAnnotation(req.Title, 200)
+	rec.Brief = clampAnnotation(req.Brief, 4000)
+	rec.Note = clampAnnotation(req.Note, 4000)
+
 	resp := replayResp{Record: rec}
 	if req.Save {
 		dir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
@@ -382,6 +397,13 @@ type recordRow struct {
 	DriftRate     float64 `json:"drift_rate"`
 	AnswerRecall  float64 `json:"answer_recall"`
 	ExpectsFacts  bool    `json:"expects_facts"`
+
+	// Human annotations. Always emitted (possibly ""), trimmed server-side
+	// to keep the records listing payload small; the UI truncates further
+	// for its table rows and gets the full text via the Compare endpoint.
+	Title string `json:"title"`
+	Brief string `json:"brief"`
+	Note  string `json:"note"`
 }
 
 func handleRecords(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +436,12 @@ func handleRecords(w http.ResponseWriter, r *http.Request) {
 			DriftRate:     rec.Drift.Rate,
 			AnswerRecall:  rec.AnswerRecall,
 			ExpectsFacts:  len(rec.ExpectsFacts) > 0,
+			Title:         rec.Title,
+			// Brief/Note can be long; ship a short preview on the list
+			// endpoint. The Compare endpoint loads the full record so the
+			// UI never truly loses the original text.
+			Brief: previewText(rec.Brief, 280),
+			Note:  previewText(rec.Note, 280),
 		})
 	}
 	// Most recent first — ListRecords returns sorted ascending by name/time.
@@ -621,6 +649,40 @@ func buildRepoSummary(files []models.FileRecord, info *project.Info) output.Repo
 func normaliseMode(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	return s
+}
+
+// clampAnnotation trims whitespace and hard-caps a human annotation so a
+// runaway paste cannot bloat a record's on-disk JSON. The cap is generous
+// enough to hold a multi-paragraph brief but tight enough to stay under the
+// 8MB body limit even if every field is maxed out. Empty input returns "",
+// which combined with the omitempty JSON tag leaves the field unpersisted.
+func clampAnnotation(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if max > 0 && len(s) > max {
+		s = s[:max]
+	}
+	return s
+}
+
+// previewText returns a single-line preview suitable for a table cell:
+// collapses internal whitespace, trims, and truncates with an ellipsis when
+// the source exceeds max bytes. Cheap rune-safe truncation — we cut on a
+// byte boundary after a rune, not mid-rune, so UTF-8 stays valid.
+func previewText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	s = strings.Join(strings.Fields(s), " ")
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	// Walk back to the last rune boundary ≤ max so we never split a rune.
+	cut := max
+	for cut > 0 && (s[cut]&0xC0) == 0x80 {
+		cut--
+	}
+	return s[:cut] + "…"
 }
 
 func splitCSV(s string) []string {

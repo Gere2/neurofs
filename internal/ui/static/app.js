@@ -12,6 +12,12 @@ const state = {
   templateDirty: false, // true when the user edited the template manually
   records: [],          // last list fetched from /api/records, pre-filter
   recordsFilter: "all", // "all" | "strategy" | "build" | "review" | "unknown"
+  // task carries the human annotations (title + brief) captured at pack
+  // time so the Response tab can pre-fill its own fields. Lives only in
+  // memory — we deliberately don't persist it across page reloads: a new
+  // page load usually means a new task, and stale briefs silently
+  // attaching themselves to the next record would be a bad default.
+  task: { title: "", brief: "" },
 };
 
 // ------------------------------ modes ------------------------------
@@ -378,6 +384,12 @@ document.getElementById("pack-btn").addEventListener("click", async () => {
   const status = document.getElementById("pack-status");
   btn.disabled = true; status.textContent = "packing…";
 
+  // Capture the human annotations the moment we pack. Even if the user
+  // wanders off and never comes back, the Response tab can prefill these
+  // when it opens — they stick in state.task until the next pack.
+  state.task.title = document.getElementById("q-title").value.trim();
+  state.task.brief = document.getElementById("q-brief").value.trim();
+
   try {
     const r = await j("POST", "/api/pack", {
       repo: state.repo,
@@ -469,7 +481,16 @@ function suggestRunName() {
   return `${base}-${state.mode}`;
 }
 
-document.getElementById("go-response").addEventListener("click", () => switchTab("response"));
+document.getElementById("go-response").addEventListener("click", () => {
+  // Prefill Title/Brief on Response only when they are empty — users who
+  // already typed a custom title there keep their edit. This matches the
+  // "snapshot path touched" pattern used in New task.
+  const rTitle = document.getElementById("r-title");
+  const rBrief = document.getElementById("r-brief");
+  if (!rTitle.value.trim() && state.task.title) rTitle.value = state.task.title;
+  if (!rBrief.value.trim() && state.task.brief) rBrief.value = state.task.brief;
+  switchTab("response");
+});
 
 // ------------------------------ response / replay ------------------------------
 
@@ -511,6 +532,12 @@ document.getElementById("replay-btn").addEventListener("click", async () => {
       mode: state.mode || "",
       facts: document.getElementById("r-facts").value.trim(),
       save: document.getElementById("r-save").checked,
+      // Human annotations. Title/Brief may have been edited here, so we
+      // read from the Response-tab inputs, not state.task. Server-side
+      // they're trimmed and length-capped before being written to disk.
+      title: document.getElementById("r-title").value.trim(),
+      brief: document.getElementById("r-brief").value.trim(),
+      note:  document.getElementById("r-note").value.trim(),
     });
     renderReplayReport(r);
     status.textContent = r.saved_path ? `saved: ${r.saved_path}` : "done";
@@ -545,9 +572,19 @@ function renderReplayReport(r) {
         `<li><code>${esc(c.raw)}</code> — ${esc(c.reason)}</li>`).join("")}</ul>
     </div>` : "";
 
+  // Annotations are shown at the top of the report as "what this run was
+  // trying to do". Empty fields collapse to nothing so legacy + untitled
+  // runs don't leak empty rows.
+  const annRows = [
+    rec.title ? `<dt>title</dt><dd>${esc(rec.title)}</dd>` : "",
+    rec.brief ? `<dt>brief</dt><dd class="prose">${esc(rec.brief)}</dd>` : "",
+    rec.note  ? `<dt>note</dt><dd class="prose">${esc(rec.note)}</dd>`   : "",
+  ].join("");
+
   document.getElementById("replay-report").innerHTML = `
     <h3>Audit</h3>
     <dl class="kv">
+      ${annRows}
       <dt>question</dt><dd>${esc(rec.question || "—")}</dd>
       <dt>mode</dt><dd>${modeBadge(rec.mode)}</dd>
       <dt>model</dt><dd>${esc(rec.model)}</dd>
@@ -586,6 +623,31 @@ async function loadRecords() {
   }
 }
 
+// renderContextCell composes the "Context" column of the Records table.
+// Title is the headline; the question is the secondary line; brief and
+// note render as small muted footnotes. Each annotation is already
+// truncated server-side (see previewText in api.go) so the cell stays
+// compact even if the originals were pages long. Full text ships in the
+// Compare endpoint.
+function renderContextCell(rec) {
+  const parts = [];
+  if (rec.title) {
+    parts.push(`<div class="rec-title">${esc(rec.title)}</div>`);
+    if (rec.question) {
+      parts.push(`<div class="rec-question">${esc((rec.question || "").slice(0, 80))}</div>`);
+    }
+  } else {
+    parts.push(`<div class="rec-question">${esc((rec.question || "—").slice(0, 80))}</div>`);
+  }
+  if (rec.brief) {
+    parts.push(`<div class="rec-note" title="${esc(rec.brief)}"><span class="rec-note-tag">brief</span> ${esc(rec.brief)}</div>`);
+  }
+  if (rec.note) {
+    parts.push(`<div class="rec-note" title="${esc(rec.note)}"><span class="rec-note-tag">note</span> ${esc(rec.note)}</div>`);
+  }
+  return parts.join("");
+}
+
 // renderRecords draws the table filtered by state.recordsFilter. Kept
 // separate from loadRecords so the filter pills can re-render without
 // re-fetching. Legacy records (mode="") match only the "all" and "unknown"
@@ -613,7 +675,7 @@ function renderRecords() {
              ${state.selectedRecords.includes(rec.path) ? "checked" : ""}></td>
         <td>${esc(rec.timestamp)}</td>
         <td>${modeBadge(rec.mode)}</td>
-        <td>${esc((rec.question || "").slice(0, 50))}</td>
+        <td>${renderContextCell(rec)}</td>
         <td>${esc(rec.model)}</td>
         <td>${fmtPct(rec.grounded_ratio)}</td>
         <td>${fmtPct(rec.drift_rate)}</td>
@@ -696,9 +758,26 @@ function renderDiff(d) {
       ${d.same_mode ? "" : ` <span class="muted">(different — interpret deltas with care)</span>`}
     </dd>`;
 
+  // annotationPair renders a "A: … / B: …" row, hiding the whole row when
+  // both sides are empty so legacy-vs-legacy diffs don't render phantom
+  // "title: A: — / B: —" entries that carry zero information.
+  const annotationPair = (label, a, b) => {
+    if (!a && !b) return "";
+    const fmt = v => v ? `<span class="prose">${esc(v)}</span>` : `<span class="muted">—</span>`;
+    return `
+      <dt>${label}</dt>
+      <dd>
+        <div><span class="muted">A:</span> ${fmt(a)}</div>
+        <div><span class="muted">B:</span> ${fmt(b)}</div>
+      </dd>`;
+  };
+
   document.getElementById("compare-report").innerHTML = `
     <h3>Diff</h3>
     <dl class="kv">
+      ${annotationPair("title", d.title_a, d.title_b)}
+      ${annotationPair("brief", d.brief_a, d.brief_b)}
+      ${annotationPair("note",  d.note_a,  d.note_b)}
       <dt>same bundle</dt><dd>${d.same_bundle ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>
       <dt>same question</dt><dd>${d.same_question ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>
       <dt>same model</dt><dd>${d.same_model ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>

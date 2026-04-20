@@ -351,3 +351,52 @@ table.records td code { font-size: 0.75rem; }
   padding: 0.25rem 0.7rem;
   font-size: 0.78rem;
 }
+
+/* ---- human annotations (iteration 10) ----
+   Title/brief/note give each record a human voice next to the metrics.
+   Cells in the Records table stack multiple muted lines; we use the .prose
+   class in dd elements where a line-wrapped paragraph is expected. */
+.rec-title {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 2px;
+}
+.rec-question {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+.rec-note {
+  color: var(--muted);
+  font-size: 0.75rem;
+  line-height: 1.35;
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.rec-note-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0 0.35rem;
+  margin-right: 0.35rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  vertical-align: 1px;
+}
+
+/* .prose is applied inside <dd> elements that hold user-written paragraphs
+   (brief / note) — we want them to wrap and to break long runs rather
+   than overflow their grid cell. */
+.kv dd.prose,
+.kv dd .prose {
+  font-family: inherit;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

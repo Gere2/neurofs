@@ -128,6 +128,32 @@ func TestDiffRecordsModeSurfaces(t *testing.T) {
 	}
 }
 
+func TestDiffRecordsAnnotationsPassThrough(t *testing.T) {
+	// Titles, briefs and notes are free-form and Diff only carries them for
+	// display — the test just verifies the mapping is wired and that empty
+	// strings stay empty (so omitempty hides them in JSON).
+	a := AuditRecord{Title: "plan ranker fix", Brief: "reduce drift on stemming", Note: "looked good"}
+	b := AuditRecord{Title: "ship ranker fix", Brief: "land the patch", Note: "merged"}
+
+	d := DiffRecords(a, b)
+	if d.TitleA != "plan ranker fix" || d.TitleB != "ship ranker fix" {
+		t.Errorf("titles not surfaced, got %q / %q", d.TitleA, d.TitleB)
+	}
+	if d.BriefA != "reduce drift on stemming" || d.BriefB != "land the patch" {
+		t.Errorf("briefs not surfaced, got %q / %q", d.BriefA, d.BriefB)
+	}
+	if d.NoteA != "looked good" || d.NoteB != "merged" {
+		t.Errorf("notes not surfaced, got %q / %q", d.NoteA, d.NoteB)
+	}
+
+	empty := DiffRecords(AuditRecord{}, AuditRecord{})
+	if empty.TitleA != "" || empty.TitleB != "" ||
+		empty.BriefA != "" || empty.BriefB != "" ||
+		empty.NoteA != "" || empty.NoteB != "" {
+		t.Errorf("legacy records should yield empty annotation fields, got %+v", empty)
+	}
+}
+
 func TestDiffRecordsEmptyBucketsProduceEmptyDiff(t *testing.T) {
 	d := DiffRecords(AuditRecord{}, AuditRecord{})
 	if len(d.Paths.Added)+len(d.Paths.Removed) != 0 {

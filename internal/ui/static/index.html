@@ -76,9 +76,19 @@
       <div id="mode-card" class="card mode-card"></div>
 
       <div class="grid-2">
-        <label>Question
-          <textarea id="q-input" rows="3" placeholder="e.g. how does the ranker handle stemming"></textarea>
+        <label>Title (short label for this run)
+          <input type="text" id="q-title" placeholder="e.g. 010 human metadata">
         </label>
+        <label>Question (short, what you ask Claude to focus on)
+          <textarea id="q-input" rows="2" placeholder="e.g. how does the ranker handle stemming"></textarea>
+        </label>
+      </div>
+
+      <label>Brief (what you are trying to do and why — goes with the record)
+        <textarea id="q-brief" rows="3" placeholder="optional: the one-paragraph brief. This is what 'you-from-next-week' will thank 'you-from-today' for writing."></textarea>
+      </label>
+
+      <div class="grid-2">
         <div>
           <label>Token budget
             <input type="number" id="q-budget" value="3500" min="500" max="100000" step="500">
@@ -87,11 +97,13 @@
             <input type="text" id="q-focus" placeholder="internal/ranking">
           </label>
           <label class="inline"><input type="checkbox" id="q-changed"> boost git-changed files</label>
+        </div>
+        <div>
           <div class="row">
             <label>Max files <input type="number" id="q-maxfiles" value="8" min="0"></label>
             <label>Max fragments <input type="number" id="q-maxfrags" value="16" min="0"></label>
-            <label class="inline"><input type="checkbox" id="q-signatures" checked> prefer signatures</label>
           </div>
+          <label class="inline"><input type="checkbox" id="q-signatures" checked> prefer signatures</label>
         </div>
       </div>
 
@@ -150,11 +162,23 @@
       <label id="r-snapshot-wrap" style="display:none">Snapshot path
         <input type="text" id="r-snapshot" placeholder="audit/bundles/stemming.json">
       </label>
-      <label>Expected facts (comma-separated, optional)
-        <input type="text" id="r-facts">
+
+      <div class="grid-2">
+        <label>Title (inherited from pack — editable)
+          <input type="text" id="r-title" placeholder="short label for this run">
+        </label>
+        <label>Expected facts (comma-separated, optional)
+          <input type="text" id="r-facts">
+        </label>
+      </div>
+      <label>Brief (inherited from pack — editable)
+        <textarea id="r-brief" rows="2" placeholder="what the run was trying to do"></textarea>
       </label>
       <label>Response text
         <textarea id="r-text" rows="12" placeholder="Paste the answer here..."></textarea>
+      </label>
+      <label>Note (your conclusion once you read the response and the audit)
+        <textarea id="r-note" rows="3" placeholder="what did we learn? keep / discard? next step?"></textarea>
       </label>
       <div class="row">
         <button id="replay-btn" class="primary">Run replay</button>
@@ -186,7 +210,7 @@
             <th></th>
             <th>When</th>
             <th>Mode</th>
-            <th>Question</th>
+            <th>Context</th>
             <th>Model</th>
             <th>Grounded</th>
             <th>Drift</th>
