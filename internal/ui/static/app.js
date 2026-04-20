@@ -10,6 +10,8 @@ const state = {
   selectedRecords: [],
   mode: localStorage.getItem("neurofs.mode") || "build",
   templateDirty: false, // true when the user edited the template manually
+  records: [],          // last list fetched from /api/records, pre-filter
+  recordsFilter: "all", // "all" | "strategy" | "build" | "review" | "unknown"
 };
 
 // ------------------------------ modes ------------------------------
@@ -218,6 +220,17 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
   }[c]));
+}
+
+// modeBadge renders a small pill for a record's mode. An empty mode (legacy
+// record generated before iteration 9) gets a neutral "unknown" badge so the
+// user can see at a glance which records pre-date the tracking.
+function modeBadge(mode) {
+  const m = (mode || "").toLowerCase();
+  if (m === "strategy" || m === "build" || m === "review") {
+    return `<span class="mode-badge mode-${m}">${m}</span>`;
+  }
+  return `<span class="mode-badge mode-unknown">unknown</span>`;
 }
 function requireRepo() {
   if (!state.repo) {
@@ -492,6 +505,10 @@ document.getElementById("replay-btn").addEventListener("click", async () => {
       bundle_path: bundlePath,
       response: text,
       model: document.getElementById("r-model").value.trim() || "claude-manual",
+      // Mode is the one set in the New task tab; the Response tab does not
+      // have its own selector because response-for-bundle-X should inherit
+      // the mode bundle-X was packed with. Sent as "" for legacy flows.
+      mode: state.mode || "",
       facts: document.getElementById("r-facts").value.trim(),
       save: document.getElementById("r-save").checked,
     });
@@ -532,6 +549,7 @@ function renderReplayReport(r) {
     <h3>Audit</h3>
     <dl class="kv">
       <dt>question</dt><dd>${esc(rec.question || "—")}</dd>
+      <dt>mode</dt><dd>${modeBadge(rec.mode)}</dd>
       <dt>model</dt><dd>${esc(rec.model)}</dd>
       <dt>bundle hash</dt><dd><code>${esc((rec.bundle_hash || "").slice(0,16))}…</code></dd>
       <dt>grounded</dt><dd><span class="badge ${groundedClass}">${fmtPct(rec.grounded_ratio)}</span> ${valid}/${total} citations</dd>
@@ -556,20 +574,45 @@ async function loadRecords() {
     return;
   }
   const status = document.getElementById("records-status");
-  const tbody = document.querySelector("#records-table tbody");
-  status.textContent = "loading…"; tbody.innerHTML = "";
+  status.textContent = "loading…";
   try {
     const r = await j("GET", `/api/records?repo=${encodeURIComponent(state.repo)}`);
-    if (!r.records || !r.records.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="muted" style="padding:1rem;text-align:center">no records yet — run a replay and enable "persist"</td></tr>`;
-      status.textContent = "";
-      return;
-    }
+    state.records = r.records || [];
     state.selectedRecords = [];
-    tbody.innerHTML = r.records.map(rec => `
+    renderRecords();
+    status.textContent = `${state.records.length} records`;
+  } catch (e) {
+    status.textContent = "error: " + e.message;
+  }
+}
+
+// renderRecords draws the table filtered by state.recordsFilter. Kept
+// separate from loadRecords so the filter pills can re-render without
+// re-fetching. Legacy records (mode="") match only the "all" and "unknown"
+// filters so they remain visible rather than silently dropping.
+function renderRecords() {
+  const tbody = document.querySelector("#records-table tbody");
+  const filter = state.recordsFilter;
+  const all = state.records || [];
+  const visible = all.filter(rec => {
+    if (filter === "all") return true;
+    const m = (rec.mode || "").toLowerCase();
+    if (filter === "unknown") return !m;
+    return m === filter;
+  });
+
+  if (!visible.length) {
+    const msg = all.length
+      ? `no records match filter "${esc(filter)}"`
+      : `no records yet — run a replay and enable "persist"`;
+    tbody.innerHTML = `<tr><td colspan="9" class="muted" style="padding:1rem;text-align:center">${msg}</td></tr>`;
+  } else {
+    tbody.innerHTML = visible.map(rec => `
       <tr>
-        <td><input type="checkbox" data-path="${esc(rec.path)}" class="rec-check"></td>
+        <td><input type="checkbox" data-path="${esc(rec.path)}" class="rec-check"
+             ${state.selectedRecords.includes(rec.path) ? "checked" : ""}></td>
         <td>${esc(rec.timestamp)}</td>
+        <td>${modeBadge(rec.mode)}</td>
         <td>${esc((rec.question || "").slice(0, 50))}</td>
         <td>${esc(rec.model)}</td>
         <td>${fmtPct(rec.grounded_ratio)}</td>
@@ -579,11 +622,25 @@ async function loadRecords() {
       </tr>`).join("");
     document.querySelectorAll(".rec-check").forEach(c =>
       c.addEventListener("change", onRecSelect));
-    status.textContent = `${r.records.length} records`;
-  } catch (e) {
-    status.textContent = "error: " + e.message;
+  }
+
+  const countEl = document.getElementById("records-status");
+  if (all.length) {
+    countEl.textContent = filter === "all"
+      ? `${all.length} records`
+      : `${visible.length} / ${all.length} records (filter: ${filter})`;
   }
 }
+
+// Wire the filter pills once, at module load.
+document.querySelectorAll("#records-filter button").forEach(b => {
+  b.addEventListener("click", () => {
+    state.recordsFilter = b.dataset.filter;
+    document.querySelectorAll("#records-filter button").forEach(x =>
+      x.classList.toggle("active", x.dataset.filter === state.recordsFilter));
+    renderRecords();
+  });
+});
 
 function onRecSelect() {
   const picked = Array.from(document.querySelectorAll(".rec-check"))
@@ -629,12 +686,23 @@ function renderDiff(d) {
     </div>`;
   };
 
+  // Mode row is always rendered so the user sees the intent behind each
+  // record even when SameMode is true. Legacy records (mode="") render as
+  // "unknown" — same convention as the Records table.
+  const modeRow = `
+    <dt>mode</dt>
+    <dd>
+      A: ${modeBadge(d.mode_a)} &nbsp;→&nbsp; B: ${modeBadge(d.mode_b)}
+      ${d.same_mode ? "" : ` <span class="muted">(different — interpret deltas with care)</span>`}
+    </dd>`;
+
   document.getElementById("compare-report").innerHTML = `
     <h3>Diff</h3>
     <dl class="kv">
       <dt>same bundle</dt><dd>${d.same_bundle ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>
       <dt>same question</dt><dd>${d.same_question ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>
       <dt>same model</dt><dd>${d.same_model ? "yes" : "<span class=\"delta-neg\">no</span>"}</dd>
+      ${modeRow}
       <dt>grounded Δ</dt><dd>${fmtDelta(d.grounded_delta)}</dd>
       <dt>drift Δ</dt><dd>${fmtDelta(d.drift_delta)}</dd>
       ${d.recall_applies ? `<dt>recall Δ</dt><dd>${fmtDelta(d.recall_delta)}</dd>` : ""}

@@ -95,6 +95,39 @@ func TestDiffRecordsBundleMismatchSurfaces(t *testing.T) {
 	}
 }
 
+func TestDiffRecordsModeSurfaces(t *testing.T) {
+	// Matching modes → SameMode true, labels preserved for display.
+	same := DiffRecords(
+		AuditRecord{Mode: "build"},
+		AuditRecord{Mode: "build"},
+	)
+	if !same.SameMode {
+		t.Errorf("SameMode should be true when both records carry the same mode")
+	}
+	if same.ModeA != "build" || same.ModeB != "build" {
+		t.Errorf("mode labels should propagate to Diff.Mode{A,B}")
+	}
+
+	// Different modes → SameMode false, labels still exposed.
+	mixed := DiffRecords(
+		AuditRecord{Mode: "strategy"},
+		AuditRecord{Mode: "build"},
+	)
+	if mixed.SameMode {
+		t.Errorf("SameMode should be false when modes differ")
+	}
+	if mixed.ModeA != "strategy" || mixed.ModeB != "build" {
+		t.Errorf("mode labels should propagate even when different, got %q/%q", mixed.ModeA, mixed.ModeB)
+	}
+
+	// Both empty (e.g. legacy records) → SameMode false, same rationale as
+	// SameBundle: "no label" is not the same as "matching label".
+	empty := DiffRecords(AuditRecord{}, AuditRecord{})
+	if empty.SameMode {
+		t.Errorf("SameMode should be false when neither record has a mode")
+	}
+}
+
 func TestDiffRecordsEmptyBucketsProduceEmptyDiff(t *testing.T) {
 	d := DiffRecords(AuditRecord{}, AuditRecord{})
 	if len(d.Paths.Added)+len(d.Paths.Removed) != 0 {

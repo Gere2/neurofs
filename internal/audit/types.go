@@ -57,9 +57,15 @@ type AuditFragment struct {
 
 // AuditRecord is one full governance observation. It is the persistence unit
 // and the thing CI can diff across runs.
+//
+// Mode is optional (omitempty) and retrofits the notion of "how was this
+// bundle meant to be used" onto the record: strategy / build / review today,
+// open-ended tomorrow. Records generated before the field existed unmarshal
+// cleanly with Mode == "" — no migration needed.
 type AuditRecord struct {
 	Question   string          `json:"question"`
 	Model      string          `json:"model"`      // free-form id, e.g. "stub", "claude-sonnet-4-6"
+	Mode       string          `json:"mode,omitempty"` // strategy | build | review | ""
 	Timestamp  time.Time       `json:"timestamp"`
 	BundleHash string          `json:"bundle_hash"`
 	Fragments  []AuditFragment `json:"fragments"`

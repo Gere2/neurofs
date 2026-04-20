@@ -170,6 +170,14 @@
       <p class="lead">All persisted audit records under <code>&lt;repo&gt;/audit/records/</code>. Select two to compare.</p>
       <div class="row">
         <button id="records-refresh">Refresh</button>
+        <span class="mode-label">Filter</span>
+        <div id="records-filter" class="pills">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="strategy">Strategy</button>
+          <button data-filter="build">Build</button>
+          <button data-filter="review">Review</button>
+          <button data-filter="unknown">Unknown</button>
+        </div>
         <span id="records-status" class="muted"></span>
       </div>
       <table id="records-table" class="records">
@@ -177,6 +185,7 @@
           <tr>
             <th></th>
             <th>When</th>
+            <th>Mode</th>
             <th>Question</th>
             <th>Model</th>
             <th>Grounded</th>

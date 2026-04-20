@@ -25,6 +25,13 @@ type Diff struct {
 	SameQuestion bool `json:"same_question"`
 	SameModel    bool `json:"same_model"`
 
+	// SameMode is true only when both records carry a non-empty mode label
+	// and the labels match. An empty mode on either side flips SameMode to
+	// false — "no label" is not the same as "both labelled strategy".
+	SameMode bool   `json:"same_mode"`
+	ModeA    string `json:"mode_a,omitempty"`
+	ModeB    string `json:"mode_b,omitempty"`
+
 	GroundedDelta float64 `json:"grounded_delta"`
 	DriftDelta    float64 `json:"drift_delta"`
 	RecallDelta   float64 `json:"recall_delta"`
@@ -45,6 +52,9 @@ func DiffRecords(a, b AuditRecord) Diff {
 		SameBundle:    a.BundleHash == b.BundleHash && a.BundleHash != "",
 		SameQuestion:  a.Question == b.Question,
 		SameModel:     a.Model == b.Model,
+		SameMode:      a.Mode == b.Mode && a.Mode != "",
+		ModeA:         a.Mode,
+		ModeB:         b.Mode,
 		GroundedDelta: b.GroundedRatio - a.GroundedRatio,
 		DriftDelta:    b.Drift.Rate - a.Drift.Rate,
 	}

@@ -304,3 +304,50 @@ table.records td code { font-size: 0.75rem; }
 #run-preview {
   margin: 0.25rem 0 0.75rem 0;
 }
+
+/* ---- mode badges (iteration 9) ---- */
+/* Distinct hues per mode so the eye grouping works at a glance:
+   strategy = accent blue (plan), build = green (working), review = amber
+   (caution), unknown = muted grey for legacy records. */
+.mode-badge {
+  display: inline-block;
+  padding: 0.1rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  line-height: 1.4;
+}
+.mode-badge.mode-strategy {
+  background: rgba(122,162,247,0.15);
+  color: var(--accent);
+  border-color: rgba(122,162,247,0.35);
+}
+.mode-badge.mode-build {
+  background: rgba(158,206,106,0.15);
+  color: var(--good);
+  border-color: rgba(158,206,106,0.35);
+}
+.mode-badge.mode-review {
+  background: rgba(224,175,104,0.15);
+  color: var(--warn);
+  border-color: rgba(224,175,104,0.35);
+}
+.mode-badge.mode-unknown {
+  background: transparent;
+  color: var(--muted);
+  border-style: dashed;
+}
+
+/* Tighter pills inside the Records filter row. */
+#records-filter.pills {
+  padding: 2px;
+}
+#records-filter button {
+  padding: 0.25rem 0.7rem;
+  font-size: 0.78rem;
+}

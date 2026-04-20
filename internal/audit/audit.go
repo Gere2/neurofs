@@ -13,9 +13,13 @@ import (
 )
 
 // Options drive a single audit run. ExpectsFacts is optional — when unset,
-// AnswerRecall stays at 0 and is not included in summaries.
+// AnswerRecall stays at 0 and is not included in summaries. Mode is an
+// opaque label (strategy / build / review today) that the caller may set
+// so the resulting AuditRecord carries the intent the bundle was packed
+// for. Leave empty when the distinction does not apply.
 type Options struct {
 	ExpectsFacts []string
+	Mode         string
 	// Now overrides the clock for deterministic tests. Leave nil in prod.
 	Now func() time.Time
 }
@@ -53,6 +57,7 @@ func Run(ctx context.Context, m Model, bundle models.Bundle, opts Options) (Audi
 	return AuditRecord{
 		Question:      bundle.Query,
 		Model:         m.ID(),
+		Mode:          opts.Mode,
 		Timestamp:     now(),
 		BundleHash:    BundleHash(bundle),
 		Fragments:     freezeFragments(bundle),

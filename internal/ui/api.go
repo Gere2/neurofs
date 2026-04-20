@@ -299,6 +299,7 @@ type replayReq struct {
 	BundlePath string `json:"bundle_path"`
 	Response   string `json:"response"`
 	Model      string `json:"model"`
+	Mode       string `json:"mode"`  // strategy | build | review | ""
 	Facts      string `json:"facts"` // comma-separated
 	Save       bool   `json:"save"`
 }
@@ -348,7 +349,7 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 	rec, err := audit.Run(ctx,
 		audit.StubModel{Label: model, Response: req.Response},
 		bundle,
-		audit.Options{ExpectsFacts: facts},
+		audit.Options{ExpectsFacts: facts, Mode: normaliseMode(req.Mode)},
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "replay: "+err.Error())
@@ -375,6 +376,7 @@ type recordRow struct {
 	Timestamp     string  `json:"timestamp"`
 	Question      string  `json:"question"`
 	Model         string  `json:"model"`
+	Mode          string  `json:"mode"` // "" for legacy records — always emitted so the UI can filter
 	BundleHash    string  `json:"bundle_hash"`
 	GroundedRatio float64 `json:"grounded_ratio"`
 	DriftRate     float64 `json:"drift_rate"`
@@ -406,6 +408,7 @@ func handleRecords(w http.ResponseWriter, r *http.Request) {
 			Timestamp:     rec.Timestamp.Local().Format("2006-01-02 15:04:05"),
 			Question:      rec.Question,
 			Model:         rec.Model,
+			Mode:          rec.Mode,
 			BundleHash:    rec.BundleHash,
 			GroundedRatio: rec.GroundedRatio,
 			DriftRate:     rec.Drift.Rate,
@@ -608,6 +611,15 @@ func buildRepoSummary(files []models.FileRecord, info *project.Info) output.Repo
 			s.Entry = filepath.ToSlash(entries[0])
 		}
 	}
+	return s
+}
+
+// normaliseMode trims + lowercases the mode string so records stay
+// canonical even when a caller sends "Strategy " or "STRATEGY". Unknown
+// values pass through verbatim (lowercased) — we do not reject them:
+// the field is intentionally open-ended for future modes.
+func normaliseMode(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
 	return s
 }
 
