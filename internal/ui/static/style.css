@@ -400,3 +400,148 @@ table.records td code { font-size: 0.75rem; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ---- journal (iteration 11) ----
+   Records-as-timeline: cards grouped under day headers, each card
+   carries the human metadata (title / brief / note) and the metrics
+   badges on the right. Reuses existing CSS variables — no new palette. */
+#journal-search {
+  width: 100%;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.65rem;
+  font-family: inherit;
+  font-size: 0.85rem;
+  margin: 0;
+}
+.journal-day {
+  margin: 1.25rem 0 0.5rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.journal-day-date {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.journal-day-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.journal-day-count {
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.journal-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin: 0.5rem 0;
+  transition: border-color 0.1s;
+}
+.journal-card:hover { border-color: #3a404d; }
+.journal-card.mode-strategy { border-left-color: var(--accent); }
+.journal-card.mode-build    { border-left-color: var(--good); }
+.journal-card.mode-review   { border-left-color: var(--warn); }
+
+.journal-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+.journal-title {
+  font-weight: 600;
+  color: var(--fg);
+  font-size: 0.98rem;
+}
+.journal-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-left: auto;
+  font-family: var(--mono);
+}
+.journal-question {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.15rem 0 0.5rem 0;
+}
+
+.journal-block {
+  margin: 0.4rem 0;
+  padding-left: 0.65rem;
+  border-left: 2px solid var(--border);
+  color: var(--fg);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.journal-block-tag {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 0 0.4rem;
+  margin-right: 0.45rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  vertical-align: 1px;
+}
+.journal-block.note { border-left-color: rgba(224,175,104,0.4); }
+
+.journal-metrics {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+}
+
+.journal-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.6rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.journal-actions button {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.journal-actions button:hover:not([disabled]) {
+  color: var(--fg);
+  background: var(--panel-2);
+}
+.journal-actions .path {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-left: auto;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.journal-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

@@ -12,6 +12,11 @@ const state = {
   templateDirty: false, // true when the user edited the template manually
   records: [],          // last list fetched from /api/records, pre-filter
   recordsFilter: "all", // "all" | "strategy" | "build" | "review" | "unknown"
+  // Journal shares the same state.records store as the Records table —
+  // one fetch feeds both views. Filter + search are kept separate so the
+  // two tabs do not interfere with each other's state.
+  journalFilter: "all",
+  journalSearch: "",
   // task carries the human annotations (title + brief) captured at pack
   // time so the Response tab can pre-fill its own fields. Lives only in
   // memory — we deliberately don't persist it across page reloads: a new
@@ -256,6 +261,7 @@ function switchTab(name) {
   if (name === "home") renderHome();
   if (name === "workspace") renderWorkspace();
   if (name === "records") loadRecords();
+  if (name === "journal") loadJournal();
 }
 
 document.querySelectorAll("nav#tabs button").forEach(b => {
@@ -718,6 +724,232 @@ document.getElementById("records-diff-btn").addEventListener("click", () => {
   document.getElementById("cmp-b").value = state.selectedRecords[1] || "";
   switchTab("compare");
 });
+
+// ------------------------------ journal ------------------------------
+//
+// Journal is the Records table re-imagined as a timeline. It reuses the
+// same /api/records payload — no new backend — and the same in-memory
+// state.records array, so opening Journal after Records is free.
+//
+// Grouping is by local calendar day. Chose "day" over "title" because:
+//   - day is always present (every record has a timestamp), title is
+//     often empty on legacy records, so title-grouping would leave most
+//     cards in an "untitled" bucket,
+//   - day matches how a developer remembers work ("what did I do on
+//     Tuesday?") more naturally than "which label did I type",
+//   - timestamps are already pre-formatted "YYYY-MM-DD HH:MM:SS" by the
+//     server (local zone), so splitting on the space is trivial and
+//     unambiguous.
+
+document.querySelectorAll("#journal-filter button").forEach(b => {
+  b.addEventListener("click", () => {
+    state.journalFilter = b.dataset.filter;
+    document.querySelectorAll("#journal-filter button").forEach(x =>
+      x.classList.toggle("active", x.dataset.filter === state.journalFilter));
+    renderJournal();
+  });
+});
+
+document.getElementById("journal-search").addEventListener("input", (e) => {
+  state.journalSearch = e.target.value.toLowerCase().trim();
+  renderJournal();
+});
+
+// loadJournal fetches fresh records only when we don't already have them.
+// The Records and Journal tabs deliberately share state.records so hopping
+// between them feels instant. Clicking "Refresh" explicitly forces a
+// re-fetch (see the refresh-button handler above, which lives on /records
+// but is also what journal-refresh does — we route through loadRecords so
+// both tabs update in sync).
+async function loadJournal() {
+  if (!state.repo) {
+    document.getElementById("journal-status").textContent =
+      "Set a repo in the Workspace tab.";
+    document.getElementById("journal-body").innerHTML =
+      `<div class="journal-empty">no workspace</div>`;
+    return;
+  }
+  const status = document.getElementById("journal-status");
+  // If we already have records in memory (e.g. Records was visited first)
+  // render from that cache so tab switches feel instant. The Refresh
+  // button always forces a new fetch.
+  if (!state.records.length) {
+    status.textContent = "loading…";
+    try {
+      const r = await j("GET", `/api/records?repo=${encodeURIComponent(state.repo)}`);
+      state.records = r.records || [];
+    } catch (e) {
+      status.textContent = "error: " + e.message;
+      document.getElementById("journal-body").innerHTML =
+        `<div class="journal-empty">${esc(e.message)}</div>`;
+      return;
+    }
+  }
+  renderJournal();
+}
+
+// Explicit refresh: re-fetch via loadRecords so the Records table gets
+// updated too. Cheap even on slow filesystems.
+document.getElementById("journal-refresh").addEventListener("click", async () => {
+  await loadRecords();
+  renderJournal();
+});
+
+function journalMatches(rec) {
+  const mode = (rec.mode || "").toLowerCase();
+  const filter = state.journalFilter;
+  if (filter !== "all") {
+    if (filter === "unknown" && mode) return false;
+    if (filter !== "unknown" && mode !== filter) return false;
+  }
+  const q = state.journalSearch;
+  if (!q) return true;
+  const hay = [
+    rec.title || "",
+    rec.brief || "",
+    rec.note  || "",
+    rec.question || "",
+  ].join(" \u0001 ").toLowerCase();
+  return hay.includes(q);
+}
+
+// renderJournal groups the filtered records by local date (YYYY-MM-DD)
+// and emits one "day header" followed by its cards. state.records is
+// already sorted newest-first by the server, so simply iterating in order
+// preserves chronology without an extra sort.
+function renderJournal() {
+  const body = document.getElementById("journal-body");
+  const status = document.getElementById("journal-status");
+  const all = state.records || [];
+  const visible = all.filter(journalMatches);
+
+  if (!all.length) {
+    status.textContent = "0 records";
+    body.innerHTML = `<div class="journal-empty">No records yet. Run a replay and tick "persist".</div>`;
+    return;
+  }
+  if (!visible.length) {
+    status.textContent = `0 / ${all.length} (filtered out)`;
+    body.innerHTML = `<div class="journal-empty">No records match the current filter.</div>`;
+    return;
+  }
+  status.textContent = (state.journalFilter === "all" && !state.journalSearch)
+    ? `${visible.length} records`
+    : `${visible.length} / ${all.length} records`;
+
+  // Group preserving order. Map keeps insertion order in JS.
+  const byDay = new Map();
+  for (const rec of visible) {
+    const day = (rec.timestamp || "").slice(0, 10) || "unknown";
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(rec);
+  }
+
+  const parts = [];
+  for (const [day, recs] of byDay) {
+    parts.push(`
+      <div class="journal-day">
+        <span class="journal-day-date">${esc(day)}</span>
+        <span class="journal-day-rule"></span>
+        <span class="journal-day-count">${recs.length} run${recs.length === 1 ? "" : "s"}</span>
+      </div>`);
+    for (const rec of recs) parts.push(renderJournalCard(rec));
+  }
+  body.innerHTML = parts.join("");
+  wireJournalCardActions();
+}
+
+function renderJournalCard(rec) {
+  const mode = (rec.mode || "").toLowerCase();
+  const cardCls = ["journal-card"];
+  if (mode === "strategy" || mode === "build" || mode === "review") {
+    cardCls.push("mode-" + mode);
+  }
+
+  const headline = rec.title || rec.question || "(untitled)";
+  const time = (rec.timestamp || "").slice(11, 16) || "—";
+
+  const questionBlock = rec.title && rec.question
+    ? `<div class="journal-question">${esc(rec.question)}</div>`
+    : "";
+  const briefBlock = rec.brief
+    ? `<div class="journal-block"><span class="journal-block-tag">brief</span>${esc(rec.brief)}</div>`
+    : "";
+  const noteBlock = rec.note
+    ? `<div class="journal-block note"><span class="journal-block-tag">note</span>${esc(rec.note)}</div>`
+    : "";
+
+  const driftClass = rec.drift_rate > 0.3 ? "bad"
+    : rec.drift_rate > 0.1 ? "warn" : "good";
+  const groundedClass = rec.grounded_ratio >= 0.8 ? "good"
+    : rec.grounded_ratio >= 0.5 ? "warn" : "bad";
+  const recallBadge = rec.expects_facts
+    ? `<span class="badge">recall ${fmtPct(rec.answer_recall)}</span>`
+    : "";
+
+  // Path trimmed for display; the data-path attr carries the full path so
+  // the actions still wire correctly.
+  const displayPath = (rec.path || "").split("/").slice(-2).join("/");
+
+  return `
+    <div class="${cardCls.join(" ")}" data-path="${esc(rec.path)}">
+      <div class="journal-head">
+        <span class="journal-title">${esc(headline)}</span>
+        ${modeBadge(rec.mode)}
+        <span class="journal-time">${esc(time)}</span>
+      </div>
+      ${questionBlock}
+      ${briefBlock}
+      ${noteBlock}
+      <div class="journal-metrics">
+        <span class="badge ${groundedClass}">grounded ${fmtPct(rec.grounded_ratio)}</span>
+        <span class="badge ${driftClass}">drift ${fmtPct(rec.drift_rate)}</span>
+        ${recallBadge}
+      </div>
+      <div class="journal-actions">
+        <button data-action="cmp-a">Use as Compare A</button>
+        <button data-action="cmp-b">Use as Compare B</button>
+        <button data-action="copy">Copy path</button>
+        <span class="path" title="${esc(rec.path)}">${esc(displayPath)}</span>
+      </div>
+    </div>`;
+}
+
+// wireJournalCardActions binds the three action buttons on every card.
+// Delegating on the body once would be lighter, but we re-render after
+// every filter keystroke, so rebinding is cheap and keeps the code local.
+function wireJournalCardActions() {
+  document.querySelectorAll(".journal-card").forEach(card => {
+    const path = card.dataset.path;
+    card.querySelectorAll("[data-action]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const act = btn.dataset.action;
+        if (act === "cmp-a") {
+          document.getElementById("cmp-a").value = path;
+          switchTab("compare");
+        } else if (act === "cmp-b") {
+          document.getElementById("cmp-b").value = path;
+          switchTab("compare");
+        } else if (act === "copy") {
+          navigator.clipboard.writeText(path).then(
+            () => flashButton(btn, "copied"),
+            () => flashButton(btn, "copy failed"),
+          );
+        }
+      });
+    });
+  });
+}
+
+// flashButton shows a transient confirmation in the button itself. Used
+// instead of a toast because we have no toast system and a one-off label
+// flip is enough signal for a local tool.
+function flashButton(btn, msg) {
+  const prev = btn.textContent;
+  btn.textContent = msg;
+  btn.disabled = true;
+  setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
+}
 
 // ------------------------------ compare ------------------------------
 

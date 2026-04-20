@@ -17,6 +17,7 @@
       <button data-tab="task">New task</button>
       <button data-tab="response">Response</button>
       <button data-tab="records">Records</button>
+      <button data-tab="journal">Journal</button>
       <button data-tab="compare">Compare</button>
       <button data-tab="guide">Guide</button>
     </nav>
@@ -31,7 +32,8 @@
         <li><strong>Workspace</strong> — point at a repo, run <code>scan</code> to build the index.</li>
         <li><strong>New task</strong> — ask a question, pack a bundle, copy the Claude prompt.</li>
         <li><strong>Response</strong> — paste the answer, replay the audit, persist the record.</li>
-        <li><strong>Records</strong> — browse past audits for the current repo.</li>
+        <li><strong>Records</strong> — browse past audits for the current repo as a table.</li>
+        <li><strong>Journal</strong> — same records, rendered as a chronological timeline of cards.</li>
         <li><strong>Compare</strong> — diff two records (e.g. before vs after a ranker change).</li>
         <li><strong>Guide</strong> — quick reference for the primitives.</li>
       </ol>
@@ -224,6 +226,30 @@
         <button id="records-diff-btn" disabled>Diff selected →</button>
         <span id="records-selected" class="muted"></span>
       </div>
+    </section>
+
+    <!-- ============================ JOURNAL ============================ -->
+    <section id="tab-journal" class="tab">
+      <h2>Journal</h2>
+      <p class="lead">A readable timeline of your audit records — each run rendered as a card with its title, brief, note and the metrics. Legacy records (no title/brief/note) show up as cards too, anchored to their question.</p>
+      <div class="row">
+        <button id="journal-refresh">Refresh</button>
+        <span class="mode-label">Mode</span>
+        <div id="journal-filter" class="pills">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="strategy">Strategy</button>
+          <button data-filter="build">Build</button>
+          <button data-filter="review">Review</button>
+          <button data-filter="unknown">Unknown</button>
+        </div>
+        <label class="inline" style="flex:1;min-width:240px;margin:0">
+          <input type="text" id="journal-search"
+                 placeholder="search title / brief / note / question"
+                 autocomplete="off">
+        </label>
+        <span id="journal-status" class="muted"></span>
+      </div>
+      <div id="journal-body"></div>
     </section>
 
     <!-- ============================ COMPARE ============================ -->
