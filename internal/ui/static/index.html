@@ -65,42 +65,64 @@
       <h2>New task</h2>
       <p class="lead">Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.</p>
 
+      <div class="mode-bar">
+        <span class="mode-label">Mode</span>
+        <div id="mode-pills" class="pills">
+          <button data-mode="strategy">Strategy</button>
+          <button data-mode="build" class="active">Build</button>
+          <button data-mode="review">Review</button>
+        </div>
+      </div>
+      <div id="mode-card" class="card mode-card"></div>
+
       <div class="grid-2">
         <label>Question
           <textarea id="q-input" rows="3" placeholder="e.g. how does the ranker handle stemming"></textarea>
         </label>
         <div>
           <label>Token budget
-            <input type="number" id="q-budget" value="8000" min="500" max="100000" step="500">
+            <input type="number" id="q-budget" value="3500" min="500" max="100000" step="500">
           </label>
           <label>Focus prefix (optional, comma-separated)
             <input type="text" id="q-focus" placeholder="internal/ranking">
           </label>
           <label class="inline"><input type="checkbox" id="q-changed"> boost git-changed files</label>
           <div class="row">
-            <label>Max files <input type="number" id="q-maxfiles" value="0" min="0"></label>
-            <label>Max fragments <input type="number" id="q-maxfrags" value="0" min="0"></label>
+            <label>Max files <input type="number" id="q-maxfiles" value="8" min="0"></label>
+            <label>Max fragments <input type="number" id="q-maxfrags" value="16" min="0"></label>
             <label class="inline"><input type="checkbox" id="q-signatures" checked> prefer signatures</label>
           </div>
-          <label>Bundle snapshot name (optional)
-            <input type="text" id="q-snapshot" placeholder="audit/bundles/stemming.json">
-          </label>
         </div>
       </div>
 
+      <div class="grid-2">
+        <label>Task slug (optional, used to name the run)
+          <input type="text" id="q-slug" placeholder="008-ui-hardening">
+        </label>
+        <label>Bundle snapshot name (auto-filled from slug + mode)
+          <input type="text" id="q-snapshot" placeholder="audit/bundles/008-ui-hardening-build.json">
+        </label>
+      </div>
+      <div class="muted" id="run-preview">Run name will be: <code>—</code></div>
+
+      <label>Claude prompt template (edit before copying)
+        <textarea id="q-template" rows="10"></textarea>
+      </label>
+
       <div class="row">
         <button id="pack-btn" class="primary">Pack bundle</button>
+        <button id="reset-mode" class="muted-btn">Reset template to mode default</button>
         <span id="pack-status" class="muted"></span>
       </div>
 
       <div id="pack-stats" class="card"></div>
       <div class="row">
-        <button id="copy-prompt" disabled>Copy prompt</button>
+        <button id="copy-prompt" disabled>Copy full prompt (template + bundle)</button>
         <button id="download-prompt" disabled>Download prompt</button>
         <button id="go-response" disabled>Next: paste response →</button>
       </div>
       <details>
-        <summary>Preview prompt</summary>
+        <summary>Preview prompt (template + bundle)</summary>
         <pre id="pack-prompt" class="log tall"></pre>
       </details>
       <details>

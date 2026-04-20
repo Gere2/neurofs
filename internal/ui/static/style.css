@@ -243,3 +243,64 @@ table.records td code { font-size: 0.75rem; }
 
 .guide h3 { margin-top: 1.25rem; color: var(--accent); }
 .guide code { font-size: 0.85em; }
+
+/* ---- mode selector (iteration 8) ---- */
+.mode-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0 0.25rem 0;
+}
+.mode-label {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.pills {
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.pills button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted);
+  padding: 0.3rem 0.85rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.pills button:hover { color: var(--fg); }
+.pills button.active {
+  background: var(--accent);
+  color: #0f1115;
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
+.mode-card {
+  border-left: 3px solid var(--accent);
+}
+.mode-card h3 { margin: 0 0 0.5rem 0; }
+.mode-card .kv dt { padding-top: 0.1rem; }
+
+.muted-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.muted-btn:hover { color: var(--fg); }
+
+#q-template {
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  min-height: 200px;
+}
+
+#run-preview {
+  margin: 0.25rem 0 0.75rem 0;
+}

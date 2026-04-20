@@ -5,10 +5,195 @@
 const state = {
   repo: localStorage.getItem("neurofs.repo") || "",
   lastBundlePath: null, // snapshot path from the last pack, if any
-  lastPrompt: "",
+  lastPrompt: "",       // the bundle prompt returned by /api/pack
   lastPackStats: null,
-  selectedRecords: [], // paths checked in the records tab
+  selectedRecords: [],
+  mode: localStorage.getItem("neurofs.mode") || "build",
+  templateDirty: false, // true when the user edited the template manually
 };
+
+// ------------------------------ modes ------------------------------
+//
+// A "mode" is a small config bundle: preset defaults for the ranker/packer,
+// an editable prompt template, and a short guide telling the user what to
+// do with the output. Modes are pure UI sugar — nothing server-side changes.
+// The template is concatenated in front of the bundle prompt when copying,
+// so Claude sees the mode framing first, then the repo context.
+
+const MODES = {
+  strategy: {
+    label: "Strategy",
+    subtitle: "Decide the approach before writing code.",
+    when: "You're starting an iteration and want a plan, not an implementation.",
+    output: "A short technical design, key decisions, probable files, and a minimal test plan.",
+    next: "Read the plan, agree on scope, then switch to Build for the actual change.",
+    presets: {
+      budget: 2200, maxFiles: 5, maxFragments: 10,
+      changed: false, signatures: true,
+    },
+    slug: "strategy",
+    template: [
+      "You are helping me plan an iteration of a software project.",
+      "Do NOT implement code in this turn. I want a plan first.",
+      "",
+      "Task:",
+      "  <put the task description here; the user filled \"Question\" below with a short label>",
+      "",
+      "Please return, in this exact order:",
+      "  1. Short technical design (under 200 words).",
+      "  2. Key technical decisions and trade-offs.",
+      "  3. Probable files to touch (cite from the bundle when possible).",
+      "  4. Minimal test plan — what must hold true for this to be done.",
+      "  5. Limitations and what we are explicitly NOT doing this iteration.",
+      "  6. Suggested next iteration (one sentence).",
+      "",
+      "Constraints:",
+      "  - No big re-architecture.",
+      "  - No speculative abstractions.",
+      "  - Stay inside the bundle: if something you need is missing, say so.",
+      "",
+      "---",
+      "",
+    ].join("\n"),
+  },
+
+  build: {
+    label: "Build",
+    subtitle: "Implement an iteration that is already defined.",
+    when: "You already have a plan (from Strategy or from your own head) and want working code.",
+    output: "A diff-shaped proposal: files to change, code, test notes, how to run it.",
+    next: "Paste the response in the Response tab and run replay; if grounded/drift look good, apply the diff.",
+    presets: {
+      budget: 3500, maxFiles: 8, maxFragments: 16,
+      changed: true, signatures: true,
+    },
+    slug: "build",
+    template: [
+      "You are helping me implement an already-defined iteration of a software project.",
+      "The plan is below; execute it with the minimum code change that makes it work.",
+      "",
+      "Iteration to implement:",
+      "  <paste the iteration spec here; the user filled \"Question\" below with a short label>",
+      "",
+      "Please return, in this exact order:",
+      "  1. Short design note (1 paragraph) — only if the plan needs clarification.",
+      "  2. Files to create/modify, in order.",
+      "  3. Full code for each file (or the exact edit).",
+      "  4. Minimum tests that prove the iteration works.",
+      "  5. How to run / verify locally.",
+      "  6. Limitations of this implementation.",
+      "",
+      "Constraints:",
+      "  - The project must remain compilable / runnable after the change.",
+      "  - Touch the minimum surface area. No unrelated refactors.",
+      "  - Cite files from the bundle as `path:line` when quoting existing code.",
+      "  - If the bundle is missing something you need, stop and say so.",
+      "",
+      "---",
+      "",
+    ].join("\n"),
+  },
+
+  review: {
+    label: "Review",
+    subtitle: "Evaluate a response, diff, or proposal before integrating.",
+    when: "You have something (someone else's patch, a previous Claude answer, a refactor) and need a second read.",
+    output: "A structured review: what is correct, what is risky, what looks hallucinated, what to do next.",
+    next: "Apply the fixes you agree with, discard the rest, then run a Build iteration if needed.",
+    presets: {
+      budget: 2500, maxFiles: 6, maxFragments: 12,
+      changed: true, signatures: true,
+    },
+    slug: "review",
+    template: [
+      "You are reviewing a change, response, or proposal against the code I gave you.",
+      "Be specific, conservative, and grounded in the bundle.",
+      "",
+      "What to review:",
+      "  <paste the diff, response, or proposal here; the user filled \"Question\" below with a short label>",
+      "",
+      "Please return, in this exact order:",
+      "  1. Short summary of what the change does.",
+      "  2. What looks correct or well-reasoned.",
+      "  3. Risks — bugs, broken invariants, performance, security.",
+      "  4. Likely hallucinations or unverified assumptions (flag them explicitly).",
+      "  5. Concrete fixes or counter-proposals.",
+      "  6. Suggested next step (most useful single action).",
+      "",
+      "Constraints:",
+      "  - Cite from the bundle as `path:line` when pointing at existing code.",
+      "  - If a claim in the change cannot be verified from the bundle, say so — do not guess.",
+      "",
+      "---",
+      "",
+    ].join("\n"),
+  },
+};
+
+function applyMode(name, { preserveUserEdits = false } = {}) {
+  const m = MODES[name];
+  if (!m) return;
+  state.mode = name;
+  localStorage.setItem("neurofs.mode", name);
+
+  // Pill selector visual state.
+  document.querySelectorAll("#mode-pills button").forEach(b =>
+    b.classList.toggle("active", b.dataset.mode === name));
+
+  // Presets — always overwrite. Mode change = explicit intent.
+  document.getElementById("q-budget").value = m.presets.budget;
+  document.getElementById("q-maxfiles").value = m.presets.maxFiles;
+  document.getElementById("q-maxfrags").value = m.presets.maxFragments;
+  document.getElementById("q-changed").checked = m.presets.changed;
+  document.getElementById("q-signatures").checked = m.presets.signatures;
+
+  // Template — only overwrite if the user hasn't edited it manually.
+  if (!preserveUserEdits || !state.templateDirty) {
+    document.getElementById("q-template").value = m.template;
+    state.templateDirty = false;
+  }
+
+  // Guide card.
+  document.getElementById("mode-card").innerHTML = `
+    <h3>${esc(m.label)} <span class="muted" style="font-weight:400">— ${esc(m.subtitle)}</span></h3>
+    <dl class="kv">
+      <dt>When to use</dt><dd>${esc(m.when)}</dd>
+      <dt>Expected output</dt><dd>${esc(m.output)}</dd>
+      <dt>Next step</dt><dd>${esc(m.next)}</dd>
+    </dl>`;
+
+  updateRunPreview();
+  // Programmatic .value assignment does not fire "input", so refresh the
+  // combined-prompt preview manually once the new template is in place.
+  if (typeof refreshFullPrompt === "function") refreshFullPrompt();
+}
+
+// slugify turns "008 UI hardening!" → "008-ui-hardening". Minimal — we only
+// need stable filenames, not a general i18n slugger.
+function slugify(s) {
+  return String(s).toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+// updateRunPreview builds `<slug>-<mode>` and auto-fills the snapshot path if
+// the user has not typed one manually. Explicitly skips overwriting when the
+// user already customised q-snapshot — their edit wins.
+function updateRunPreview() {
+  const mode = state.mode;
+  const slugInput = document.getElementById("q-slug").value.trim();
+  const question = document.getElementById("q-input").value.trim();
+  const base = slugInput ? slugify(slugInput) : slugify(question);
+  const runName = base ? `${base}-${mode}` : `(untitled)-${mode}`;
+  document.getElementById("run-preview").innerHTML =
+    `Run name will be: <code>${esc(runName)}</code>`;
+
+  const snap = document.getElementById("q-snapshot");
+  if (!snap.dataset.touched && base) {
+    snap.value = `audit/bundles/${runName}.json`;
+  }
+}
 
 // ------------------------------ helpers ------------------------------
 
@@ -56,6 +241,25 @@ function switchTab(name) {
 
 document.querySelectorAll("nav#tabs button").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
+});
+
+// ------------------------------ mode wiring ------------------------------
+
+document.querySelectorAll("#mode-pills button").forEach(b => {
+  b.addEventListener("click", () => applyMode(b.dataset.mode));
+});
+document.getElementById("q-slug").addEventListener("input", updateRunPreview);
+document.getElementById("q-input").addEventListener("input", updateRunPreview);
+document.getElementById("q-snapshot").addEventListener("input", (e) => {
+  // Flag as user-edited so updateRunPreview stops auto-filling it.
+  e.target.dataset.touched = "1";
+});
+document.getElementById("q-template").addEventListener("input", () => {
+  state.templateDirty = true;
+});
+document.getElementById("reset-mode").addEventListener("click", () => {
+  state.templateDirty = false;
+  applyMode(state.mode);
 });
 
 // ------------------------------ home ------------------------------
@@ -173,10 +377,13 @@ document.getElementById("pack-btn").addEventListener("click", async () => {
       prefer_signatures: document.getElementById("q-signatures").checked,
       snapshot_name: document.getElementById("q-snapshot").value.trim(),
     });
-    state.lastPrompt = r.prompt;
+    // The "full prompt" users copy is the mode template concatenated in
+    // front of the bundle prompt. We keep the server response verbatim so
+    // re-copying after edits picks up the latest template text.
+    state.lastBundlePrompt = r.prompt;
     state.lastBundlePath = r.bundle_path || null;
     state.lastPackStats = r.stats;
-    document.getElementById("pack-prompt").textContent = r.prompt;
+    refreshFullPrompt();
     renderPackStats(r);
     ["copy-prompt", "download-prompt", "go-response"].forEach(id =>
       document.getElementById(id).disabled = false);
@@ -208,22 +415,46 @@ function renderPackStats(r) {
     : `<span class="muted">no fragments</span>`;
 }
 
+// refreshFullPrompt re-renders the preview pane with the current template
+// concatenated in front of the bundle prompt. Invoked on pack success and
+// on template edits so the preview never gets stale.
+function refreshFullPrompt() {
+  const tpl = document.getElementById("q-template").value;
+  const bundle = state.lastBundlePrompt || "";
+  state.lastPrompt = (tpl ? tpl.trimEnd() + "\n\n" : "") + bundle;
+  document.getElementById("pack-prompt").textContent = state.lastPrompt;
+}
+
+document.getElementById("q-template").addEventListener("input", refreshFullPrompt);
+
 document.getElementById("copy-prompt").addEventListener("click", async () => {
+  refreshFullPrompt();
   try {
     await navigator.clipboard.writeText(state.lastPrompt);
-    document.getElementById("pack-status").textContent = "copied to clipboard";
+    document.getElementById("pack-status").textContent = "copied (template + bundle)";
   } catch {
     document.getElementById("pack-status").textContent = "clipboard denied — use download";
   }
 });
 
 document.getElementById("download-prompt").addEventListener("click", () => {
+  refreshFullPrompt();
+  const runName = suggestRunName();
   const blob = new Blob([state.lastPrompt], { type: "text/plain" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = "neurofs.prompt.txt";
+  a.download = `${runName || "neurofs"}.prompt.txt`;
   a.click();
 });
+
+// suggestRunName mirrors the run-preview logic for the download filename.
+function suggestRunName() {
+  const slugInput = document.getElementById("q-slug").value.trim();
+  const question = document.getElementById("q-input").value.trim();
+  const base = slugInput ? slugify(slugInput) : slugify(question);
+  if (!base) return "";
+  return `${base}-${state.mode}`;
+}
 
 document.getElementById("go-response").addEventListener("click", () => switchTab("response"));
 
@@ -416,4 +647,5 @@ function renderDiff(d) {
 
 // ------------------------------ init ------------------------------
 
+applyMode(state.mode);
 switchTab("home");
