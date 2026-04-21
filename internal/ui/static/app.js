@@ -21,6 +21,20 @@ const state = {
   // user expands cards. Keeps expand→collapse→expand instant and
   // survives re-renders triggered by filter/search keystrokes.
   journalFull: {},
+  // Global Search (iteration 14). searchResults is null before the first
+  // query so we can show a friendly "type something" placeholder
+  // instead of a misleading "no results" state. searchScope is
+  // "all" | "metadata" | "paths" | "content"; searchMode uses the
+  // same vocabulary as the Journal mode filter.
+  searchQuery: "",
+  searchScope: "all",
+  searchMode: "all",
+  searchResults: null,
+  searchTotalMatches: 0,
+  // When the user clicks "Open in Journal" from a Search result, we
+  // stash the path here so renderJournal (next render) can find the
+  // card, scroll it into view, expand it, and flash it.
+  pendingJournalFocus: null,
   // task carries the human annotations (title + brief) captured at pack
   // time so the Response tab can pre-fill its own fields. Lives only in
   // memory — we deliberately don't persist it across page reloads: a new
@@ -1109,6 +1123,259 @@ function flashButton(btn, msg) {
   btn.textContent = msg;
   btn.disabled = true;
   setTimeout(() => { btn.textContent = prev; btn.disabled = false; }, 900);
+}
+
+// ------------------------------ search ------------------------------
+//
+// Global substring search across every audit record. The backend does
+// the walking; this side wires the input, scope/mode pills, renders
+// results, and handles navigation back into Journal.
+
+document.getElementById("search-btn").addEventListener("click", runSearch);
+
+// Enter in the input triggers search. We don't debounce per-keystroke
+// because the server walks the filesystem; one click / one Enter / one
+// query keeps the behaviour obvious.
+document.getElementById("search-q").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    runSearch();
+  } else if (ev.key === "Escape") {
+    ev.target.value = "";
+  }
+});
+
+// Scope pills: all | metadata | paths | content. Switching the pill
+// does NOT auto-re-run the query — the user may have been typing a
+// different term. If results already exist, re-run so the UI matches
+// the pill state.
+document.querySelectorAll("#search-scope button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#search-scope button")
+      .forEach(x => x.classList.toggle("active", x === b));
+    state.searchScope = b.dataset.scope;
+    if (state.searchResults !== null) runSearch();
+  });
+});
+
+document.querySelectorAll("#search-mode button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#search-mode button")
+      .forEach(x => x.classList.toggle("active", x === b));
+    state.searchMode = b.dataset.filter;
+    if (state.searchResults !== null) runSearch();
+  });
+});
+
+async function runSearch() {
+  const q = document.getElementById("search-q").value.trim();
+  const status = document.getElementById("search-status");
+  if (!state.repo) {
+    status.textContent = "Set a repo in the Workspace tab.";
+    return;
+  }
+  if (!q) {
+    state.searchResults = null;
+    state.searchTotalMatches = 0;
+    status.textContent = "";
+    renderSearchResults();
+    return;
+  }
+  state.searchQuery = q;
+  status.textContent = "searching…";
+  try {
+    const url = `/api/search?repo=${encodeURIComponent(state.repo)}`
+      + `&q=${encodeURIComponent(q)}`
+      + `&scope=${encodeURIComponent(state.searchScope)}`
+      + `&mode=${encodeURIComponent(state.searchMode)}`;
+    const r = await j("GET", url);
+    state.searchResults = r.results || [];
+    state.searchTotalMatches = r.total_matches || state.searchResults.length;
+    const shown = state.searchResults.length;
+    const total = state.searchTotalMatches;
+    status.textContent = total === 0
+      ? "no matches"
+      : shown < total
+        ? `${shown} of ${total} matches shown`
+        : `${shown} match${shown === 1 ? "" : "es"}`;
+    renderSearchResults();
+  } catch (e) {
+    status.textContent = "error: " + e.message;
+    state.searchResults = [];
+    renderSearchResults();
+  }
+}
+
+function renderSearchResults() {
+  const body = document.getElementById("search-body");
+  if (state.searchResults === null) {
+    body.innerHTML = `<div class="search-empty">type a query and hit Enter.</div>`;
+    return;
+  }
+  if (state.searchResults.length === 0) {
+    body.innerHTML = `<div class="search-empty">no matches for <code>${esc(state.searchQuery)}</code> under current filters.</div>`;
+    return;
+  }
+  body.innerHTML = state.searchResults.map(renderSearchCard).join("");
+  wireSearchCardActions();
+}
+
+// matchFieldLabel maps the server's field names to short UI labels.
+// Kept next to the color classes so a glance at the code tells you
+// which fields exist and how they render.
+const MATCH_FIELD_LABEL = {
+  title: "title",
+  brief: "brief",
+  note: "note",
+  question: "question",
+  mode: "mode",
+  bundle_hash: "bundle",
+  fragment_path: "path",
+  fragment_content: "content",
+};
+
+function renderSearchCard(rec) {
+  const headline = rec.title && rec.title.trim()
+    ? rec.title
+    : (rec.question || "(no title · no question)");
+  const shortPath = (rec.path || "").split("/").slice(-2).join("/");
+  const groundedClass = rec.grounded_ratio >= 0.8 ? "good"
+    : rec.grounded_ratio >= 0.5 ? "warn" : "bad";
+  const driftClass = rec.drift_rate > 0.3 ? "bad"
+    : rec.drift_rate > 0.1 ? "warn" : "good";
+
+  const matchesHtml = (rec.matches || []).map(m => {
+    const label = MATCH_FIELD_LABEL[m.field] || m.field;
+    const relPath = m.rel_path
+      ? `<code class="match-relpath">${esc(m.rel_path)}</code>`
+      : "";
+    const snippet = highlightSnippet(m.snippet || "", state.searchQuery);
+    return `<div class="match">
+      <span class="match-field match-${esc(m.field)}">${esc(label)}</span>
+      ${relPath}
+      <span class="match-snippet">${snippet}</span>
+    </div>`;
+  }).join("");
+
+  return `<div class="search-card mode-${esc(rec.mode || "unknown")}"
+    data-path="${esc(rec.path)}">
+    <div class="search-head">
+      <span class="search-title">${esc(headline)}</span>
+      ${modeBadge(rec.mode)}
+      <span class="search-time">${esc(rec.timestamp || "")}</span>
+    </div>
+    <div class="search-metrics">
+      <span class="badge ${groundedClass}">grounded ${fmtPct(rec.grounded_ratio || 0)}</span>
+      <span class="badge ${driftClass}">drift ${fmtPct(rec.drift_rate || 0)}</span>
+      <span class="badge">score ${rec.score}</span>
+    </div>
+    <div class="search-matches">${matchesHtml}</div>
+    <div class="search-actions">
+      <button data-action="open">Open in Journal</button>
+      <button data-action="cmp-a">Use as Compare A</button>
+      <button data-action="cmp-b">Use as Compare B</button>
+      <button data-action="copy">Copy path</button>
+      <span class="path" title="${esc(rec.path)}">${esc(shortPath)}</span>
+    </div>
+  </div>`;
+}
+
+// highlightSnippet wraps every case-insensitive occurrence of `q` in
+// <mark>. We escape both sides before interleaving so a query like
+// "<tag>" cannot inject markup.
+function highlightSnippet(snippet, q) {
+  if (!q) return esc(snippet);
+  const low = snippet.toLowerCase();
+  const lowQ = q.toLowerCase();
+  if (!lowQ) return esc(snippet);
+  let out = "";
+  let i = 0;
+  while (i < snippet.length) {
+    const idx = low.indexOf(lowQ, i);
+    if (idx < 0) { out += esc(snippet.slice(i)); break; }
+    out += esc(snippet.slice(i, idx));
+    out += `<mark>${esc(snippet.slice(idx, idx + q.length))}</mark>`;
+    i = idx + q.length;
+  }
+  return out;
+}
+
+function wireSearchCardActions() {
+  document.querySelectorAll(".search-card").forEach(card => {
+    const path = card.dataset.path;
+    card.querySelectorAll("[data-action]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const act = btn.dataset.action;
+        if (act === "cmp-a") {
+          document.getElementById("cmp-a").value = path;
+          switchTab("compare");
+        } else if (act === "cmp-b") {
+          document.getElementById("cmp-b").value = path;
+          switchTab("compare");
+        } else if (act === "copy") {
+          navigator.clipboard.writeText(path).then(
+            () => flashButton(btn, "copied"),
+            () => flashButton(btn, "copy failed"),
+          );
+        } else if (act === "open") {
+          openInJournal(path);
+        }
+      });
+    });
+  });
+}
+
+// openInJournal is the bridge from Search back into the Journal flow.
+// To make the target card actually visible we have to reset both
+// filter and text search on the Journal side — otherwise a filter
+// change since the user last used Journal would hide the very card
+// they just asked for. After the render lands we scroll to the card,
+// expand it, and flash it briefly so the eye locks on.
+async function openInJournal(path) {
+  state.journalFilter = "all";
+  state.journalSearch = "";
+  // Sync the Journal UI controls so they reflect the reset state.
+  document.querySelectorAll("#journal-filter button")
+    .forEach(b => b.classList.toggle("active", b.dataset.filter === "all"));
+  const searchInput = document.getElementById("journal-search");
+  if (searchInput) searchInput.value = "";
+
+  state.pendingJournalFocus = path;
+  switchTab("journal");
+  await loadJournal();
+  focusJournalCard(path);
+}
+
+function focusJournalCard(path) {
+  if (!path) return;
+  // Let the render settle (renderJournal is synchronous but switchTab
+  // flips display so the browser layout lags a tick).
+  requestAnimationFrame(() => {
+    const card = document.querySelector(`.journal-card[data-path="${cssEscape(path)}"]`);
+    if (!card) return;
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Expand via the card's own Expand button so we reuse the existing
+    // cache-and-render path rather than duplicating it here.
+    const btn = card.querySelector('[data-action="expand"]');
+    const panel = card.querySelector(".journal-expand");
+    if (btn && panel && panel.hidden) btn.click();
+    card.classList.remove("focus-flash");
+    // Force a reflow so re-adding the class restarts the animation.
+    void card.offsetWidth;
+    card.classList.add("focus-flash");
+    state.pendingJournalFocus = null;
+  });
+}
+
+// cssEscape escapes a string for use in a CSS selector. Paths contain
+// characters (`/`, `.`, `-`) that CSS tolerates inside attribute
+// selectors, but quotes/backslashes would break the selector — so we
+// escape defensively with the native CSS.escape when present.
+function cssEscape(s) {
+  if (window.CSS && typeof window.CSS.escape === "function") {
+    return window.CSS.escape(s);
+  }
+  return s.replace(/["\\]/g, "\\$&");
 }
 
 // ------------------------------ compare ------------------------------

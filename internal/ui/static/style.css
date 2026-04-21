@@ -678,3 +678,179 @@ table.records td code { font-size: 0.75rem; }
   border-right: 0;
   border-bottom: 0;
 }
+
+/* ---- global search (iteration 14) ----
+   The Search tab reuses the Journal card anatomy (mode-coloured left
+   bar, head/metrics/actions) so users don't re-learn layout. The
+   per-result matches row is the only new element: small field badges
+   + optional rel_path + snippet with <mark> highlights. Everything
+   stays inside the existing colour system — no new palette. */
+#search-q {
+  width: 100%;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.45rem 0.7rem;
+  font-family: inherit;
+  font-size: 0.9rem;
+  margin: 0;
+}
+.search-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.search-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin: 0.6rem 0;
+  transition: border-color 0.1s;
+}
+.search-card:hover { border-color: #3a404d; }
+.search-card.mode-strategy { border-left-color: var(--accent); }
+.search-card.mode-build    { border-left-color: var(--good); }
+.search-card.mode-review   { border-left-color: var(--warn); }
+
+.search-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+.search-title {
+  font-weight: 600;
+  color: var(--fg);
+  font-size: 0.98rem;
+}
+.search-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  margin-left: auto;
+  font-family: var(--mono);
+}
+.search-metrics {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.25rem;
+  margin-bottom: 0.45rem;
+}
+
+.search-matches {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.6rem;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+}
+.match {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  flex-wrap: wrap;
+}
+.match-field {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.05rem 0.45rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* Different hue per field family — eyes grouping "this is metadata"
+   vs "this is fragment content" matters far more than ranking order. */
+.match-field.match-title,
+.match-field.match-brief,
+.match-field.match-note,
+.match-field.match-question,
+.match-field.match-mode,
+.match-field.match-bundle_hash {
+  background: rgba(122,162,247,0.15);
+  color: var(--accent);
+  border: 1px solid rgba(122,162,247,0.3);
+}
+.match-field.match-fragment_path {
+  background: rgba(224,175,104,0.15);
+  color: var(--warn);
+  border: 1px solid rgba(224,175,104,0.3);
+}
+.match-field.match-fragment_content {
+  background: rgba(158,206,106,0.12);
+  color: var(--good);
+  border: 1px solid rgba(158,206,106,0.3);
+}
+.match-relpath {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  background: transparent;
+  padding: 0;
+  color: var(--muted);
+}
+.match-snippet {
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}
+.match-snippet mark {
+  background: rgba(224,175,104,0.35);
+  color: var(--fg);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+
+.search-actions {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.search-actions button {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.75rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+.search-actions button:hover:not([disabled]) {
+  color: var(--fg);
+  background: var(--panel-2);
+}
+.search-actions .path {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  color: var(--muted);
+  margin-left: auto;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+/* focus-flash is toggled onto a .journal-card briefly when the user
+   jumps to it from Search — it draws the eye without being noisy. */
+@keyframes focus-flash-kf {
+  0%   { background: rgba(122,162,247,0.20); }
+  60%  { background: rgba(122,162,247,0.10); }
+  100% { background: var(--panel); }
+}
+.journal-card.focus-flash {
+  animation: focus-flash-kf 1.6s ease-out 1;
+}

@@ -18,6 +18,7 @@
       <button data-tab="response">Response</button>
       <button data-tab="records">Records</button>
       <button data-tab="journal">Journal</button>
+      <button data-tab="search">Search</button>
       <button data-tab="compare">Compare</button>
       <button data-tab="guide">Guide</button>
     </nav>
@@ -250,6 +251,39 @@
         <span id="journal-status" class="muted"></span>
       </div>
       <div id="journal-body"></div>
+    </section>
+
+    <!-- ============================ SEARCH ============================ -->
+    <section id="tab-search" class="tab">
+      <h2>Search</h2>
+      <p class="lead">Find prior runs by title, brief, note, question, mode, bundle hash, fragment paths, or fragment content. Case-insensitive substring — quick and local.</p>
+      <div class="row">
+        <label class="inline" style="flex:1;min-width:280px;margin:0">
+          <input type="text" id="search-q"
+                 placeholder="text to find across your audit history (Enter to search)"
+                 autocomplete="off">
+        </label>
+        <button id="search-btn" class="primary">Search</button>
+        <span id="search-status" class="muted"></span>
+      </div>
+      <div class="row">
+        <span class="mode-label">Scope</span>
+        <div id="search-scope" class="pills">
+          <button data-scope="all" class="active">All</button>
+          <button data-scope="metadata">Metadata</button>
+          <button data-scope="paths">Paths</button>
+          <button data-scope="content">Content</button>
+        </div>
+        <span class="mode-label">Mode</span>
+        <div id="search-mode" class="pills">
+          <button data-filter="all" class="active">All</button>
+          <button data-filter="strategy">Strategy</button>
+          <button data-filter="build">Build</button>
+          <button data-filter="review">Review</button>
+          <button data-filter="unknown">Unknown</button>
+        </div>
+      </div>
+      <div id="search-body"></div>
     </section>
 
     <!-- ============================ COMPARE ============================ -->
