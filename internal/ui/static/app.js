@@ -971,7 +971,6 @@ function wireJournalCardActions() {
 async function toggleJournalExpand(card, btn) {
   const panel = card.querySelector(".journal-expand");
   if (!panel) return;
-  const path = card.dataset.path;
 
   if (!panel.hidden) {
     panel.hidden = true;
@@ -979,33 +978,7 @@ async function toggleJournalExpand(card, btn) {
     return;
   }
 
-  // If we've already fetched this record, reuse the cached DOM.
-  if (panel.dataset.loaded === "1") {
-    panel.hidden = false;
-    btn.textContent = "Collapse";
-    return;
-  }
-
-  btn.disabled = true;
-  btn.textContent = "loading…";
-  try {
-    let full = state.journalFull[path];
-    if (!full) {
-      const url = `/api/record?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`;
-      full = await j("GET", url);
-      state.journalFull[path] = full;
-    }
-    panel.innerHTML = renderJournalExpand(full);
-    panel.dataset.loaded = "1";
-    panel.hidden = false;
-    btn.textContent = "Collapse";
-  } catch (e) {
-    panel.innerHTML = `<div class="muted">could not load record: ${esc(e.message)}</div>`;
-    panel.hidden = false;
-    btn.textContent = "Expand";
-  } finally {
-    btn.disabled = false;
-  }
+  await ensureJournalCardExpanded(card, btn);
 }
 
 // renderJournalExpand is the read-only detailed view of an AuditRecord.
@@ -1104,7 +1077,7 @@ function renderJournalFragment(f, i) {
     ? `<pre class="log tall">${esc(f.content)}</pre>`
     : `<div class="muted fragments-empty">no content persisted for this fragment — only metadata is available</div>`;
 
-  return `<details class="fragment">
+  return `<details class="fragment" data-rel-path="${esc(path)}">
     <summary>
       <code class="frag-path">${esc(path)}</code>
       <span class="frag-rep">${esc(rep)}</span>
@@ -1250,7 +1223,12 @@ function renderSearchCard(rec) {
       ? `<code class="match-relpath">${esc(m.rel_path)}</code>`
       : "";
     const snippet = highlightSnippet(m.snippet || "", state.searchQuery);
-    return `<div class="match">
+    const targetClass = m.rel_path ? " match-target" : "";
+    const targetAttr = m.rel_path
+      ? ` data-rel-path="${esc(m.rel_path)}" title="Open matching fragment in Journal"`
+      : "";
+
+    return `<div class="match${targetClass}"${targetAttr}>
       <span class="match-field match-${esc(m.field)}">${esc(label)}</span>
       ${relPath}
       <span class="match-snippet">${snippet}</span>
@@ -1303,6 +1281,7 @@ function highlightSnippet(snippet, q) {
 function wireSearchCardActions() {
   document.querySelectorAll(".search-card").forEach(card => {
     const path = card.dataset.path;
+
     card.querySelectorAll("[data-action]").forEach(btn => {
       btn.addEventListener("click", () => {
         const act = btn.dataset.action;
@@ -1322,7 +1301,138 @@ function wireSearchCardActions() {
         }
       });
     });
+
+    card.querySelectorAll(".match.match-target").forEach(row => {
+      row.addEventListener("click", () => {
+        openInJournal(path, {
+          relPath: row.dataset.relPath || "",
+          needle: state.searchQuery || "",
+        });
+      });
+    });
   });
+}
+
+function waitNextFrame() {
+  return new Promise(resolve => requestAnimationFrame(resolve));
+}
+
+async function ensureJournalCardExpanded(card, btn) {
+  const panel = card.querySelector(".journal-expand");
+  if (!panel) return null;
+  const path = card.dataset.path;
+
+  if (panel.dataset.loaded === "1") {
+    panel.hidden = false;
+    if (btn) btn.textContent = "Collapse";
+    return panel;
+  }
+
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "loading…";
+  }
+
+  try {
+    let full = state.journalFull[path];
+    if (!full) {
+      const url = `/api/record?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`;
+      full = await j("GET", url);
+      state.journalFull[path] = full;
+    }
+
+    panel.innerHTML = renderJournalExpand(full);
+    panel.dataset.loaded = "1";
+    panel.hidden = false;
+    if (btn) btn.textContent = "Collapse";
+    return panel;
+  } catch (e) {
+    panel.innerHTML = `<div class="muted">could not load record: ${esc(e.message)}</div>`;
+    panel.hidden = false;
+    if (btn) btn.textContent = "Expand";
+    return panel;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function clearJournalPreHighlights() {
+  document.querySelectorAll(".fragment pre.log[data-raw-text]").forEach(pre => {
+    if (pre.querySelector("mark.match-focus")) {
+      pre.textContent = pre.dataset.rawText || pre.textContent;
+    }
+  });
+}
+
+function highlightFirstInPre(pre, needle) {
+  const source = pre.dataset.rawText || pre.textContent || "";
+  pre.dataset.rawText = source;
+
+  if (!needle || !needle.trim()) {
+    pre.textContent = source;
+    return null;
+  }
+
+  const rawNeedle = needle.trim();
+  const lowSource = source.toLowerCase();
+  const lowNeedle = rawNeedle.toLowerCase();
+  const idx = lowSource.indexOf(lowNeedle);
+
+  pre.textContent = source;
+  if (idx < 0) return null;
+
+  const before = source.slice(0, idx);
+  const hit = source.slice(idx, idx + rawNeedle.length);
+  const after = source.slice(idx + rawNeedle.length);
+
+  const mark = document.createElement("mark");
+  mark.className = "match-focus";
+  mark.textContent = hit;
+
+  pre.replaceChildren(
+    document.createTextNode(before),
+    mark,
+    document.createTextNode(after),
+  );
+
+  return mark;
+}
+
+function flashFragment(fragment) {
+  fragment.classList.remove("fragment-focus");
+  void fragment.offsetWidth;
+  fragment.classList.add("fragment-focus");
+}
+
+async function focusFragmentInPanel(panel, relPath, needle) {
+  if (!panel || !relPath) return;
+
+  const block = panel.querySelector(".fragments-block");
+  if (block && block.tagName === "DETAILS") {
+    block.open = true;
+  }
+
+  await waitNextFrame();
+
+  const fragment = panel.querySelector(`.fragment[data-rel-path="${cssEscape(relPath)}"]`);
+  if (!fragment) return;
+
+  fragment.open = true;
+  flashFragment(fragment);
+  fragment.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  await waitNextFrame();
+
+  clearJournalPreHighlights();
+
+  const pre = fragment.querySelector("pre.log");
+  if (!pre) return;
+
+  const mark = highlightFirstInPre(pre, needle);
+  if (!mark) return;
+
+  const top = Math.max(0, mark.offsetTop - (pre.clientHeight / 2));
+  pre.scrollTo({ top, behavior: "smooth" });
 }
 
 // openInJournal is the bridge from Search back into the Journal flow.
@@ -1331,40 +1441,47 @@ function wireSearchCardActions() {
 // change since the user last used Journal would hide the very card
 // they just asked for. After the render lands we scroll to the card,
 // expand it, and flash it briefly so the eye locks on.
-async function openInJournal(path) {
+async function openInJournal(path, target = null) {
   state.journalFilter = "all";
   state.journalSearch = "";
-  // Sync the Journal UI controls so they reflect the reset state.
   document.querySelectorAll("#journal-filter button")
     .forEach(b => b.classList.toggle("active", b.dataset.filter === "all"));
+
   const searchInput = document.getElementById("journal-search");
   if (searchInput) searchInput.value = "";
 
   state.pendingJournalFocus = path;
   switchTab("journal");
   await loadJournal();
-  focusJournalCard(path);
+  await focusJournalCard(path, target);
 }
 
-function focusJournalCard(path) {
+async function focusJournalCard(path, target = null) {
   if (!path) return;
-  // Let the render settle (renderJournal is synchronous but switchTab
-  // flips display so the browser layout lags a tick).
-  requestAnimationFrame(() => {
-    const card = document.querySelector(`.journal-card[data-path="${cssEscape(path)}"]`);
-    if (!card) return;
-    card.scrollIntoView({ behavior: "smooth", block: "center" });
-    // Expand via the card's own Expand button so we reuse the existing
-    // cache-and-render path rather than duplicating it here.
-    const btn = card.querySelector('[data-action="expand"]');
-    const panel = card.querySelector(".journal-expand");
-    if (btn && panel && panel.hidden) btn.click();
-    card.classList.remove("focus-flash");
-    // Force a reflow so re-adding the class restarts the animation.
-    void card.offsetWidth;
-    card.classList.add("focus-flash");
-    state.pendingJournalFocus = null;
-  });
+
+  await waitNextFrame();
+
+  const card = document.querySelector(`.journal-card[data-path="${cssEscape(path)}"]`);
+  if (!card) return;
+
+  card.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  const btn = card.querySelector('[data-action="expand"]');
+  const panel = card.querySelector(".journal-expand");
+
+  if (btn && panel && panel.hidden) {
+    await ensureJournalCardExpanded(card, btn);
+  }
+
+  card.classList.remove("focus-flash");
+  void card.offsetWidth;
+  card.classList.add("focus-flash");
+
+  if (panel && target && target.relPath) {
+    await focusFragmentInPanel(panel, target.relPath, target.needle || "");
+  }
+
+  state.pendingJournalFocus = null;
 }
 
 // cssEscape escapes a string for use in a CSS selector. Paths contain
