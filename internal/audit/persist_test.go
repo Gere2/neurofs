@@ -79,6 +79,48 @@ func TestListRecordsSortsChronologically(t *testing.T) {
 	}
 }
 
+func TestSaveRecordDoesNotCollideOnSameBundleSameSecond(t *testing.T) {
+	// Prior filename scheme was "<unix-sec>-<shorthash>.json" and happily
+	// overwrote a record if you replayed the same bundle twice inside one
+	// wall-clock second (which happens in practice: back-to-back UI
+	// replays, CI parallel jobs). The new scheme appends a random suffix
+	// so the same inputs always produce distinct filenames.
+	dir := t.TempDir()
+	rec := AuditRecord{
+		BundleHash: "deadbeefcafebabe",
+		Timestamp:  time.Unix(1_800_000_042, 0),
+	}
+
+	const runs = 32
+	seen := make(map[string]bool, runs)
+	for i := 0; i < runs; i++ {
+		path, err := SaveRecord(dir, rec)
+		if err != nil {
+			t.Fatalf("SaveRecord(%d): %v", i, err)
+		}
+		if seen[path] {
+			t.Fatalf("collision: path %q was produced twice in %d runs", path, i+1)
+		}
+		seen[path] = true
+	}
+
+	paths, err := ListRecords(dir)
+	if err != nil {
+		t.Fatalf("ListRecords: %v", err)
+	}
+	if len(paths) != runs {
+		t.Fatalf("expected %d persisted files, got %d", runs, len(paths))
+	}
+	// Every filename must still start with the unix-sec prefix so ordering
+	// by lexical sort stays chronologically correct for mixed
+	// legacy+new records.
+	for _, p := range paths {
+		if !strings.Contains(filepath.Base(p), "1800000042-deadbeef") {
+			t.Errorf("expected prefix 1800000042-deadbeef in %s", p)
+		}
+	}
+}
+
 func TestListRecordsIgnoresNonJSON(t *testing.T) {
 	dir := t.TempDir()
 	rec := AuditRecord{BundleHash: "cafe0001cafe0001", Timestamp: time.Unix(1_700_000_001, 0)}

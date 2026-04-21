@@ -17,6 +17,10 @@ const state = {
   // two tabs do not interfere with each other's state.
   journalFilter: "all",
   journalSearch: "",
+  // Cache for full AuditRecord payloads keyed by path, populated as the
+  // user expands cards. Keeps expand→collapse→expand instant and
+  // survives re-renders triggered by filter/search keystrokes.
+  journalFull: {},
   // task carries the human annotations (title + brief) captured at pack
   // time so the Response tab can pre-fill its own fields. Lives only in
   // memory — we deliberately don't persist it across page reloads: a new
@@ -907,15 +911,17 @@ function renderJournalCard(rec) {
         ${recallBadge}
       </div>
       <div class="journal-actions">
+        <button data-action="expand">Expand</button>
         <button data-action="cmp-a">Use as Compare A</button>
         <button data-action="cmp-b">Use as Compare B</button>
         <button data-action="copy">Copy path</button>
         <span class="path" title="${esc(rec.path)}">${esc(displayPath)}</span>
       </div>
+      <div class="journal-expand" hidden></div>
     </div>`;
 }
 
-// wireJournalCardActions binds the three action buttons on every card.
+// wireJournalCardActions binds the action buttons on every card.
 // Delegating on the body once would be lighter, but we re-render after
 // every filter keystroke, so rebinding is cheap and keeps the code local.
 function wireJournalCardActions() {
@@ -935,10 +941,108 @@ function wireJournalCardActions() {
             () => flashButton(btn, "copied"),
             () => flashButton(btn, "copy failed"),
           );
+        } else if (act === "expand") {
+          toggleJournalExpand(card, btn);
         }
       });
     });
   });
+}
+
+// toggleJournalExpand opens/closes the expanded panel of a card. The full
+// AuditRecord is cached in state.journalFull keyed by path, so an expand
+// → collapse → expand sequence costs exactly one network round-trip.
+// Collapse just hides the panel — we don't destroy it — so a later
+// re-expand paints instantly from the DOM it already built.
+async function toggleJournalExpand(card, btn) {
+  const panel = card.querySelector(".journal-expand");
+  if (!panel) return;
+  const path = card.dataset.path;
+
+  if (!panel.hidden) {
+    panel.hidden = true;
+    btn.textContent = "Expand";
+    return;
+  }
+
+  // If we've already fetched this record, reuse the cached DOM.
+  if (panel.dataset.loaded === "1") {
+    panel.hidden = false;
+    btn.textContent = "Collapse";
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = "loading…";
+  try {
+    let full = state.journalFull[path];
+    if (!full) {
+      const url = `/api/record?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`;
+      full = await j("GET", url);
+      state.journalFull[path] = full;
+    }
+    panel.innerHTML = renderJournalExpand(full);
+    panel.dataset.loaded = "1";
+    panel.hidden = false;
+    btn.textContent = "Collapse";
+  } catch (e) {
+    panel.innerHTML = `<div class="muted">could not load record: ${esc(e.message)}</div>`;
+    panel.hidden = false;
+    btn.textContent = "Expand";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// renderJournalExpand is the read-only detailed view of an AuditRecord.
+// It never mutates state — just shows the full text and the three drift
+// buckets alongside the metrics. Legacy records (no mode/title/brief/
+// note) render cleanly: every section that has no content collapses.
+function renderJournalExpand(rec) {
+  const driftClass = rec.drift && rec.drift.rate > 0.3 ? "bad"
+    : rec.drift && rec.drift.rate > 0.1 ? "warn" : "good";
+  const groundedClass = rec.grounded_ratio >= 0.8 ? "good"
+    : rec.grounded_ratio >= 0.5 ? "warn" : "bad";
+  const recallRow = rec.expects_facts && rec.expects_facts.length
+    ? `<dt>fact recall</dt><dd>${fmtPct(rec.answer_recall || 0)} (${(rec.facts_hit||[]).length}/${rec.expects_facts.length})</dd>`
+    : "";
+
+  const bucket = (label, items) => {
+    if (!items || !items.length) return "";
+    // Cap the list at 20 entries — more than that is almost always noise
+    // and would make the panel scroll for no practical gain.
+    const shown = items.slice(0, 20).map(s => `<li><code>${esc(s)}</code></li>`).join("");
+    const tail = items.length > 20 ? `<li class="muted">… ${items.length - 20} more</li>` : "";
+    return `<div class="bucket"><h4>${label} (${items.length})</h4><ul>${shown}${tail}</ul></div>`;
+  };
+
+  const block = (label, text) => text
+    ? `<div class="journal-block"><span class="journal-block-tag">${label}</span>${esc(text)}</div>`
+    : "";
+
+  const drift = rec.drift || {};
+  const ts = rec.timestamp
+    ? new Date(rec.timestamp).toLocaleString()
+    : "—";
+
+  return `
+    <dl class="kv">
+      ${rec.title ? `<dt>title</dt><dd>${esc(rec.title)}</dd>` : ""}
+      <dt>mode</dt><dd>${modeBadge(rec.mode)}</dd>
+      <dt>when</dt><dd>${esc(ts)}</dd>
+      <dt>model</dt><dd>${esc(rec.model || "—")}</dd>
+      <dt>question</dt><dd class="prose">${esc(rec.question || "—")}</dd>
+      <dt>grounded</dt><dd><span class="badge ${groundedClass}">${fmtPct(rec.grounded_ratio || 0)}</span></dd>
+      <dt>drift</dt><dd><span class="badge ${driftClass}">${fmtPct(drift.rate || 0)}</span> ${drift.unknown_count || 0} unknown of ${((drift.known_count||0) + (drift.unknown_count||0))}</dd>
+      ${recallRow}
+      <dt>bundle</dt><dd><code>${esc((rec.bundle_hash || "").slice(0, 16))}…</code></dd>
+    </dl>
+    ${block("brief", rec.brief)}
+    ${block("note",  rec.note)}
+    ${bucket("unknown paths",   drift.unknown_paths)}
+    ${bucket("unknown apis",    drift.unknown_apis)}
+    ${bucket("unknown symbols", drift.unknown_symbols)}
+  `;
 }
 
 // flashButton shows a transient confirmation in the button itself. Used

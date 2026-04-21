@@ -32,6 +32,7 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("/api/pack", postOnly(handlePack))
 	mux.HandleFunc("/api/replay", postOnly(handleReplay))
 	mux.HandleFunc("/api/records", getOnly(handleRecords))
+	mux.HandleFunc("/api/record", getOnly(handleRecord))
 	mux.HandleFunc("/api/diff", postOnly(handleDiff))
 	mux.HandleFunc("/api/stats", getOnly(handleStats))
 }
@@ -448,6 +449,58 @@ func handleRecords(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Path > rows[j].Path })
 
 	writeJSON(w, http.StatusOK, map[string]any{"records": rows})
+}
+
+// --------------------- /api/record ---------------------
+//
+// Returns a single AuditRecord as JSON. Used by the Journal's expand
+// action: the list endpoint ships previews, this one ships the whole
+// thing. Kept as a distinct endpoint (rather than a ?full=1 flag on
+// /api/records) so callers never pay for the full payload when they
+// only needed the summary.
+//
+// Access is scoped to the repo's records directory — we don't want a
+// local server to double as an arbitrary-file reader. A client trying
+// to escape with "..", an absolute path outside the repo, or a symlink
+// pointing somewhere else gets a 400.
+
+func handleRecord(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	raw := r.URL.Query().Get("path")
+	cfg, ok := mustRepo(w, repo)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(raw) == "" {
+		writeErr(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad path: "+err.Error())
+		return
+	}
+	// Follow symlinks before the containment check so you cannot escape
+	// by symlinking audit/records/evil.json → /etc/passwd.
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	recordsDir, err := filepath.Abs(filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "resolve records dir: "+err.Error())
+		return
+	}
+	rel, err := filepath.Rel(recordsDir, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		writeErr(w, http.StatusBadRequest, "path must live inside the repo records directory")
+		return
+	}
+	rec, err := audit.LoadRecord(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "load record: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, rec)
 }
 
 // --------------------- /api/diff ---------------------

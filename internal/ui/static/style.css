@@ -545,3 +545,35 @@ table.records td code { font-size: 0.75rem; }
   color: var(--muted);
   font-size: 0.9rem;
 }
+
+/* ---- journal expand (iteration 12) ----
+   Expanded panel lives inside the card and shows the full record. We use
+   a slightly darker background and a top divider so the panel reads as
+   "inside the card but below the action row", not as a second card. The
+   kv grid is narrowed because the card is already narrower than Records
+   and the default 12rem label column was eating most of the row. */
+.journal-expand {
+  margin-top: 0.75rem;
+  padding: 0.75rem 0.85rem 0.5rem 0.85rem;
+  border-top: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 0 0 6px 6px;
+}
+.journal-expand .kv {
+  grid-template-columns: 7rem 1fr;
+  margin: 0 0 0.5rem 0;
+}
+.journal-expand .journal-block {
+  margin: 0.35rem 0;
+}
+.journal-expand .bucket {
+  margin-top: 0.55rem;
+  padding-top: 0.4rem;
+}
+.journal-expand .bucket ul {
+  max-height: 12rem;
+  overflow: auto;
+}
+.journal-expand .bucket code {
+  font-size: 0.75rem;
+}
