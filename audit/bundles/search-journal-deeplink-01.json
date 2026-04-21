@@ -1,0 +1,438 @@
+{
+  "query": "Implementar deep-link desde Search al fragmento exacto en Journal: abrir card, abrir Bundle fragments, abrir el fragmento correcto, scrollear al match y resaltarlo temporalmente, priorizando frontend puro y sin tocar backend salvo que sea imprescindible.",
+  "budget": 2200,
+  "fragments": [
+    {
+      "rel_path": "internal/ui/static/app.js",
+      "lang": "javascript",
+      "representation": "signature",
+      "content": "// file: internal/ui/static/app.js\n// lang: javascript\n// representation: signature\n\nfunction applyMode(...) { ... }\nfunction slugify(...) { ... }\nfunction updateRunPreview(...) { ... }\nfunction j(...) { ... }\nfunction fmtPct(...) { ... }\nfunction fmtDelta(...) { ... }\nfunction esc(...) { ... }\nfunction modeBadge(...) { ... }\nfunction requireRepo(...) { ... }\nfunction switchTab(...) { ... }\nfunction renderHome(...) { ... }\nfunction renderStatsCard(...) { ... }\nfunction renderWorkspace(...) { ... }\nfunction refreshWorkspaceStats(...) { ... }\nfunction renderPackStats(...) { ... }\nfunction refreshFullPrompt(...) { ... }\nfunction suggestRunName(...) { ... }\nfunction renderReplayReport(...) { ... }\nfunction loadRecords(...) { ... }\nfunction renderContextCell(...) { ... }\nfunction renderRecords(...) { ... }\nfunction onRecSelect(...) { ... }\nfunction loadJournal(...) { ... }\nfunction journalMatches(...) { ... }\nfunction renderJournal(...) { ... }\nfunction renderJournalCard(...) { ... }\nfunction wireJournalCardActions(...) { ... }\nfunction toggleJournalExpand(...) { ... }\nfunction renderJournalExpand(...) { ... }\nfunction renderJournalFragments(...) { ... }\nfunction renderJournalFragment(...) { ... }\nfunction flashButton(...) { ... }\nfunction runSearch(...) { ... }\nfunction renderSearchResults(...) { ... }\nfunction renderSearchCard(...) { ... }\nfunction highlightSnippet(...) { ... }\nfunction wireSearchCardActions(...) { ... }\nfunction openInJournal(...) { ... }\nfunction focusJournalCard(...) { ... }\nfunction cssEscape(...) { ... }\nfunction renderDiff(...) { ... }\n",
+      "tokens": 396,
+      "score": 20.50746411945623,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "runSearch",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "loadJournal",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "renderStatsCard",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "renderJournalFragments",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "journalMatches",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "runSearch",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "javascript",
+          "weight": 0.3
+        },
+        {
+          "signal": "focus",
+          "detail": "internal/ui/static",
+          "weight": 4
+        },
+        {
+          "signal": "content_match",
+          "detail": "search",
+          "weight": 0.1473819146242225
+        },
+        {
+          "signal": "content_match",
+          "detail": "journal",
+          "weight": 0.15690126696418538
+        },
+        {
+          "signal": "content_match",
+          "detail": "card",
+          "weight": 0.13341083767773493
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 0.13083688981365035
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragments",
+          "weight": 0.13341083767773493
+        },
+        {
+          "signal": "content_match",
+          "detail": "match",
+          "weight": 0.11375242079137643
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.06508060699181649
+        },
+        {
+          "signal": "content_match",
+          "detail": "backend",
+          "weight": 0.03674288590863242
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 0.14256454438265267
+        },
+        {
+          "signal": "content_match",
+          "detail": "sea",
+          "weight": 0.1473819146242225
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/ui/search_test.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/ui/search_test.go\n// lang: go\n// representation: signature\n\n// import: strings\n// import: testing\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/models\nfunc fixtureRecord(...) { ... }\nfunc TestCollectSearchMatches_MetadataHit(...) { ... }\nfunc TestCollectSearchMatches_ScopePathsOnly(...) { ... }\nfunc TestCollectSearchMatches_ScopeContentOnly(...) { ... }\nfunc TestCollectSearchMatches_CaseInsensitive(...) { ... }\nfunc TestCollectSearchMatches_EmptyFieldsAreSkipped(...) { ... }\nfunc TestScoreMatches_WeightsByField(...) { ... }\nfunc TestMatchesModeFilter(...) { ... }\nfunc TestSnippetAround_CentersOnNeedleAndAddsEllipses(...) { ... }\nfunc TestSnippetAround_UTF8Safe(...) { ... }\nfunc TestCollectSearchMatches_PerKindCap(...) { ... }\n",
+      "tokens": 203,
+      "score": 19.85118113236693,
+      "reasons": [
+        {
+          "signal": "filename_match",
+          "detail": "search",
+          "weight": 3
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "TestCollectSearchMatches_MetadataHit",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "TestCollectSearchMatches_MetadataHit",
+          "weight": 2.5
+        },
+        {
+          "signal": "filename_match",
+          "detail": "sea",
+          "weight": 3
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "TestCollectSearchMatches_MetadataHit",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "link",
+          "weight": 0.2505955099638269
+        },
+        {
+          "signal": "content_match",
+          "detail": "search",
+          "weight": 1.0023820398553076
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 0.2505955099638269
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragments",
+          "weight": 1.0449644822473478
+        },
+        {
+          "signal": "content_match",
+          "detail": "match",
+          "weight": 1.2047015582701386
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.6477799961055875
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 0.6477799961055875
+        },
+        {
+          "signal": "content_match",
+          "detail": "sea",
+          "weight": 1.0023820398553076
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/ui/api.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/ui/api.go\n// lang: go\n// representation: signature\n\n// import: bytes\n// import: context\n// import: encoding/json\n// import: fmt\n// import: net/http\n// import: os\n// import: os/exec\n// import: path/filepath\n// import: sort\n// import: strings\n// import: time\n// import: unicode/utf8\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/config\n// import: github.com/neuromfs/neuromfs/internal/indexer\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/output\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\n// import: github.com/neuromfs/neuromfs/internal/storage\nfunc registerAPI(...) { ... }\nfunc postOnly(...) { ... }\nfunc getOnly(...) { ... }\nfunc writeJSON(...) { ... }\nfunc writeErr(...) { ... }\nfunc mustRepo(...) { ... }\nfunc decode(...) { ... }\nfunc handleScan(...) { ... }\nfunc handlePack(...) { ... }\nfunc handleReplay(...) { ... }\nfunc handleRecords(...) { ... }\nfunc handleRecord(...) { ... }\nfunc handleSearch(...) { ... }\nfunc matchesModeFilter(...) { ... }\nfunc collectSearchMatches(...) { ... }\nfunc scoreMatches(...) { ... }\nfunc snippetAround(...) { ... }\nfunc collapseWS(...) { ... }\nfunc clampRuneBack(...) { ... }\nfunc clampRuneFwd(...) { ... }\nfunc clampHead(...) { ... }\nfunc handleDiff(...) { ... }\nfunc handleStats(...) { ... }\nfunc loadProjectInfo(...) { ... }\nfunc gitChangedFiles(...) { ... }\nfunc writeBundleJSON(...) { ... }\nfunc loadBundleJSON(...) { ... }\nfunc buildRepoSummary(...) { ... }\nfunc normaliseMode(...) { ... }\nfunc clampAnnotation(...) { ... }\nfunc previewText(...) { ... }\nfunc splitCSV(...) { ... }\ntype scanReq struct/interface { ... }\ntype scanResp struct/interface { ... }\ntype packReq struct/interface { ... }\ntype packResp struct/interface { ... }\ntype fragmentView struct/interface { ... }\ntype replayReq struct/interface { ... }\ntype replayResp struct/interface { ... }\ntype recordRow struct/interface { ... }\ntype searchMatch struct/interface { ... }\ntype searchResult struct/interface { ... }\ntype diffReq struct/interface { ... }\ntype statsResp struct/interface { ... }\n",
+      "tokens": 568,
+      "score": 14.598765524138287,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "handleSearch",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "writeBundleJSON",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "fragmentView",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "matchesModeFilter",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "handleSearch",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "link",
+          "weight": 0.10269511947639741
+        },
+        {
+          "signal": "content_match",
+          "detail": "search",
+          "weight": 0.19426508663370487
+        },
+        {
+          "signal": "content_match",
+          "detail": "journal",
+          "weight": 0.044228380587030706
+        },
+        {
+          "signal": "content_match",
+          "detail": "card",
+          "weight": 0.07010032469806722
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 0.2533366458366591
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragments",
+          "weight": 0.23538026123748954
+        },
+        {
+          "signal": "content_match",
+          "detail": "match",
+          "weight": 0.24289576887253186
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.19426508663370487
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 0.26733376352899596
+        },
+        {
+          "signal": "content_match",
+          "detail": "sea",
+          "weight": 0.19426508663370487
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/audit/audit.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/audit/audit.go\n// lang: go\n// representation: signature\n\n// import: context\n// import: crypto/sha256\n// import: encoding/hex\n// import: fmt\n// import: sort\n// import: strings\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/models\nfunc Run(...) { ... }\nfunc BuildPrompt(...) { ... }\nfunc BundleHash(...) { ... }\nfunc freezeFragments(...) { ... }\ntype Options struct/interface { ... }\n",
+      "tokens": 105,
+      "score": 11.07561201894708,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "BundleHash",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "freezeFragments",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "import_expansion",
+          "detail": "github.com/neuromfs/neuromfs/internal/audit",
+          "weight": 0.8
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 1.7156563108275174
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragments",
+          "weight": 1.7005573615307785
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.5390639296703187
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 1.020334416918467
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/audit/audit_test.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/audit/audit_test.go\n// lang: go\n// representation: signature\n\n// import: context\n// import: strings\n// import: testing\n// import: time\n// import: github.com/neuromfs/neuromfs/internal/audit\n// import: github.com/neuromfs/neuromfs/internal/models\nfunc fixtureBundle(...) { ... }\nfunc TestParseCitationsExtractsPathAndLine(...) { ... }\nfunc TestParseCitationsDeduplicates(...) { ... }\nfunc TestValidateCitationsMarksValid(...) { ... }\nfunc TestValidateCitationsBasenameFallback(...) { ... }\nfunc TestGroundedRatio(...) { ... }\nfunc TestDetectDriftFindsUnknownSymbols(...) { ... }\nfunc TestDetectDriftUnknownPath(...) { ... }\nfunc TestScoreFactsRecall(...) { ... }\nfunc TestBundleHashStableAcrossFragmentOrder(...) { ... }\nfunc TestBundleHashChangesWithContent(...) { ... }\nfunc TestRunEndToEndWithStubModel(...) { ... }\nfunc contains(...) { ... }\n",
+      "tokens": 216,
+      "score": 10.540035869528237,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "TestBundleHashStableAcrossFragmentOrder",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "fixtureBundle",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "TestBundleHashStableAcrossFragmentOrder",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragmento",
+          "weight": 0.19591497472016545
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 0.9208865285532737
+        },
+        {
+          "signal": "content_match",
+          "detail": "fragments",
+          "weight": 0.9208865285532737
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.3918299494403309
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 0.3105178882611955
+        }
+      ]
+    },
+    {
+      "rel_path": "internal/benchmark/benchmark.go",
+      "lang": "go",
+      "representation": "signature",
+      "content": "// file: internal/benchmark/benchmark.go\n// lang: go\n// representation: signature\n\n// import: encoding/json\n// import: fmt\n// import: os\n// import: sort\n// import: strings\n// import: github.com/neuromfs/neuromfs/internal/models\n// import: github.com/neuromfs/neuromfs/internal/packager\n// import: github.com/neuromfs/neuromfs/internal/project\n// import: github.com/neuromfs/neuromfs/internal/ranking\nfunc LoadQuestions(...) { ... }\nfunc Run(...) { ... }\nfunc applyBundleMetrics(...) { ... }\nfunc pctileIdx(...) { ... }\nfunc FormatResults(...) { ... }\nfunc matchesAny(...) { ... }\nfunc percentage(...) { ... }\nfunc SortedByScore(...) { ... }\ntype Question struct/interface { ... }\ntype Result struct/interface { ... }\ntype Ranked struct/interface { ... }\ntype RunOptions struct/interface { ... }\ntype Summary struct/interface { ... }\n",
+      "tokens": 209,
+      "score": 10.275212127059724,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "applyBundleMetrics",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "matchesAny",
+          "weight": 2.5
+        },
+        {
+          "signal": "symbol_match",
+          "detail": "LoadQuestions",
+          "weight": 2.5
+        },
+        {
+          "signal": "lang_bonus",
+          "detail": "go",
+          "weight": 0.3
+        },
+        {
+          "signal": "content_match",
+          "detail": "bundle",
+          "weight": 0.770335865268625
+        },
+        {
+          "signal": "content_match",
+          "detail": "match",
+          "weight": 0.5286375427579425
+        },
+        {
+          "signal": "content_match",
+          "detail": "sin",
+          "weight": 0.40105320466927313
+        },
+        {
+          "signal": "content_match",
+          "detail": "que",
+          "weight": 0.7751855143638834
+        }
+      ]
+    }
+  ],
+  "stats": {
+    "files_considered": 72,
+    "files_included": 6,
+    "tokens_used": 1777,
+    "tokens_budget": 2200,
+    "compression_ratio": 17.314672952268708
+  }
+}
