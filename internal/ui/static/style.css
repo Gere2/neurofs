@@ -577,3 +577,104 @@ table.records td code { font-size: 0.75rem; }
 .journal-expand .bucket code {
   font-size: 0.75rem;
 }
+
+/* ---- fragments block (iteration 13) ----
+   Collapsible section at the bottom of the journal expand panel that
+   shows the exact bundle the model saw. Outer <details> collapses the
+   whole list; each fragment is its own nested <details> so the user
+   can dig into one file without scrolling a wall of every file's
+   content. Everything reuses the existing palette + pre.log style so
+   large content blocks scroll inside the fragment rather than pushing
+   the card height. */
+.fragments-block {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+.fragments-block > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 0.15rem 0;
+}
+.fragments-block > summary:hover { color: var(--fg); }
+.fragments-block[open] > summary { color: var(--fg); margin-bottom: 0.35rem; }
+
+.fragments-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.fragments-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+  padding: 0.35rem 0;
+}
+
+.fragment {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0;
+  margin: 0;
+}
+.fragment > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+  color: var(--fg);
+  font-size: 0.82rem;
+  list-style: none;
+  flex-wrap: wrap;
+}
+.fragment > summary::-webkit-details-marker { display: none; }
+.fragment > summary::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin-right: 0.15rem;
+  transition: transform 0.1s;
+  display: inline-block;
+}
+.fragment[open] > summary::before { transform: rotate(90deg); }
+.fragment > summary:hover { background: var(--panel-2); }
+
+.frag-path {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+}
+.frag-rep {
+  font-size: 0.7rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.frag-lang {
+  font-size: 0.7rem;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+.frag-tokens {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-left: auto;
+  font-family: var(--mono);
+}
+
+.fragment pre.log {
+  margin: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 5px 5px;
+  border-left: 0;
+  border-right: 0;
+  border-bottom: 0;
+}

@@ -1042,7 +1042,63 @@ function renderJournalExpand(rec) {
     ${bucket("unknown paths",   drift.unknown_paths)}
     ${bucket("unknown apis",    drift.unknown_apis)}
     ${bucket("unknown symbols", drift.unknown_symbols)}
+    ${renderJournalFragments(rec.fragments)}
   `;
+}
+
+// renderJournalFragments lists every AuditFragment in the record as a
+// nested <details>. The outer <details> is collapsed by default so the
+// expand panel stays compact — you opt in to inspecting what the model
+// actually saw. Native <details> means no extra JS wiring, and the
+// browser handles toggle state per-node for free.
+//
+// Legacy records where Fragments is null/empty show a single muted line
+// instead of an empty block, so the user knows the record predates
+// fragment persistence rather than thinking the bundle was empty.
+// Fragments with a missing `content` (possible if a very old record
+// was written before content was kept) show a similar explanation in
+// the body slot — metadata is still visible.
+function renderJournalFragments(frags) {
+  if (!frags || !frags.length) {
+    return `<div class="fragments-block">
+      <div class="fragments-empty">no fragments persisted in this record</div>
+    </div>`;
+  }
+
+  const total = frags.reduce((n, f) => n + (f.tokens || 0), 0);
+  const items = frags.map((f, i) => renderJournalFragment(f, i)).join("");
+
+  return `<details class="fragments-block">
+    <summary>Bundle fragments (${frags.length}) · ${total} tokens</summary>
+    <div class="fragments-list">${items}</div>
+  </details>`;
+}
+
+// renderJournalFragment renders one fragment as a nested <details>. The
+// summary line carries the three metadata columns (rel_path ·
+// representation · tokens) with the lang as a dim tail so the row reads
+// at a glance. The body is a <pre class="log"> with the escaped content
+// — the same style as the rest of the app's log blocks so it inherits
+// the max-height scroll and mono font.
+function renderJournalFragment(f, i) {
+  const path = f.rel_path || `fragment-${i}`;
+  const rep  = f.representation || "—";
+  const lang = f.lang ? `<span class="frag-lang">${esc(f.lang)}</span>` : "";
+  const tokens = f.tokens || 0;
+
+  const body = (f.content && f.content.length)
+    ? `<pre class="log tall">${esc(f.content)}</pre>`
+    : `<div class="muted fragments-empty">no content persisted for this fragment — only metadata is available</div>`;
+
+  return `<details class="fragment">
+    <summary>
+      <code class="frag-path">${esc(path)}</code>
+      <span class="frag-rep">${esc(rep)}</span>
+      ${lang}
+      <span class="frag-tokens">${tokens} tok</span>
+    </summary>
+    ${body}
+  </details>`;
 }
 
 // flashButton shows a transient confirmation in the button itself. Used
