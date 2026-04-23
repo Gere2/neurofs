@@ -13,6 +13,7 @@ import (
 var ignoredDirs = map[string]bool{
 	".git":         true,
 	".neurofs":     true,
+	".claude":      true, // Claude Code metadata + ephemeral worktrees under .claude/worktrees/**
 	"node_modules": true,
 	"vendor":       true,
 	"dist":         true,
