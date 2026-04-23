@@ -286,6 +286,12 @@ document.querySelectorAll("nav#tabs button").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
 });
 
+// data-tab-target buttons (landing page CTAs) jump to a tab by name.
+// Kept as a single delegate so any future in-UI call-to-action can reuse it.
+document.querySelectorAll("[data-tab-target]").forEach(b => {
+  b.addEventListener("click", () => switchTab(b.dataset.tabTarget));
+});
+
 // ------------------------------ mode wiring ------------------------------
 
 document.querySelectorAll("#mode-pills button").forEach(b => {
@@ -308,17 +314,26 @@ document.getElementById("reset-mode").addEventListener("click", () => {
 // ------------------------------ home ------------------------------
 
 async function renderHome() {
+  // The landing itself is static copy. We only surface a thin status line
+  // at the bottom when a workspace is already configured — just enough so
+  // returning users know which repo they're operating on without turning
+  // the hero back into a dashboard.
+  const wrap = document.getElementById("home-stats");
   const body = document.getElementById("home-stats-body");
+  if (!wrap || !body) return;
   if (!state.repo) {
-    body.innerHTML = `<span class="muted">No workspace set. Open the Workspace tab.</span>`;
+    wrap.hidden = true;
     return;
   }
-  body.innerHTML = `<span class="muted">Loading stats for <code>${esc(state.repo)}</code>…</span>`;
+  wrap.hidden = false;
+  body.textContent = `Working on ${state.repo}`;
   try {
     const s = await j("GET", `/api/stats?repo=${encodeURIComponent(state.repo)}`);
-    body.innerHTML = renderStatsCard(s);
-  } catch (e) {
-    body.innerHTML = `<span class="muted">Could not read index: ${esc(e.message)}. Run <code>scan</code> from the Workspace tab.</span>`;
+    if (s && typeof s.files === "number") {
+      body.textContent = `Working on ${s.repo_root || state.repo} · ${s.files} files indexed`;
+    }
+  } catch {
+    body.textContent = `Working on ${state.repo} · index not ready — open Workspace to scan`;
   }
 }
 
@@ -1568,7 +1583,274 @@ function renderDiff(d) {
   `;
 }
 
+// ------------------------------ landing v2 (home) ------------------------------
+// Everything below is scoped to the landing: header .lang-toggle and .landing-*.
+// The rest of the app stays in English on purpose — this is only the entry page.
+
+const LANDING_LANG_KEY = "neurofs.lang";
+const LANDING_DICT = {
+  en: {
+    "brand.sub": "context compiler — local UI",
+    "landing.eyebrow": "Local app — works with Claude & ChatGPT",
+    "landing.title":
+      'Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span>',
+    "landing.subtitle":
+      "NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.",
+    "landing.ctaPrimary": "Start a task",
+    "landing.ctaSecondary": "Continue previous work",
+    "landing.howTo": "See how it works",
+    "landing.learnMore": "Learn more",
+    "landing.card1.h": "Start focused",
+    "landing.card1.p": "Describe what you want to do. NeuroFS finds the files that matter.",
+    "landing.card1.detail":
+      "NeuroFS scans your repo, picks the files related to your task, and skips the rest. No manual digging.",
+    "landing.card1.tag": "Saves you 10+ minutes per task",
+    "landing.card2.h": "Save context",
+    "landing.card2.p": "Send less noise to Claude or ChatGPT and keep your prompts lighter.",
+    "landing.card2.detail":
+      "A focused bundle = fewer tokens, faster answers, and fewer \"sorry, I lost context\" moments.",
+    "landing.card2.tag": "Typical 3–5× smaller prompts",
+    "landing.card3.h": "Continue later",
+    "landing.card3.p": "Pick up from previous work without explaining everything again.",
+    "landing.card3.detail":
+      "Every task keeps a tiny journal entry. Tomorrow you reopen it and NeuroFS remembers where you were.",
+    "landing.card3.tag": "Never \"re-explain\" again",
+    "landing.edu.before": "Without NeuroFS",
+    "landing.edu.beforeCaption": "You paste everything. Most of it is noise.",
+    "landing.edu.after": "With NeuroFS",
+    "landing.edu.afterCaption": "Only what matters. Focused and lighter.",
+    "landing.footer.ready": "Ready?",
+    "landing.footer.cta": "Create your first task",
+    "modal.eyebrow": "How it works",
+    "modal.title": "Three steps, thirty seconds",
+    "modal.step1.caption": "\"Fix the login button on mobile\"",
+    "modal.step1.title": "Describe your task",
+    "modal.step1.body":
+      "Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.",
+    "modal.step2.title": "NeuroFS picks the right files",
+    "modal.step2.body":
+      "It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.",
+    "modal.step3.title": "Paste into Claude or ChatGPT",
+    "modal.step3.body":
+      "Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.",
+    "modal.back": "← Back",
+    "modal.next": "Next →",
+    "modal.finish": "Start my first task",
+  },
+  es: {
+    "brand.sub": "compilador de contexto — UI local",
+    "landing.eyebrow": "App local — funciona con Claude y ChatGPT",
+    "landing.title":
+      'Deja de <span class="landing-strike">re-explicar</span> tu proyecto.<br><span class="landing-accent-word">Continúa.</span>',
+    "landing.subtitle":
+      "NeuroFS mantiene tu trabajo enfocado, prepara solo el contexto que importa y te ayuda a continuar donde lo dejaste.",
+    "landing.ctaPrimary": "Empezar una tarea",
+    "landing.ctaSecondary": "Retomar trabajo anterior",
+    "landing.howTo": "Ver cómo funciona",
+    "landing.learnMore": "Saber más",
+    "landing.card1.h": "Empieza enfocado",
+    "landing.card1.p": "Describe lo que quieres hacer. NeuroFS encuentra los archivos que importan.",
+    "landing.card1.detail":
+      "NeuroFS escanea tu repo, elige los archivos relacionados con tu tarea y descarta el resto. Sin buscar a mano.",
+    "landing.card1.tag": "Ahorras 10+ minutos por tarea",
+    "landing.card2.h": "Ahorra contexto",
+    "landing.card2.p": "Envía menos ruido a Claude o ChatGPT y mantén tus prompts más ligeros.",
+    "landing.card2.detail":
+      "Un bundle enfocado = menos tokens, respuestas más rápidas y menos momentos de \"perdí el contexto\".",
+    "landing.card2.tag": "Prompts 3–5× más pequeños",
+    "landing.card3.h": "Continúa después",
+    "landing.card3.p": "Retoma trabajo anterior sin tener que explicar todo de nuevo.",
+    "landing.card3.detail":
+      "Cada tarea deja una entrada breve en el journal. Mañana la reabres y NeuroFS recuerda dónde ibas.",
+    "landing.card3.tag": "Nunca más \"re-explicar\"",
+    "landing.edu.before": "Sin NeuroFS",
+    "landing.edu.beforeCaption": "Pegas todo. La mayoría es ruido.",
+    "landing.edu.after": "Con NeuroFS",
+    "landing.edu.afterCaption": "Solo lo que importa. Enfocado y ligero.",
+    "landing.footer.ready": "¿Listo?",
+    "landing.footer.cta": "Crea tu primera tarea",
+    "modal.eyebrow": "Cómo funciona",
+    "modal.title": "Tres pasos, treinta segundos",
+    "modal.step1.caption": "\"Arregla el botón de login en mobile\"",
+    "modal.step1.title": "Describe tu tarea",
+    "modal.step1.body":
+      "Escríbela como si hablaras con un compañero. Una frase basta — no hace falta listar archivos ni rutas.",
+    "modal.step2.title": "NeuroFS elige los archivos adecuados",
+    "modal.step2.body":
+      "Escanea tu repo, se queda con lo que importa para la tarea y deja fuera el ruido. Todo local — nada sale de tu máquina.",
+    "modal.step3.title": "Pégalo en Claude o ChatGPT",
+    "modal.step3.body":
+      "Copia el bundle enfocado y pégalo. Tu IA responde más rápido, con menos confusión. Vuelve mañana y continúa.",
+    "modal.back": "← Atrás",
+    "modal.next": "Siguiente →",
+    "modal.finish": "Empezar mi primera tarea",
+  },
+};
+
+function landingReadLang() {
+  const raw = (localStorage.getItem(LANDING_LANG_KEY) || "").toLowerCase();
+  return raw.startsWith("es") ? "es" : "en";
+}
+
+function t(key) {
+  const lang = landingReadLang();
+  return (LANDING_DICT[lang] && LANDING_DICT[lang][key]) || LANDING_DICT.en[key] || "";
+}
+
+function applyLang(lang) {
+  const normalized = lang === "es" ? "es" : "en";
+  localStorage.setItem(LANDING_LANG_KEY, normalized);
+  document.documentElement.setAttribute("lang", normalized);
+
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.textContent = value;
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const key = el.getAttribute("data-i18n-html");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.innerHTML = value;
+  });
+  document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.lang === normalized);
+    btn.setAttribute("aria-pressed", btn.dataset.lang === normalized ? "true" : "false");
+  });
+}
+
+document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
+  btn.addEventListener("click", () => applyLang(btn.dataset.lang));
+});
+
+// ---------- card popovers (01/02/03) ----------
+
+function closeLandingPopovers(except) {
+  document.querySelectorAll(".landing-card[data-open='true']").forEach(card => {
+    if (card === except) return;
+    card.removeAttribute("data-open");
+    const pop = card.querySelector(".landing-card-popover");
+    if (pop) pop.hidden = true;
+    const trig = card.querySelector(".landing-card-more");
+    if (trig) trig.setAttribute("aria-expanded", "false");
+  });
+}
+
+document.querySelectorAll(".landing-card-more").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const card = btn.closest(".landing-card");
+    if (!card) return;
+    const isOpen = card.getAttribute("data-open") === "true";
+    closeLandingPopovers(isOpen ? null : card);
+    if (isOpen) {
+      card.removeAttribute("data-open");
+      btn.setAttribute("aria-expanded", "false");
+      const pop = card.querySelector(".landing-card-popover");
+      if (pop) pop.hidden = true;
+    } else {
+      card.setAttribute("data-open", "true");
+      btn.setAttribute("aria-expanded", "true");
+      const pop = card.querySelector(".landing-card-popover");
+      if (pop) pop.hidden = false;
+    }
+  });
+});
+
+document.querySelectorAll(".landing-card-popover-close").forEach(btn => {
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeLandingPopovers(null);
+  });
+});
+
+document.addEventListener("click", (e) => {
+  if (e.target.closest(".landing-card")) return;
+  closeLandingPopovers(null);
+});
+
+// ---------- how-it-works modal ----------
+
+const landingHowtoEl = document.getElementById("landing-howto");
+const LANDING_STEPS = 3;
+let landingStep = 1;
+let landingLastFocus = null;
+
+function landingSetStep(n) {
+  landingStep = Math.min(LANDING_STEPS, Math.max(1, n));
+  if (!landingHowtoEl) return;
+  landingHowtoEl.querySelectorAll(".landing-modal-step").forEach(el => {
+    el.classList.toggle("landing-modal-step--active", Number(el.dataset.step) === landingStep);
+  });
+  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
+    dot.classList.toggle("landing-modal-dot--active", Number(dot.dataset.goStep) === landingStep);
+  });
+  const prev = landingHowtoEl.querySelector("[data-modal-prev]");
+  const next = landingHowtoEl.querySelector("[data-modal-next]");
+  const finish = landingHowtoEl.querySelector("[data-modal-finish]");
+  if (prev)   prev.hidden   = landingStep === 1;
+  if (next)   next.hidden   = landingStep === LANDING_STEPS;
+  if (finish) finish.hidden = landingStep !== LANDING_STEPS;
+}
+
+function landingOpenHowto() {
+  if (!landingHowtoEl) return;
+  landingLastFocus = document.activeElement;
+  landingHowtoEl.hidden = false;
+  landingHowtoEl.setAttribute("aria-hidden", "false");
+  landingSetStep(1);
+  const firstBtn = landingHowtoEl.querySelector("[data-modal-next], [data-modal-finish], .landing-modal-close");
+  if (firstBtn) firstBtn.focus();
+}
+
+function landingCloseHowto() {
+  if (!landingHowtoEl) return;
+  landingHowtoEl.hidden = true;
+  landingHowtoEl.setAttribute("aria-hidden", "true");
+  if (landingLastFocus && typeof landingLastFocus.focus === "function") landingLastFocus.focus();
+}
+
+const landingHowtoOpenBtn = document.getElementById("landing-howto-open");
+if (landingHowtoOpenBtn) landingHowtoOpenBtn.addEventListener("click", landingOpenHowto);
+
+if (landingHowtoEl) {
+  landingHowtoEl.querySelectorAll("[data-howto-close]").forEach(el => {
+    el.addEventListener("click", landingCloseHowto);
+  });
+  const prevBtn = landingHowtoEl.querySelector("[data-modal-prev]");
+  const nextBtn = landingHowtoEl.querySelector("[data-modal-next]");
+  if (prevBtn) prevBtn.addEventListener("click", () => landingSetStep(landingStep - 1));
+  if (nextBtn) nextBtn.addEventListener("click", () => landingSetStep(landingStep + 1));
+  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
+    dot.addEventListener("click", () => landingSetStep(Number(dot.dataset.goStep)));
+  });
+  const finishBtn = landingHowtoEl.querySelector("[data-modal-finish]");
+  if (finishBtn) finishBtn.addEventListener("click", landingCloseHowto);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (landingHowtoEl && !landingHowtoEl.hidden) { landingCloseHowto(); return; }
+  if (document.querySelector(".landing-card[data-open='true']")) closeLandingPopovers(null);
+});
+
+// ---------- auto-demo cycling on before/after ----------
+
+const landingEduEl = document.getElementById("landing-edu");
+const landingReduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+if (landingEduEl && !landingReduceMotion) {
+  // Kick off the first cycle shortly after the entrance animation settles,
+  // then repeat so returning visitors always catch it in motion.
+  setTimeout(function tick() {
+    landingEduEl.classList.remove("landing-edu--cycling");
+    // force reflow so the animation restarts next tick
+    void landingEduEl.offsetWidth;
+    landingEduEl.classList.add("landing-edu--cycling");
+    setTimeout(tick, 5000);
+  }, 1600);
+}
+
 // ------------------------------ init ------------------------------
 
+applyLang(landingReadLang());
 applyMode(state.mode);
 switchTab("home");

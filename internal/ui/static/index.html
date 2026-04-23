@@ -9,7 +9,11 @@
   <header>
     <div class="brand">
       <h1>NeuroFS</h1>
-      <span class="sub">context compiler — local UI</span>
+      <span class="sub" data-i18n="brand.sub">context compiler — local UI</span>
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button type="button" data-lang="en" class="active">EN</button>
+        <button type="button" data-lang="es">ES</button>
+      </div>
     </div>
     <nav id="tabs">
       <button data-tab="home" class="active">Home</button>
@@ -27,20 +31,159 @@
   <main>
     <!-- ============================ HOME ============================ -->
     <section id="tab-home" class="tab active">
-      <h2>Workflow</h2>
-      <p class="lead">This UI wraps the existing CLI. Nothing is sent to an LLM — responses are pasted manually. Open each tab in order for a full round.</p>
-      <ol class="flow">
-        <li><strong>Workspace</strong> — point at a repo, run <code>scan</code> to build the index.</li>
-        <li><strong>New task</strong> — ask a question, pack a bundle, copy the Claude prompt.</li>
-        <li><strong>Response</strong> — paste the answer, replay the audit, persist the record.</li>
-        <li><strong>Records</strong> — browse past audits for the current repo as a table.</li>
-        <li><strong>Journal</strong> — same records, rendered as a chronological timeline of cards.</li>
-        <li><strong>Compare</strong> — diff two records (e.g. before vs after a ranker change).</li>
-        <li><strong>Guide</strong> — quick reference for the primitives.</li>
-      </ol>
-      <div id="home-stats" class="card">
-        <h3>Current workspace</h3>
-        <div id="home-stats-body" class="muted">No workspace set. Open the Workspace tab.</div>
+      <div class="landing">
+        <div class="landing-hero">
+          <div class="landing-eyebrow"><span>●</span> <span data-i18n="landing.eyebrow">Local app — works with Claude &amp; ChatGPT</span></div>
+          <h2 class="landing-title" data-i18n-html="landing.title">
+            Stop <span class="landing-strike">re-explaining</span> your project.
+            <br><span class="landing-accent-word">Continue.</span>
+          </h2>
+          <p class="landing-subtitle" data-i18n="landing.subtitle">NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.</p>
+          <div class="landing-cta">
+            <button class="primary" data-tab-target="task" data-i18n="landing.ctaPrimary">Start a task</button>
+            <button class="muted-btn" data-tab-target="journal" data-i18n="landing.ctaSecondary">Continue previous work</button>
+            <button class="muted-btn landing-howto-btn" type="button" id="landing-howto-open" data-i18n="landing.howTo">See how it works</button>
+          </div>
+        </div>
+
+        <div class="landing-cards">
+          <div class="landing-card" data-card-key="focus">
+            <div class="landing-card-number">01</div>
+            <h3 data-i18n="landing.card1.h">Start focused</h3>
+            <p data-i18n="landing.card1.p">Describe what you want to do. NeuroFS finds the files that matter.</p>
+            <button class="landing-card-more" type="button" aria-expanded="false"><span data-i18n="landing.learnMore">Learn more</span> →</button>
+            <div class="landing-card-popover" role="dialog" hidden>
+              <div class="landing-card-popover-body" data-i18n="landing.card1.detail">NeuroFS scans your repo, picks the files related to your task, and skips the rest. No manual digging.</div>
+              <div class="landing-card-popover-foot">
+                <span class="landing-card-popover-tag" data-i18n="landing.card1.tag">Saves you 10+ minutes per task</span>
+                <button class="landing-card-popover-close" type="button" aria-label="Close">✕</button>
+              </div>
+            </div>
+          </div>
+          <div class="landing-card" data-card-key="save">
+            <div class="landing-card-number">02</div>
+            <h3 data-i18n="landing.card2.h">Save context</h3>
+            <p data-i18n="landing.card2.p">Send less noise to Claude or ChatGPT and keep your prompts lighter.</p>
+            <button class="landing-card-more" type="button" aria-expanded="false"><span data-i18n="landing.learnMore">Learn more</span> →</button>
+            <div class="landing-card-popover" role="dialog" hidden>
+              <div class="landing-card-popover-body" data-i18n="landing.card2.detail">A focused bundle = fewer tokens, faster answers, and fewer "sorry, I lost context" moments.</div>
+              <div class="landing-card-popover-foot">
+                <span class="landing-card-popover-tag" data-i18n="landing.card2.tag">Typical 3–5× smaller prompts</span>
+                <button class="landing-card-popover-close" type="button" aria-label="Close">✕</button>
+              </div>
+            </div>
+          </div>
+          <div class="landing-card" data-card-key="continue">
+            <div class="landing-card-number">03</div>
+            <h3 data-i18n="landing.card3.h">Continue later</h3>
+            <p data-i18n="landing.card3.p">Pick up from previous work without explaining everything again.</p>
+            <button class="landing-card-more" type="button" aria-expanded="false"><span data-i18n="landing.learnMore">Learn more</span> →</button>
+            <div class="landing-card-popover" role="dialog" hidden>
+              <div class="landing-card-popover-body" data-i18n="landing.card3.detail">Every task keeps a tiny journal entry. Tomorrow you reopen it and NeuroFS remembers where you were.</div>
+              <div class="landing-card-popover-foot">
+                <span class="landing-card-popover-tag" data-i18n="landing.card3.tag">Never "re-explain" again</span>
+                <button class="landing-card-popover-close" type="button" aria-label="Close">✕</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="landing-edu" id="landing-edu">
+          <div class="landing-edu-side landing-edu-side--before">
+            <div class="landing-edu-label landing-edu-label--before" data-i18n="landing.edu.before">Without NeuroFS</div>
+            <div class="landing-noise-lines">
+              <div class="landing-noise-line" style="width:100%"></div>
+              <div class="landing-noise-line" style="width:88%"></div>
+              <div class="landing-noise-line" style="width:95%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:70%"></div>
+              <div class="landing-noise-line" style="width:82%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:60%"></div>
+              <div class="landing-noise-line" style="width:91%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:45%"></div>
+              <div class="landing-noise-line" style="width:78%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:55%"></div>
+            </div>
+            <p class="landing-edu-caption" data-i18n="landing.edu.beforeCaption">You paste everything. Most of it is noise.</p>
+          </div>
+          <div class="landing-edu-side landing-edu-side--after">
+            <div class="landing-edu-label landing-edu-label--after" data-i18n="landing.edu.after">With NeuroFS</div>
+            <div class="landing-clean-lines">
+              <div class="landing-clean-line landing-clean-line--active" style="width:80%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:65%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:72%"></div>
+              <div class="landing-clean-line landing-clean-line--dim" style="width:40%"></div>
+            </div>
+            <p class="landing-edu-caption" data-i18n="landing.edu.afterCaption">Only what matters. Focused and lighter.</p>
+          </div>
+        </div>
+
+        <div class="landing-footer-cta">
+          <p data-i18n="landing.footer.ready">Ready?</p>
+          <button class="primary" data-tab-target="task" data-i18n="landing.footer.cta">Create your first task</button>
+        </div>
+
+        <div id="home-stats" class="landing-status" hidden>
+          <div id="home-stats-body" class="muted"></div>
+        </div>
+      </div>
+
+      <!-- HOW-IT-WORKS MODAL -->
+      <div class="landing-modal" id="landing-howto" hidden aria-hidden="true">
+        <div class="landing-modal-backdrop" data-howto-close></div>
+        <div class="landing-modal-panel" role="dialog" aria-modal="true" aria-labelledby="landing-howto-title">
+          <button class="landing-modal-close" type="button" data-howto-close aria-label="Close">✕</button>
+          <div class="landing-modal-header">
+            <div class="landing-modal-eyebrow" data-i18n="modal.eyebrow">How it works</div>
+            <h3 id="landing-howto-title" data-i18n="modal.title">Three steps, thirty seconds</h3>
+          </div>
+          <div class="landing-modal-steps">
+            <div class="landing-modal-step landing-modal-step--active" data-step="1">
+              <div class="landing-modal-step-visual landing-modal-step-visual--1">
+                <div class="lmsv-bubble">
+                  <span class="lmsv-dot"></span><span class="lmsv-dot"></span><span class="lmsv-dot"></span>
+                </div>
+                <div class="lmsv-caption" data-i18n="modal.step1.caption">"Fix the login button on mobile"</div>
+              </div>
+              <h4 data-i18n="modal.step1.title">Describe your task</h4>
+              <p data-i18n="modal.step1.body">Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.</p>
+            </div>
+            <div class="landing-modal-step" data-step="2">
+              <div class="landing-modal-step-visual landing-modal-step-visual--2">
+                <div class="lmsv-funnel">
+                  <div class="lmsv-funnel-top"></div>
+                  <div class="lmsv-funnel-mid"></div>
+                  <div class="lmsv-funnel-out"></div>
+                </div>
+              </div>
+              <h4 data-i18n="modal.step2.title">NeuroFS picks the right files</h4>
+              <p data-i18n="modal.step2.body">It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.</p>
+            </div>
+            <div class="landing-modal-step" data-step="3">
+              <div class="landing-modal-step-visual landing-modal-step-visual--3">
+                <div class="lmsv-paste">
+                  <div class="lmsv-paste-line" style="width:80%"></div>
+                  <div class="lmsv-paste-line" style="width:65%"></div>
+                  <div class="lmsv-paste-line" style="width:72%"></div>
+                  <div class="lmsv-paste-cursor"></div>
+                </div>
+              </div>
+              <h4 data-i18n="modal.step3.title">Paste into Claude or ChatGPT</h4>
+              <p data-i18n="modal.step3.body">Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.</p>
+            </div>
+          </div>
+          <div class="landing-modal-footer">
+            <div class="landing-modal-dots">
+              <span class="landing-modal-dot landing-modal-dot--active" data-go-step="1"></span>
+              <span class="landing-modal-dot" data-go-step="2"></span>
+              <span class="landing-modal-dot" data-go-step="3"></span>
+            </div>
+            <div class="landing-modal-actions">
+              <button class="muted-btn" type="button" data-modal-prev data-i18n="modal.back" hidden>← Back</button>
+              <button class="primary" type="button" data-modal-next data-i18n="modal.next">Next →</button>
+              <button class="primary" type="button" data-tab-target="task" data-modal-finish data-i18n="modal.finish" hidden>Start my first task</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
