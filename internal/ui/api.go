@@ -39,6 +39,7 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("/api/search", getOnly(handleSearch))
 	mux.HandleFunc("/api/diff", postOnly(handleDiff))
 	mux.HandleFunc("/api/stats", getOnly(handleStats))
+	mux.HandleFunc("/api/resume-seed", getOnly(handleResumeSeed))
 }
 
 // --------------------- method gates ---------------------
@@ -241,6 +242,10 @@ type packReq struct {
 	MaxFragments     int    `json:"max_fragments"`
 	PreferSignatures bool   `json:"prefer_signatures"`
 	SnapshotName     string `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
+	// InheritedFocus carries the focus paths the user kept from a parent
+	// record. Merged with Focus server-side so the ranker sees one list and
+	// legacy clients (no parent) remain unchanged.
+	InheritedFocus []string `json:"inherited_focus"`
 }
 
 type packResp struct {
@@ -295,7 +300,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 
 	rankOpts := ranking.Options{
 		Project: loadProjectInfo(db),
-		Focus:   req.Focus,
+		Focus:   mergeFocus(req.Focus, req.InheritedFocus),
 	}
 	if req.Changed {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
@@ -381,6 +386,12 @@ type replayReq struct {
 	Title string `json:"title"`
 	Brief string `json:"brief"`
 	Note  string `json:"note"`
+
+	// Parent linkage. Both optional; an empty ParentRecord leaves the
+	// child record unstamped (legacy behaviour). Validated server-side
+	// against the repo's records dir — a forged path is silently dropped.
+	ParentRecord   string   `json:"parent_record"`
+	InheritedFocus []string `json:"inherited_focus"`
 }
 
 type replayResp struct {
@@ -442,6 +453,19 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 	rec.Title = clampAnnotation(req.Title, 200)
 	rec.Brief = clampAnnotation(req.Brief, 4000)
 	rec.Note = clampAnnotation(req.Note, 4000)
+
+	// Parent linkage. resolveParentRecord enforces containment inside the
+	// repo's records dir, so a malicious client cannot stamp a child with
+	// a path pointing anywhere on disk. If the parent cannot be resolved
+	// we drop the link silently — the audit still succeeds, it just won't
+	// carry a breadcrumb.
+	if pr := strings.TrimSpace(req.ParentRecord); pr != "" {
+		if abs, title, ok := resolveParentRecord(cfg.RepoRoot, pr); ok {
+			rec.ParentRecord = abs
+			rec.ParentTitle = title
+			rec.InheritedFocus = cleanInheritedFocus(req.InheritedFocus)
+		}
+	}
 
 	resp := replayResp{Record: rec}
 	if req.Save {
@@ -1152,4 +1176,195 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+// --------------------- parent-context helpers ---------------------
+
+// mergeFocus joins the user-typed focus CSV with the inherited list carried
+// over from a parent record. Dedupe is case-sensitive (paths are case-
+// sensitive on most SSD checkouts) and order is preserved: user entries
+// first, inherited after. The ranker's parseFocusPrefixes handles whitespace
+// and empty segments, so we just emit a clean comma-joined string.
+func mergeFocus(user string, inherited []string) string {
+	out := make([]string, 0, len(inherited)+4)
+	seen := make(map[string]bool)
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			return
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	for _, part := range strings.Split(user, ",") {
+		add(part)
+	}
+	for _, p := range inherited {
+		add(p)
+	}
+	return strings.Join(out, ",")
+}
+
+// cleanInheritedFocus normalises the list the client submitted: trims
+// whitespace, drops empties and artefact paths, dedupes, and caps the
+// total count so a pathological paste cannot bloat a record.
+func cleanInheritedFocus(in []string) []string {
+	const maxPaths = 64
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool)
+	for _, p := range in {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] || isArtifactPath(p) {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+		if len(out) >= maxPaths {
+			break
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// isArtifactPath is true for paths that live under NeuroFS' own bookkeeping
+// directories — worktrees, the index DB, and the audit trail itself. These
+// are never useful focus seeds: they either don't exist in a fresh checkout
+// or point back at the very records we're auditing. Normalises to forward
+// slashes and strips a leading "./" so either form matches.
+func isArtifactPath(rel string) bool {
+	p := strings.TrimPrefix(filepath.ToSlash(rel), "./")
+	if p == "" {
+		return false
+	}
+	prefixes := []string{
+		".claude/worktrees/",
+		".neurofs/",
+		"audit/bundles/",
+		"audit/records/",
+		"audit/responses/",
+	}
+	for _, pre := range prefixes {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveParentRecord validates a client-supplied parent record path,
+// resolves symlinks, enforces containment inside <repo>/audit/records, and
+// returns the absolute path + a breadcrumb title pulled from the parent
+// (Title, falling back to Question). The bool is false when the path is
+// invalid, escapes the records dir, or cannot be decoded — callers drop
+// the parent link silently in that case.
+func resolveParentRecord(repoRoot, raw string) (string, string, bool) {
+	abs, err := filepath.Abs(raw)
+	if err != nil {
+		return "", "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	recordsDir, err := filepath.Abs(filepath.Join(repoRoot, audit.DefaultRecordsDir))
+	if err != nil {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(recordsDir, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", false
+	}
+	parent, err := audit.LoadRecord(abs)
+	if err != nil {
+		return "", "", false
+	}
+	title := strings.TrimSpace(parent.Title)
+	if title == "" {
+		title = strings.TrimSpace(parent.Question)
+	}
+	if len(title) > 160 {
+		title = title[:160]
+	}
+	return abs, title, true
+}
+
+// --------------------- /api/resume-seed ---------------------
+//
+// Returns the minimum data New task needs to render a "resuming from…"
+// state: the parent's human annotations for prefill, plus the rel_paths
+// of every fragment in the parent's bundle as a shortlist the user can
+// edit before packing. We deliberately do NOT ship fragment content —
+// stale content would be a silent error; a stale path merely fails to
+// boost anything in the ranker, which is benign.
+
+type resumeSeedResp struct {
+	ParentPath          string   `json:"parent_path"`
+	Title               string   `json:"title"`
+	Brief               string   `json:"brief"`
+	Question            string   `json:"question"`
+	Mode                string   `json:"mode"`
+	SuggestedFocusPaths []string `json:"suggested_focus_paths"`
+	ParentTokens        int      `json:"parent_tokens"`
+}
+
+func handleResumeSeed(w http.ResponseWriter, r *http.Request) {
+	repo := r.URL.Query().Get("repo")
+	raw := r.URL.Query().Get("path")
+	cfg, ok := mustRepo(w, repo)
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(raw) == "" {
+		writeErr(w, http.StatusBadRequest, "path is required")
+		return
+	}
+	abs, title, ok := resolveParentRecord(cfg.RepoRoot, raw)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "parent path must live inside the repo records directory")
+		return
+	}
+	rec, err := audit.LoadRecord(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "load parent: "+err.Error())
+		return
+	}
+
+	paths := make([]string, 0, len(rec.Fragments))
+	seen := make(map[string]bool)
+	tokens := 0
+	for _, f := range rec.Fragments {
+		tokens += f.Tokens
+		p := strings.TrimSpace(f.RelPath)
+		if p == "" || seen[p] || isArtifactPath(p) {
+			continue
+		}
+		// Drop paths that no longer exist in the current checkout. A stale
+		// path is not catastrophic (the ranker just fails to boost it) but
+		// it is noise in the UI — quietly filtering keeps the shortlist
+		// actionable. Stat errors other than ENOENT still let the path
+		// through; we don't want a transient fs hiccup to silently shrink
+		// the list.
+		if abs, err := filepath.Abs(filepath.Join(cfg.RepoRoot, p)); err == nil {
+			if _, statErr := os.Stat(abs); os.IsNotExist(statErr) {
+				continue
+			}
+		}
+		seen[p] = true
+		paths = append(paths, p)
+	}
+
+	writeJSON(w, http.StatusOK, resumeSeedResp{
+		ParentPath:          abs,
+		Title:               title,
+		Brief:               rec.Brief,
+		Question:            rec.Question,
+		Mode:                rec.Mode,
+		SuggestedFocusPaths: paths,
+		ParentTokens:        tokens,
+	})
 }
