@@ -41,20 +41,20 @@ The output is a self-contained, auditable bundle ready for any LLM interface.
 ## Quickstart
 
 ```bash
-# Build
+# Build the binary
 make build
 
-# 1. Index a repository
-neurofs scan /path/to/your/repo
+# Index this repository
+./bin/neurofs scan .
 
-# 2. Ask a question — get a context bundle
-neurofs ask "how does authentication work?" --budget 8000
-
-# 3. Export the bundle to a file
-neurofs pack "how does authentication work?" --budget 8000 --out context.prompt
+# Open the local UI (loopback only — nothing leaves your machine)
+./bin/neurofs ui
 ```
 
-Then paste `context.prompt` into Claude, ChatGPT, or any LLM of your choice.
+The UI wraps `scan`, `pack`, `replay` and records in one place. It opens at
+<http://127.0.0.1:7777> automatically. If you prefer the command line, the
+same flow is available via `neurofs ask` / `neurofs pack` — see
+[Commands](#commands) below.
 
 ---
 
