@@ -101,7 +101,10 @@ func (s *DB) UpsertFile(f models.FileRecord) error {
 		string(syms), string(imps),
 		f.Checksum, f.IndexedAt.UTC().Format(time.RFC3339),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("storage: upsert %s: %w", f.RelPath, err)
+	}
+	return nil
 }
 
 // AllFiles returns every FileRecord in the index.
@@ -211,8 +214,11 @@ func (s *DB) GetMeta(key string) (string, bool, error) {
 	return value, true, nil
 }
 
-// DeleteRemovedFiles deletes records whose paths are no longer present on disk.
-// It returns the number of records deleted.
+// DeleteRemovedFiles deletes records whose paths are no longer present on
+// disk and returns the number of records deleted. The deletes run inside a
+// single transaction so an error partway through rolls back to the original
+// state — otherwise the caller's reported "Removed" count and the actual
+// on-disk index would diverge on failure.
 func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	rows, err := s.db.Query(`SELECT path FROM files`)
 	if err != nil {
@@ -233,11 +239,33 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
+	// rows must be closed before opening a write transaction on the same
+	// single-connection SQLite handle; otherwise the tx would deadlock
+	// waiting for the cursor.
+	rows.Close()
 
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("storage: begin tx: %w", err)
+	}
+	stmt, err := tx.Prepare(`DELETE FROM files WHERE path = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return 0, fmt.Errorf("storage: prepare delete: %w", err)
+	}
+	defer stmt.Close()
 	for _, p := range toDelete {
-		if _, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, p); err != nil {
-			return 0, err
+		if _, err := stmt.Exec(p); err != nil {
+			_ = tx.Rollback()
+			return 0, fmt.Errorf("storage: delete %s: %w", p, err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("storage: commit delete: %w", err)
 	}
 	return len(toDelete), nil
 }
@@ -260,11 +288,15 @@ func scanFile(rows *sql.Rows) (models.FileRecord, error) {
 	}
 	r.Lang = models.Lang(lang)
 
+	// Corrupted symbols/imports JSON is a real integrity signal (bad
+	// migration, manual edit) — surface it instead of silently returning
+	// a FileRecord with nil slices. Callers abort on the first bad row,
+	// which is what we want: a partial index is worse than a loud failure.
 	if err := json.Unmarshal([]byte(symsJSON), &r.Symbols); err != nil {
-		r.Symbols = nil
+		return r, fmt.Errorf("storage: decode symbols for %s: %w", r.RelPath, err)
 	}
 	if err := json.Unmarshal([]byte(impsJSON), &r.Imports); err != nil {
-		r.Imports = nil
+		return r, fmt.Errorf("storage: decode imports for %s: %w", r.RelPath, err)
 	}
 	t, err := time.Parse(time.RFC3339, indexedAt)
 	if err == nil {

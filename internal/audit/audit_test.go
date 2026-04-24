@@ -146,6 +146,16 @@ func TestScoreFactsRecall(t *testing.T) {
 	if _, r := audit.ScoreFacts("anything", nil); r != 1.0 {
 		t.Errorf("no facts → recall 1.0, got %v", r)
 	}
+	// All-blank facts must behave the same as an empty slice — otherwise a
+	// caller that forwards ["", " "] would see a bogus 0.0 recall that
+	// looks like a real miss.
+	if hits, r := audit.ScoreFacts("anything", []string{"", "  "}); r != 1.0 || len(hits) != 0 {
+		t.Errorf("blank-only facts → (nil, 1.0), got (%v, %v)", hits, r)
+	}
+	// A mix of blank and real facts must use the real count as denominator.
+	if hits, r := audit.ScoreFacts("We use jwt.sign", []string{"jwt.sign", ""}); r != 1.0 || len(hits) != 1 {
+		t.Errorf("blank should not dilute recall, got (%v, %v)", hits, r)
+	}
 }
 
 func TestBundleHashStableAcrossFragmentOrder(t *testing.T) {

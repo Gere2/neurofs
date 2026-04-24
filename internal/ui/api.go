@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -101,11 +103,22 @@ func mustRepo(w http.ResponseWriter, repo string) (*config.Config, bool) {
 // decode reads JSON body into v with a generous size limit. Keeping the
 // limit tight protects against accidentally pasting a multi-MB file into
 // a textarea — replay responses are rarely more than ~200KB.
+//
+// The contract is "exactly one JSON object per body": DisallowUnknownFields
+// rejects typos, and the post-Decode EOF check rejects trailing content so a
+// client that smuggles a second object (or junk) after the payload cannot
+// slip past a handler that only reads the first.
 func decode(r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(nil, r.Body, 8<<20) // 8 MB
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("body must contain a single JSON object")
+	}
+	return nil
 }
 
 // confineToRepo resolves raw against root (joining if relative, otherwise
@@ -330,10 +343,6 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 		}
 		snapshotPath = target
 	}
-
-	cache.mu.Lock()
-	cache.entries[cfg.RepoRoot] = cachedBundle{path: snapshotPath, savedAt: time.Now()}
-	cache.mu.Unlock()
 
 	frags := make([]fragmentView, 0, len(bundle.Fragments))
 	for _, f := range bundle.Fragments {

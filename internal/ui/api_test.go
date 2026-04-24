@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"io"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
 
 func TestConfineToRepo_AcceptsRelativeInsideRepo(t *testing.T) {
 	root := t.TempDir()
@@ -137,4 +140,52 @@ func isValidUTF8(s string) bool {
 	// range-over-string replaces invalid sequences with U+FFFD; re-encoding
 	// and comparing byte length is a stricter check.
 	return len([]byte(s)) == len([]byte(string([]rune(s))))
+}
+
+// TestDecode_RejectsTrailingContent locks in the "exactly one JSON object
+// per body" contract. A second object smuggled after the first must be
+// rejected — otherwise a handler that only reads the first could process
+// attacker-controlled input while believing the request was well-formed.
+func TestDecode_RejectsTrailingContent(t *testing.T) {
+	body := `{"repo":"/tmp/x"}{"repo":"/etc/passwd"}`
+	r := httptest.NewRequest("POST", "/api/scan", strings.NewReader(body))
+
+	var got struct {
+		Repo string `json:"repo"`
+	}
+	err := decode(r, &got)
+	if err == nil {
+		t.Fatalf("expected trailing content to be rejected, got nil error (parsed repo=%q)", got.Repo)
+	}
+	if !strings.Contains(err.Error(), "single JSON object") {
+		t.Fatalf("expected 'single JSON object' error, got: %v", err)
+	}
+}
+
+// TestDecode_AcceptsSingleObject is the positive counterpart: one
+// well-formed object must still decode cleanly with no spurious EOF noise.
+func TestDecode_AcceptsSingleObject(t *testing.T) {
+	body := `{"repo":"/tmp/x","verbose":true}`
+	r := httptest.NewRequest("POST", "/api/scan", strings.NewReader(body))
+
+	var got scanReq
+	if err := decode(r, &got); err != nil {
+		t.Fatalf("expected clean decode, got: %v", err)
+	}
+	if got.Repo != "/tmp/x" || !got.Verbose {
+		t.Fatalf("unexpected decoded value: %+v", got)
+	}
+}
+
+// TestDecode_TrailingWhitespaceIsFine guards against over-strictness:
+// a body that ends with a newline or spaces is common from curl/fetch
+// and must not be treated as trailing content.
+func TestDecode_TrailingWhitespaceIsFine(t *testing.T) {
+	body := "{\"repo\":\"/tmp/x\"}\n  \t\n"
+	r := httptest.NewRequest("POST", "/api/scan", strings.NewReader(body))
+
+	var got scanReq
+	if err := decode(r, &got); err != nil && err != io.EOF {
+		t.Fatalf("trailing whitespace should decode cleanly, got: %v", err)
+	}
 }
