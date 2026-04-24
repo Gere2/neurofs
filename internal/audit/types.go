@@ -93,4 +93,24 @@ type AuditRecord struct {
 	Title string `json:"title,omitempty"`
 	Brief string `json:"brief,omitempty"`
 	Note  string `json:"note,omitempty"`
+
+	// Stats freezes the BundleStats the packager produced for this run so
+	// "how much context did NeuroFS save" survives next to "how grounded
+	// was the answer". A pointer + omitempty keeps legacy records
+	// (written before this field existed) decoding cleanly with Stats==nil
+	// — the UI renders such rows as "—" rather than as zero-cost runs.
+	Stats *models.BundleStats `json:"stats,omitempty"`
+
+	// ParentRecord is the basename (e.g. "1776696402-ddbb265c-abc123.json")
+	// of the audit record that this run was *resumed from*. It is stamped
+	// only when the user explicitly clicks "Resume" on a Journal card and
+	// then runs a new pack+replay; legacy records and from-scratch runs
+	// have it empty (omitempty drops it from JSON).
+	//
+	// The contract is intentionally narrow: a single back-pointer per
+	// record, never a tree. Walking the chain forwards is the consumer's
+	// job; a record never knows its children. This keeps the schema flat
+	// and avoids any "branching" semantics the audit layer would have to
+	// reason about.
+	ParentRecord string `json:"parent_record,omitempty"`
 }

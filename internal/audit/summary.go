@@ -15,6 +15,34 @@ type Aggregate struct {
 	// Models counts how many records came from each model ID, so you can
 	// see e.g. "12 claude-manual, 3 stub" at a glance.
 	Models map[string]int `json:"models,omitempty"`
+
+	// Cost ledger — rolled up across records that carry frozen BundleStats.
+	// Legacy records (Stats==nil) are excluded so they don't drag averages
+	// down. RecordsWithStats tells the UI how many runs the rollup uses.
+	//
+	// Naming is deliberately verbose so the cost numbers cannot be
+	// mis-read as "savings vs the entire repo" or "savings vs an optimal
+	// baseline". They describe one specific comparison only:
+	//
+	//   bundle_tokens_used                   — what the bundle actually shipped
+	//                                          (exact, measured by tokenbudget)
+	//   selected_context_tokens_est          — estimate of what the fragments
+	//                                          the packager *selected to consider*
+	//                                          would have cost uncompressed
+	//                                          (derived: used × compression_ratio)
+	//   selected_context_reduction_est       — the difference between the two
+	//                                          (derived; never negative)
+	//
+	// "selected" is the load-bearing word: the comparison is against the
+	// fragments the ranker considered, NOT against the whole repository
+	// and NOT against an oracle baseline.
+	RecordsWithStats               int     `json:"records_with_stats,omitempty"`
+	BundleTokensUsedSum            int     `json:"bundle_tokens_used_sum,omitempty"`
+	SelectedContextTokensEstSum    int     `json:"selected_context_tokens_est_sum,omitempty"`
+	SelectedContextReductionEstSum int     `json:"selected_context_reduction_est_sum,omitempty"`
+	FilesIncludedSum               int     `json:"files_included_sum,omitempty"`
+	FilesConsideredSum             int     `json:"files_considered_sum,omitempty"`
+	MeanCompressionRatio           float64 `json:"mean_compression_ratio,omitempty"`
 }
 
 // AggregateFrom condenses a slice of records into a single Aggregate.
@@ -29,10 +57,22 @@ func AggregateFrom(records []AuditRecord) Aggregate {
 		return Aggregate{}
 	}
 	var (
-		grounded, drift    float64
-		recallSum          float64
-		recallN            int
-		models             = make(map[string]int, 4)
+		grounded, drift float64
+		recallSum       float64
+		recallN         int
+		models          = make(map[string]int, 4)
+
+		// Cost ledger accumulators — only count records whose Stats field
+		// is populated, so legacy records (Stats==nil) don't pretend to
+		// have cost zero and pull the averages down. Names mirror the
+		// Aggregate field names so the rollup math stays readable.
+		costN                   int
+		bundleTokensUsed        int
+		selectedContextTokens   int // estimate of "uncompressed selected fragments"
+		selectedContextReduced  int // bundleTokensUsed minus selectedContextTokens
+		filesIncluded           int
+		filesConsidered         int
+		compressionRatioSum     float64
 	)
 	for _, r := range records {
 		grounded += r.GroundedRatio
@@ -44,6 +84,24 @@ func AggregateFrom(records []AuditRecord) Aggregate {
 		if r.Model != "" {
 			models[r.Model]++
 		}
+		if r.Stats != nil && r.Stats.TokensUsed > 0 {
+			costN++
+			bundleTokensUsed += r.Stats.TokensUsed
+			// selected_context_tokens_est is derived: it's an *estimate*
+			// of what the fragments the packager selected to consider
+			// would have cost uncompressed, computed by inverting the
+			// persisted compression_ratio. It is NOT the cost of pasting
+			// the entire repo — only of the shortlist the ranker scored.
+			selEst := int(float64(r.Stats.TokensUsed) * r.Stats.CompressionRatio)
+			if selEst < r.Stats.TokensUsed {
+				selEst = r.Stats.TokensUsed // never claim negative reduction
+			}
+			selectedContextTokens += selEst
+			selectedContextReduced += selEst - r.Stats.TokensUsed
+			filesIncluded += r.Stats.FilesIncluded
+			filesConsidered += r.Stats.FilesConsidered
+			compressionRatioSum += r.Stats.CompressionRatio
+		}
 	}
 	n := float64(len(records))
 	agg := Aggregate{
@@ -54,6 +112,15 @@ func AggregateFrom(records []AuditRecord) Aggregate {
 	}
 	if recallN > 0 {
 		agg.AnswerRecall = recallSum / float64(recallN)
+	}
+	if costN > 0 {
+		agg.RecordsWithStats = costN
+		agg.BundleTokensUsedSum = bundleTokensUsed
+		agg.SelectedContextTokensEstSum = selectedContextTokens
+		agg.SelectedContextReductionEstSum = selectedContextReduced
+		agg.FilesIncludedSum = filesIncluded
+		agg.FilesConsideredSum = filesConsidered
+		agg.MeanCompressionRatio = compressionRatioSum / float64(costN)
 	}
 	return agg
 }
