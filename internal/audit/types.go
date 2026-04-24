@@ -101,16 +101,21 @@ type AuditRecord struct {
 	// — the UI renders such rows as "—" rather than as zero-cost runs.
 	Stats *models.BundleStats `json:"stats,omitempty"`
 
-	// ParentRecord is the basename (e.g. "1776696402-ddbb265c-abc123.json")
-	// of the audit record that this run was *resumed from*. It is stamped
-	// only when the user explicitly clicks "Resume" on a Journal card and
-	// then runs a new pack+replay; legacy records and from-scratch runs
-	// have it empty (omitempty drops it from JSON).
+	// Parent-context reuse. All three fields are optional — legacy records
+	// decode cleanly and from-scratch runs leave them unset. A single
+	// back-pointer per record, never a tree: walking the chain forwards is
+	// the consumer's job, and a record never knows its children.
 	//
-	// The contract is intentionally narrow: a single back-pointer per
-	// record, never a tree. Walking the chain forwards is the consumer's
-	// job; a record never knows its children. This keeps the schema flat
-	// and avoids any "branching" semantics the audit layer would have to
-	// reason about.
-	ParentRecord string `json:"parent_record,omitempty"`
+	//   ParentRecord   — path to the record this run was resumed from.
+	//   ParentTitle    — snapshot of the parent's Title (or Question, if
+	//                    Title was empty) captured at resume time, so the
+	//                    child can render a breadcrumb without re-reading
+	//                    the parent.
+	//   InheritedFocus — rel_paths carried over from the parent's fragments
+	//                    that actually applied on this run. The user edits
+	//                    the list before packing, so what lands here is
+	//                    the final seed the ranker saw.
+	ParentRecord   string   `json:"parent_record,omitempty"`
+	ParentTitle    string   `json:"parent_title,omitempty"`
+	InheritedFocus []string `json:"inherited_focus,omitempty"`
 }
