@@ -1591,8 +1591,9 @@ const LANDING_LANG_KEY = "neurofs.lang";
 const LANDING_DICT = {
   en: {
     "brand.sub": "context compiler — local UI",
-    "landing.badge": "Local · works with Claude & ChatGPT",
-    "landing.title": "Stop re-explaining your project to AI",
+    "landing.eyebrow": "Local app — works with Claude & ChatGPT",
+    "landing.title":
+      'Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span>',
     "landing.subtitle":
       "NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.",
     "landing.ctaPrimary": "Start a task",
@@ -1604,16 +1605,11 @@ const LANDING_DICT = {
     "landing.card2.p": "Send less noise to Claude or ChatGPT and keep your prompts lighter.",
     "landing.card3.h": "Continue later",
     "landing.card3.p": "Pick up from previous work without explaining everything again.",
-    "landing.edu.h": "How it saves context",
-    "landing.edu.p":
-      "Instead of pasting your whole project, NeuroFS creates a smaller, focused context pack you can use with your AI assistant.",
-    "landing.edu.step1Title": "Your project",
-    "landing.edu.step1Sub": "All files & history",
-    "landing.edu.step2Title": "NeuroFS",
-    "landing.edu.step2Sub": "Keeps what matters",
-    "landing.edu.step3Title": "Your AI",
-    "landing.edu.step3Sub": "Focused, lighter prompt",
-    "landing.footer.ready": "Ready to work with less context?",
+    "landing.edu.before": "Without NeuroFS",
+    "landing.edu.beforeCaption": "You paste everything. Most of it is noise.",
+    "landing.edu.after": "With NeuroFS",
+    "landing.edu.afterCaption": "Only what matters. Focused and lighter.",
+    "landing.footer.ready": "Ready?",
     "landing.footer.cta": "Create your first task",
     "modal.eyebrow": "How it works",
     "modal.title": "Three steps, thirty seconds",
@@ -1633,8 +1629,9 @@ const LANDING_DICT = {
   },
   es: {
     "brand.sub": "compilador de contexto — UI local",
-    "landing.badge": "Local · funciona con Claude y ChatGPT",
-    "landing.title": "Deja de re-explicar tu proyecto a la IA",
+    "landing.eyebrow": "App local — funciona con Claude y ChatGPT",
+    "landing.title":
+      'Deja de <span class="landing-strike">re-explicar</span> tu proyecto.<br><span class="landing-accent-word">Continúa.</span>',
     "landing.subtitle":
       "NeuroFS mantiene tu trabajo enfocado, prepara solo el contexto que importa y te ayuda a continuar donde lo dejaste.",
     "landing.ctaPrimary": "Empezar una tarea",
@@ -1646,16 +1643,11 @@ const LANDING_DICT = {
     "landing.card2.p": "Envía menos ruido a Claude o ChatGPT y mantén tus prompts más ligeros.",
     "landing.card3.h": "Continúa después",
     "landing.card3.p": "Retoma trabajo anterior sin tener que explicar todo de nuevo.",
-    "landing.edu.h": "Cómo ahorra contexto",
-    "landing.edu.p":
-      "En vez de pegar todo tu proyecto, NeuroFS crea un pack de contexto más pequeño y enfocado que puedes usar con tu asistente de IA.",
-    "landing.edu.step1Title": "Tu proyecto",
-    "landing.edu.step1Sub": "Todos los archivos e historial",
-    "landing.edu.step2Title": "NeuroFS",
-    "landing.edu.step2Sub": "Se queda con lo que importa",
-    "landing.edu.step3Title": "Tu IA",
-    "landing.edu.step3Sub": "Prompt enfocado y ligero",
-    "landing.footer.ready": "¿Listo para trabajar con menos contexto?",
+    "landing.edu.before": "Sin NeuroFS",
+    "landing.edu.beforeCaption": "Pegas todo. La mayoría es ruido.",
+    "landing.edu.after": "Con NeuroFS",
+    "landing.edu.afterCaption": "Solo lo que importa. Enfocado y ligero.",
+    "landing.footer.ready": "¿Listo?",
     "landing.footer.cta": "Crea tu primera tarea",
     "modal.eyebrow": "Cómo funciona",
     "modal.title": "Tres pasos, treinta segundos",
@@ -1694,6 +1686,11 @@ function applyLang(lang) {
     const key = el.getAttribute("data-i18n");
     const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
     if (typeof value === "string") el.textContent = value;
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const key = el.getAttribute("data-i18n-html");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.innerHTML = value;
   });
   document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.lang === normalized);

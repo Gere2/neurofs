@@ -33,57 +33,65 @@
     <section id="tab-home" class="tab active">
       <div class="landing">
         <div class="landing-hero">
-          <div class="landing-badge" data-i18n="landing.badge">Local · works with Claude &amp; ChatGPT</div>
-          <h2 class="landing-title" data-i18n="landing.title">Stop re-explaining your project to AI</h2>
+          <div class="landing-eyebrow"><span class="landing-eyebrow-dot" aria-hidden="true">●</span><span data-i18n="landing.eyebrow">Local app — works with Claude &amp; ChatGPT</span></div>
+          <h2 class="landing-title" data-i18n-html="landing.title">Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span></h2>
           <p class="landing-subtitle" data-i18n="landing.subtitle">NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.</p>
           <div class="landing-cta">
             <button class="primary" data-tab-target="task" data-i18n="landing.ctaPrimary">Start a task</button>
-            <button class="muted-btn" data-tab-target="journal" data-i18n="landing.ctaSecondary">Continue previous work</button>
+            <button class="muted-btn landing-cta-back" data-tab-target="journal" data-i18n="landing.ctaSecondary">Continue previous work</button>
           </div>
           <button class="landing-howto-link" type="button" id="landing-howto-open" data-i18n="landing.howTo">See how it works</button>
         </div>
 
         <div class="landing-cards">
           <div class="landing-card">
-            <div class="landing-card-icon landing-card-icon--focus" aria-hidden="true">◎</div>
+            <div class="landing-card-number">01</div>
             <h3 data-i18n="landing.card1.h">Start focused</h3>
             <p data-i18n="landing.card1.p">Describe what you want to do. NeuroFS finds the files that matter.</p>
           </div>
           <div class="landing-card">
-            <div class="landing-card-icon landing-card-icon--save" aria-hidden="true">↓</div>
+            <div class="landing-card-number">02</div>
             <h3 data-i18n="landing.card2.h">Save context</h3>
             <p data-i18n="landing.card2.p">Send less noise to Claude or ChatGPT and keep your prompts lighter.</p>
           </div>
           <div class="landing-card">
-            <div class="landing-card-icon landing-card-icon--continue" aria-hidden="true">↻</div>
+            <div class="landing-card-number">03</div>
             <h3 data-i18n="landing.card3.h">Continue later</h3>
             <p data-i18n="landing.card3.p">Pick up from previous work without explaining everything again.</p>
           </div>
         </div>
 
         <div class="landing-edu">
-          <h3 data-i18n="landing.edu.h">How it saves context</h3>
-          <p data-i18n="landing.edu.p">Instead of pasting your whole project, NeuroFS creates a smaller, focused context pack you can use with your AI assistant.</p>
-          <div class="landing-edu-visual">
-            <div class="landing-edu-step">
-              <strong data-i18n="landing.edu.step1Title">Your project</strong>
-              <span data-i18n="landing.edu.step1Sub">All files &amp; history</span>
+          <div class="landing-edu-side landing-edu-side--before">
+            <div class="landing-edu-label landing-edu-label--before" data-i18n="landing.edu.before">Without NeuroFS</div>
+            <div class="landing-noise-lines" aria-hidden="true">
+              <div class="landing-noise-line" style="width:100%"></div>
+              <div class="landing-noise-line" style="width:88%"></div>
+              <div class="landing-noise-line" style="width:95%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:70%"></div>
+              <div class="landing-noise-line" style="width:82%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:60%"></div>
+              <div class="landing-noise-line" style="width:91%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:45%"></div>
+              <div class="landing-noise-line" style="width:78%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:55%"></div>
             </div>
-            <div class="landing-edu-arrow" aria-hidden="true">→</div>
-            <div class="landing-edu-step">
-              <strong data-i18n="landing.edu.step2Title">NeuroFS</strong>
-              <span data-i18n="landing.edu.step2Sub">Keeps what matters</span>
+            <p class="landing-edu-caption" data-i18n="landing.edu.beforeCaption">You paste everything. Most of it is noise.</p>
+          </div>
+          <div class="landing-edu-side landing-edu-side--after">
+            <div class="landing-edu-label landing-edu-label--after" data-i18n="landing.edu.after">With NeuroFS</div>
+            <div class="landing-clean-lines" aria-hidden="true">
+              <div class="landing-clean-line landing-clean-line--active" style="width:80%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:65%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:72%"></div>
+              <div class="landing-clean-line landing-clean-line--dim" style="width:40%"></div>
             </div>
-            <div class="landing-edu-arrow" aria-hidden="true">→</div>
-            <div class="landing-edu-step">
-              <strong data-i18n="landing.edu.step3Title">Your AI</strong>
-              <span data-i18n="landing.edu.step3Sub">Focused, lighter prompt</span>
-            </div>
+            <p class="landing-edu-caption" data-i18n="landing.edu.afterCaption">Only what matters. Focused and lighter.</p>
           </div>
         </div>
 
         <div class="landing-footer-cta">
-          <p data-i18n="landing.footer.ready">Ready to work with less context?</p>
+          <p data-i18n="landing.footer.ready">Ready?</p>
           <button class="primary" data-tab-target="task" data-i18n="landing.footer.cta">Create your first task</button>
         </div>
 
