@@ -35,6 +35,9 @@ but only 40 are indexed, something is being filtered out.`,
 			if err != nil {
 				return fmt.Errorf("stats: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("stats: config: %w", err)
+			}
 
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {

@@ -2,6 +2,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -61,4 +62,23 @@ func New(root string) (*Config, error) {
 // DBDir returns the directory that contains the database file.
 func (c *Config) DBDir() string {
 	return filepath.Dir(c.DBPath)
+}
+
+// Validate checks that RepoRoot points at an existing directory. Without
+// this, storage.Open would silently MkdirAll a .neurofs/ tree inside any
+// path the caller supplies — including ones that were typos — leaving
+// stray directories across the filesystem. The CLI and UI both call this
+// before opening the index.
+func (c *Config) Validate() error {
+	info, err := os.Stat(c.RepoRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("repo root does not exist: %s", c.RepoRoot)
+		}
+		return fmt.Errorf("stat repo root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("repo root must be a directory: %s", c.RepoRoot)
+	}
+	return nil
 }

@@ -33,6 +33,9 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			if err != nil {
 				return fmt.Errorf("scan: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("scan: config: %w", err)
+			}
 
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {

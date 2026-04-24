@@ -91,6 +91,10 @@ func mustRepo(w http.ResponseWriter, repo string) (*config.Config, bool) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return nil, false
 	}
+	if err := cfg.Validate(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return nil, false
+	}
 	return cfg, true
 }
 
@@ -102,6 +106,60 @@ func decode(r *http.Request, v any) error {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	return dec.Decode(v)
+}
+
+// confineToRepo resolves raw against root (joining if relative, otherwise
+// using raw as-is) and guarantees the result lives inside root. Symlinks
+// are followed before the containment check so an attacker cannot tunnel
+// out via `audit/records/evil.json -> /etc/passwd`. The returned absolute
+// path is safe to pass to os.Open / os.ReadFile / os.WriteFile.
+//
+// Both paths are canonicalised by resolving their deepest-existing
+// ancestor — this matters on macOS where /var is a symlink to /private/var
+// and asymmetric resolution would make perfectly valid paths fail the
+// containment check. Missing leaves are acceptable (we may be writing).
+func confineToRepo(root, raw string, _ bool) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	abs := raw
+	if !filepath.IsAbs(raw) {
+		abs = filepath.Join(root, raw)
+	}
+	abs = filepath.Clean(abs)
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w", err)
+	}
+	rootResolved := resolveExistingPrefix(rootAbs)
+	absResolved := resolveExistingPrefix(abs)
+
+	rel, err := filepath.Rel(rootResolved, absResolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must live inside the repo: %s", raw)
+	}
+	return absResolved, nil
+}
+
+// resolveExistingPrefix canonicalises the deepest existing prefix of p
+// (following symlinks) and re-attaches the remaining non-existent tail
+// verbatim. Never returns an error: if nothing resolves, the input is
+// returned unchanged. This keeps confineToRepo usable for paths that
+// are about to be created.
+func resolveExistingPrefix(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return filepath.Join(resolveExistingPrefix(parent), filepath.Base(p))
 }
 
 // --------------------- /api/scan ---------------------
@@ -261,9 +319,10 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshotPath := defaultPath
 	if name := strings.TrimSpace(req.SnapshotName); name != "" {
-		target := name
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(cfg.RepoRoot, target)
+		target, err := confineToRepo(cfg.RepoRoot, name, true)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "snapshot_name: "+err.Error())
+			return
 		}
 		if err := writeBundleJSON(target, bundle); err != nil {
 			writeErr(w, http.StatusInternalServerError, "save snapshot: "+err.Error())
@@ -339,9 +398,10 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundlePath := req.BundlePath
-	if !filepath.IsAbs(bundlePath) {
-		bundlePath = filepath.Join(cfg.RepoRoot, bundlePath)
+	bundlePath, err := confineToRepo(cfg.RepoRoot, req.BundlePath, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bundle_path: "+err.Error())
+		return
 	}
 	bundle, err := loadBundleJSON(bundlePath)
 	if err != nil {
@@ -819,8 +879,9 @@ func clampHead(s string, window int) string {
 // --------------------- /api/diff ---------------------
 
 type diffReq struct {
-	A string `json:"a"`
-	B string `json:"b"`
+	Repo string `json:"repo"`
+	A    string `json:"a"`
+	B    string `json:"b"`
 }
 
 func handleDiff(w http.ResponseWriter, r *http.Request) {
@@ -829,16 +890,35 @@ func handleDiff(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
 		return
 	}
+	cfg, ok := mustRepo(w, req.Repo)
+	if !ok {
+		return
+	}
 	if strings.TrimSpace(req.A) == "" || strings.TrimSpace(req.B) == "" {
 		writeErr(w, http.StatusBadRequest, "both 'a' and 'b' paths are required")
 		return
 	}
-	a, err := audit.LoadRecord(req.A)
+	// Both operands must resolve inside the repo's records directory —
+	// otherwise the diff endpoint would double as an arbitrary-file
+	// reader (a: /etc/passwd, b: /etc/hostname would read system files
+	// the user never asked this tool to touch).
+	recordsRoot := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
+	aPath, err := confineToRepo(recordsRoot, req.A, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "a: "+err.Error())
+		return
+	}
+	bPath, err := confineToRepo(recordsRoot, req.B, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "b: "+err.Error())
+		return
+	}
+	a, err := audit.LoadRecord(aPath)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "load a: "+err.Error())
 		return
 	}
-	b, err := audit.LoadRecord(req.B)
+	b, err := audit.LoadRecord(bPath)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "load b: "+err.Error())
 		return
@@ -1022,10 +1102,14 @@ func normaliseMode(s string) string {
 // enough to hold a multi-paragraph brief but tight enough to stay under the
 // 8MB body limit even if every field is maxed out. Empty input returns "",
 // which combined with the omitempty JSON tag leaves the field unpersisted.
+//
+// Truncation walks back to the nearest rune boundary so multi-byte runes
+// (emoji, accents, CJK) never get split — writing a record with a
+// half-rune would produce invalid UTF-8 JSON that later loads would fail.
 func clampAnnotation(s string, max int) string {
 	s = strings.TrimSpace(s)
 	if max > 0 && len(s) > max {
-		s = s[:max]
+		s = s[:clampRuneBack(s, max)]
 	}
 	return s
 }

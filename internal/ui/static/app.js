@@ -356,13 +356,33 @@ function renderWorkspace() {
   if (state.repo) refreshWorkspaceStats();
 }
 
-document.getElementById("save-repo").addEventListener("click", () => {
-  const v = document.getElementById("repo-input").value.trim();
-  if (!v) { alert("Enter an absolute path."); return; }
-  state.repo = v;
-  localStorage.setItem("neurofs.repo", v);
-  document.getElementById("scan-status").textContent = "Repo set. Run scan to index.";
-  refreshWorkspaceStats();
+document.getElementById("save-repo").addEventListener("click", async () => {
+  const raw = document.getElementById("repo-input").value.trim();
+  if (!raw) { alert("Enter an absolute path."); return; }
+  // The server will reject anything that isn't absolute, but typing `~`
+  // is so common on mac/linux that silently failing is a bad first
+  // impression. We can't expand `~` to a real homedir from JS, so give
+  // the user a targeted message instead of the generic server error.
+  if (raw.startsWith("~")) {
+    alert("Use the full absolute path — `~` isn't expanded in the browser.");
+    return;
+  }
+  if (!raw.startsWith("/")) {
+    alert("Repo path must be absolute (start with /).");
+    return;
+  }
+  state.repo = raw;
+  localStorage.setItem("neurofs.repo", raw);
+  document.getElementById("repo-input").value = raw;
+  // The success line is set AFTER refreshWorkspaceStats verifies the path
+  // is a real directory — otherwise the user sees "Repo set." next to a
+  // "repo root does not exist" error card, which is contradictory.
+  const status = document.getElementById("scan-status");
+  status.textContent = "checking…";
+  const ok = await refreshWorkspaceStats();
+  status.textContent = ok
+    ? "Repo set. Run scan to index."
+    : "Repo rejected — see error below.";
 });
 
 document.getElementById("scan-btn").addEventListener("click", async () => {
@@ -393,8 +413,10 @@ async function refreshWorkspaceStats() {
   try {
     const s = await j("GET", `/api/stats?repo=${encodeURIComponent(state.repo)}`);
     el.innerHTML = renderStatsCard(s);
+    return true;
   } catch (e) {
-    el.innerHTML = `<span class="muted">${esc(e.message)}</span>`;
+    el.innerHTML = `<span class="error">${esc(e.message)}</span>`;
+    return false;
   }
 }
 
@@ -1498,18 +1520,19 @@ function cssEscape(s) {
 // ------------------------------ compare ------------------------------
 
 document.getElementById("compare-btn").addEventListener("click", async () => {
+  if (!requireRepo()) return;
   const a = document.getElementById("cmp-a").value.trim();
   const b = document.getElementById("cmp-b").value.trim();
   if (!a || !b) { alert("Need both record paths."); return; }
   const status = document.getElementById("compare-status");
   status.textContent = "diffing…";
   try {
-    const d = await j("POST", "/api/diff", { a, b });
+    const d = await j("POST", "/api/diff", { repo: state.repo, a, b });
     renderDiff(d);
     status.textContent = "";
   } catch (e) {
     document.getElementById("compare-report").innerHTML =
-      `<span class="muted">${esc(e.message)}</span>`;
+      `<span class="error">${esc(e.message)}</span>`;
     status.textContent = "error";
   }
 });

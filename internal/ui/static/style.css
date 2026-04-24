@@ -145,6 +145,7 @@ code {
 }
 
 .muted { color: var(--muted); font-size: 0.85rem; }
+.error { color: var(--bad); font-size: 0.9rem; }
 
 .card {
   background: var(--panel);
