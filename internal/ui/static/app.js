@@ -286,6 +286,12 @@ document.querySelectorAll("nav#tabs button").forEach(b => {
   b.addEventListener("click", () => switchTab(b.dataset.tab));
 });
 
+// data-tab-target buttons (landing page CTAs) jump to a tab by name.
+// Kept as a single delegate so any future in-UI call-to-action can reuse it.
+document.querySelectorAll("[data-tab-target]").forEach(b => {
+  b.addEventListener("click", () => switchTab(b.dataset.tabTarget));
+});
+
 // ------------------------------ mode wiring ------------------------------
 
 document.querySelectorAll("#mode-pills button").forEach(b => {
@@ -308,17 +314,26 @@ document.getElementById("reset-mode").addEventListener("click", () => {
 // ------------------------------ home ------------------------------
 
 async function renderHome() {
+  // The landing itself is static copy. We only surface a thin status line
+  // at the bottom when a workspace is already configured — just enough so
+  // returning users know which repo they're operating on without turning
+  // the hero back into a dashboard.
+  const wrap = document.getElementById("home-stats");
   const body = document.getElementById("home-stats-body");
+  if (!wrap || !body) return;
   if (!state.repo) {
-    body.innerHTML = `<span class="muted">No workspace set. Open the Workspace tab.</span>`;
+    wrap.hidden = true;
     return;
   }
-  body.innerHTML = `<span class="muted">Loading stats for <code>${esc(state.repo)}</code>…</span>`;
+  wrap.hidden = false;
+  body.textContent = `${t("home.workingOn")} ${state.repo}`;
   try {
     const s = await j("GET", `/api/stats?repo=${encodeURIComponent(state.repo)}`);
-    body.innerHTML = renderStatsCard(s);
-  } catch (e) {
-    body.innerHTML = `<span class="muted">Could not read index: ${esc(e.message)}. Run <code>scan</code> from the Workspace tab.</span>`;
+    if (s && typeof s.files === "number") {
+      body.textContent = `${t("home.workingOn")} ${s.repo_root || state.repo} · ${s.files} ${t("home.filesIndexedSuffix")}`;
+    }
+  } catch {
+    body.textContent = `${t("home.workingOn")} ${state.repo} · ${t("home.indexNotReady")}`;
   }
 }
 
@@ -330,21 +345,21 @@ function renderStatsCard(s) {
   if (s.audit && s.audit.records) {
     audit = `
       <div class="bucket">
-        <h4>Audit aggregate (${s.audit.records} records)</h4>
-        <div>grounded ${fmtPct(s.audit.grounded_ratio)} · drift ${fmtPct(s.audit.drift_rate)}${
-          s.audit.answer_recall ? ` · recall ${fmtPct(s.audit.answer_recall)}` : ""
+        <h4>${t("workspace.auditAggregate")} (${s.audit.records} ${t("workspace.recordsSuffix")})</h4>
+        <div>${t("audit.grounded")} ${fmtPct(s.audit.grounded_ratio)} · ${t("audit.drift")} ${fmtPct(s.audit.drift_rate)}${
+          s.audit.answer_recall ? ` · ${t("workspace.recall")} ${fmtPct(s.audit.answer_recall)}` : ""
         }</div>
       </div>`;
   }
   return `
     <dl class="kv">
-      <dt>repo</dt><dd>${esc(s.repo_root)}</dd>
-      <dt>files</dt><dd>${s.files} indexed</dd>
-      <dt>symbols</dt><dd>${s.symbols}</dd>
-      <dt>imports</dt><dd>${s.imports}</dd>
-      <dt>index size</dt><dd>${s.db_bytes} bytes</dd>
+      <dt>${t("workspace.repoKv")}</dt><dd>${esc(s.repo_root)}</dd>
+      <dt>${t("workspace.files")}</dt><dd>${s.files} ${t("workspace.indexedSuffix")}</dd>
+      <dt>${t("workspace.symbols")}</dt><dd>${s.symbols}</dd>
+      <dt>${t("workspace.imports")}</dt><dd>${s.imports}</dd>
+      <dt>${t("workspace.indexSize")}</dt><dd>${s.db_bytes} ${t("workspace.bytes")}</dd>
     </dl>
-    <div class="row">${langRows || '<span class="muted">no language breakdown</span>'}</div>
+    <div class="row">${langRows || `<span class="muted">${t("workspace.langBreakdown")}</span>`}</div>
     ${audit}`;
 }
 
@@ -358,31 +373,21 @@ function renderWorkspace() {
 
 document.getElementById("save-repo").addEventListener("click", async () => {
   const raw = document.getElementById("repo-input").value.trim();
-  if (!raw) { alert("Enter an absolute path."); return; }
-  // The server will reject anything that isn't absolute, but typing `~`
-  // is so common on mac/linux that silently failing is a bad first
-  // impression. We can't expand `~` to a real homedir from JS, so give
-  // the user a targeted message instead of the generic server error.
-  if (raw.startsWith("~")) {
-    alert("Use the full absolute path — `~` isn't expanded in the browser.");
-    return;
-  }
-  if (!raw.startsWith("/")) {
-    alert("Repo path must be absolute (start with /).");
-    return;
-  }
+  if (!raw) { alert(t("alert.enterPath")); return; }
+  // Tilde and non-absolute paths would be rejected by the server as
+  // "repo root does not exist"; catch them up front so the user gets
+  // the actionable message instead of the generic one.
+  if (raw.startsWith("~")) { alert(t("alert.tilde")); return; }
+  if (!raw.startsWith("/")) { alert(t("alert.absolute")); return; }
   state.repo = raw;
   localStorage.setItem("neurofs.repo", raw);
   document.getElementById("repo-input").value = raw;
-  // The success line is set AFTER refreshWorkspaceStats verifies the path
-  // is a real directory — otherwise the user sees "Repo set." next to a
-  // "repo root does not exist" error card, which is contradictory.
+  // Success/failure line is set only after refreshWorkspaceStats verifies
+  // the path — otherwise "repo set" would appear next to an error card.
   const status = document.getElementById("scan-status");
-  status.textContent = "checking…";
+  status.textContent = t("common.checking");
   const ok = await refreshWorkspaceStats();
-  status.textContent = ok
-    ? "Repo set. Run scan to index."
-    : "Repo rejected — see error below.";
+  status.textContent = ok ? t("home.repoSet") : t("home.repoRejected");
 });
 
 document.getElementById("scan-btn").addEventListener("click", async () => {
@@ -390,17 +395,17 @@ document.getElementById("scan-btn").addEventListener("click", async () => {
   const btn = document.getElementById("scan-btn");
   const out = document.getElementById("scan-output");
   const status = document.getElementById("scan-status");
-  btn.disabled = true; status.textContent = "scanning…"; out.textContent = "";
+  btn.disabled = true; status.textContent = t("common.scanning"); out.textContent = "";
   try {
     const r = await j("POST", "/api/scan", {
       repo: state.repo,
       verbose: document.getElementById("scan-verbose").checked,
     });
-    status.textContent = `done in ${r.summary.elapsed_ms}ms`;
+    status.textContent = `${t("common.doneIn")} ${r.summary.elapsed_ms}${t("common.ms")}`;
     out.textContent = JSON.stringify(r.summary, null, 2);
     refreshWorkspaceStats();
   } catch (e) {
-    status.textContent = "error";
+    status.textContent = t("common.error");
     out.textContent = e.message;
   } finally {
     btn.disabled = false;
@@ -409,7 +414,7 @@ document.getElementById("scan-btn").addEventListener("click", async () => {
 
 async function refreshWorkspaceStats() {
   const el = document.getElementById("workspace-stats");
-  el.innerHTML = `<span class="muted">loading…</span>`;
+  el.innerHTML = `<span class="muted">${t("common.loading")}</span>`;
   try {
     const s = await j("GET", `/api/stats?repo=${encodeURIComponent(state.repo)}`);
     el.innerHTML = renderStatsCard(s);
@@ -1591,7 +1596,875 @@ function renderDiff(d) {
   `;
 }
 
+// ------------------------------ landing v2 (home) ------------------------------
+// Scoped to the landing: header .lang-toggle, .landing-*, and the how-it-works
+// modal. The rest of the app stays in English on purpose — entry page only.
+
+const LANDING_LANG_KEY = "neurofs.lang";
+const LANDING_DICT = {
+  en: {
+    "brand.sub": "context compiler — local UI",
+
+    "nav.home": "Home",
+    "nav.workspace": "Workspace",
+    "nav.task": "New task",
+    "nav.response": "Response",
+    "nav.records": "Records",
+    "nav.journal": "Journal",
+    "nav.search": "Search",
+    "nav.compare": "Compare",
+    "nav.guide": "Guide",
+
+    "common.refresh": "Refresh",
+    "common.filter": "Filter",
+    "common.none": "—",
+    "common.yes": "yes",
+    "common.no": "no",
+
+    "mode.strategy": "Strategy",
+    "mode.build": "Build",
+    "mode.review": "Review",
+    "mode.unknown": "Unknown",
+    "filter.all": "All",
+    "filter.unknown": "Unknown",
+
+    "landing.eyebrow": "Local app — works with Claude & ChatGPT",
+    "landing.title":
+      'Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span>',
+    "landing.subtitle":
+      "NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.",
+    "landing.ctaPrimary": "Start a task",
+    "landing.ctaSecondary": "Continue previous work",
+    "landing.howTo": "See how it works",
+    "landing.card1.h": "Start focused",
+    "landing.card1.p": "Describe what you want to do. NeuroFS finds the files that matter.",
+    "landing.card2.h": "Save context",
+    "landing.card2.p": "Send less noise to Claude or ChatGPT and keep your prompts lighter.",
+    "landing.card3.h": "Continue later",
+    "landing.card3.p": "Pick up from previous work without explaining everything again.",
+    "landing.edu.before": "Without NeuroFS",
+    "landing.edu.beforeCaption": "You paste everything. Most of it is noise.",
+    "landing.edu.after": "With NeuroFS",
+    "landing.edu.afterCaption": "Only what matters. Focused and lighter.",
+    "landing.footer.ready": "Ready?",
+    "landing.footer.cta": "Create your first task",
+
+    "modal.eyebrow": "How it works",
+    "modal.title": "Three steps, thirty seconds",
+    "modal.step1.caption": "\"Fix the login button on mobile\"",
+    "modal.step1.title": "Describe your task",
+    "modal.step1.body":
+      "Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.",
+    "modal.step2.title": "NeuroFS picks the right files",
+    "modal.step2.body":
+      "It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.",
+    "modal.step3.title": "Paste into Claude or ChatGPT",
+    "modal.step3.body":
+      "Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.",
+    "modal.back": "← Back",
+    "modal.next": "Next →",
+    "modal.finish": "Start my first task",
+
+    "workspace.h": "Workspace",
+    "workspace.lead": "Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.",
+    "workspace.repoPath": "Repo path",
+    "workspace.useRepo": "Use this repo",
+    "workspace.runScan": "Run scan",
+    "workspace.verbose": "verbose",
+    "workspace.scanning": "scanning…",
+    "workspace.scanDone": "scan complete",
+    "workspace.scanFailed": "scan failed",
+    "workspace.saved": "saved",
+    "workspace.noRepo": "No repo selected.",
+    "workspace.indexedAt": "Indexed at",
+    "workspace.files": "files",
+    "workspace.symbols": "symbols",
+    "workspace.imports": "imports",
+    "workspace.indexSize": "index size",
+
+    "task.h": "New task",
+    "task.lead": "Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.",
+    "task.mode": "Mode",
+    "task.titleLabel": "Title (short label for this run)",
+    "task.titlePh": "e.g. 010 human metadata",
+    "task.questionLabel": "Question (short, what you ask Claude to focus on)",
+    "task.questionPh": "e.g. how does the ranker handle stemming",
+    "task.briefLabel": "Brief (what you are trying to do and why — goes with the record)",
+    "task.briefPh": "optional: the one-paragraph brief. This is what 'you-from-next-week' will thank 'you-from-today' for writing.",
+    "task.budget": "Token budget",
+    "task.focus": "Focus prefix (optional, comma-separated)",
+    "task.boostChanged": "boost git-changed files",
+    "task.maxFiles": "Max files <input type=\"number\" id=\"q-maxfiles\" value=\"8\" min=\"0\">",
+    "task.maxFrags": "Max fragments <input type=\"number\" id=\"q-maxfrags\" value=\"16\" min=\"0\">",
+    "task.preferSigs": "prefer signatures",
+    "task.slug": "Task slug (optional, used to name the run)",
+    "task.snapshot": "Bundle snapshot name (auto-filled from slug + mode)",
+    "task.runPreview": "Run name will be: <code>—</code>",
+    "task.template": "Claude prompt template (edit before copying)",
+    "task.pack": "Pack bundle",
+    "task.resetTemplate": "Reset template to mode default",
+    "task.copyPrompt": "Copy full prompt (template + bundle)",
+    "task.downloadPrompt": "Download prompt",
+    "task.goResponse": "Next: paste response →",
+    "task.previewPrompt": "Preview prompt (template + bundle)",
+    "task.fragmentsIncluded": "Fragments included",
+    "task.packing": "packing…",
+    "task.packDone": "packed",
+    "task.packFailed": "pack failed",
+    "task.copied": "copied",
+    "task.downloaded": "downloaded",
+    "task.runName": "Run name will be:",
+
+    "response.h": "Response",
+    "response.lead": "Paste the model's answer. Replay runs the offline audit: citation validation, drift classifier, optional fact recall.",
+    "response.modelId": "Model id (free-form label)",
+    "response.bundleSource": "Bundle source",
+    "response.bundleLast": "Use the last packed bundle (in-memory)",
+    "response.bundleSnapshot": "Use a saved bundle JSON (audit/bundles/...)",
+    "response.snapshotPath": "Snapshot path",
+    "response.titleLabel": "Title (inherited from pack — editable)",
+    "response.titlePh": "short label for this run",
+    "response.facts": "Expected facts (comma-separated, optional)",
+    "response.briefLabel": "Brief (inherited from pack — editable)",
+    "response.briefPh": "what the run was trying to do",
+    "response.textLabel": "Response text",
+    "response.textPh": "Paste the answer here...",
+    "response.noteLabel": "Note (your conclusion once you read the response and the audit)",
+    "response.notePh": "what did we learn? keep / discard? next step?",
+    "response.runReplay": "Run replay",
+    "response.persist": "persist under audit/records/",
+    "response.replaying": "replaying…",
+    "response.replayDone": "replay complete",
+    "response.replayFailed": "replay failed",
+
+    "records.h": "Records",
+    "records.lead": "All persisted audit records under <code>&lt;repo&gt;/audit/records/</code>. Select two to compare.",
+    "records.col.when": "When",
+    "records.col.mode": "Mode",
+    "records.col.context": "Context",
+    "records.col.model": "Model",
+    "records.col.grounded": "Grounded",
+    "records.col.drift": "Drift",
+    "records.col.recall": "Recall",
+    "records.col.bundle": "Bundle",
+    "records.diffSelected": "Diff selected →",
+    "records.loading": "loading…",
+    "records.loadFailed": "failed to load",
+    "records.empty": "no records yet",
+    "records.selected": "selected",
+
+    "journal.h": "Journal",
+    "journal.lead": "A readable timeline of your audit records — each run rendered as a card with its title, brief, note and the metrics. Legacy records (no title/brief/note) show up as cards too, anchored to their question.",
+    "journal.searchPh": "search title / brief / note / question",
+    "journal.loading": "loading…",
+    "journal.loadFailed": "failed to load",
+    "journal.empty": "no records yet",
+    "journal.noMatches": "no matches",
+    "journal.brief": "Brief",
+    "journal.note": "Note",
+    "journal.question": "Question",
+    "journal.expand": "Show fragments",
+    "journal.collapse": "Hide fragments",
+    "journal.fragmentsCount": "fragments",
+    "journal.viewFile": "view file",
+
+    "search.h": "Search",
+    "search.lead": "Find prior runs by title, brief, note, question, mode, bundle hash, fragment paths, or fragment content. Case-insensitive substring — quick and local.",
+    "search.ph": "text to find across your audit history (Enter to search)",
+    "search.btn": "Search",
+    "search.scope": "Scope",
+    "search.metadata": "Metadata",
+    "search.paths": "Paths",
+    "search.content": "Content",
+    "search.searching": "searching…",
+    "search.noResults": "no results",
+    "search.typeToSearch": "type something and press Enter.",
+    "search.resultsCount": "results",
+
+    "compare.h": "Compare",
+    "compare.lead": "Deltas are B − A. Positive drift is worse; positive grounded and recall are better.",
+    "compare.recA": "Record A <input type=\"text\" id=\"cmp-a\" placeholder=\"audit/records/...\">",
+    "compare.recB": "Record B <input type=\"text\" id=\"cmp-b\" placeholder=\"audit/records/...\">",
+    "compare.btn": "Compute diff",
+    "compare.computing": "computing…",
+    "compare.done": "done",
+    "compare.failed": "diff failed",
+
+    "guide.h": "Guide",
+    "guide.pipeline.h": "Pipeline",
+    "guide.pipeline.p": "NeuroFS is a pipeline: <strong>scan → pack → (Claude) → replay</strong>. Scan builds the SQLite index at <code>.neurofs/index.db</code>. Pack ranks and compresses. Replay is the offline governance step.",
+    "guide.ranker.h": "Ranker signals",
+    "guide.ranker.filename": "<code>filename_match</code> — token is in the path.",
+    "guide.ranker.path": "<code>path_match</code> — focus prefix hit.",
+    "guide.ranker.symbol": "<code>symbol_match</code> — token is in the symbols table (with shallow stemming).",
+    "guide.ranker.import": "<code>import_match</code> — token appears in imports.",
+    "guide.ranker.focus": "<code>focus</code> / <code>changed</code> — boosts from <code>--focus</code> / <code>--changed</code>.",
+    "guide.audit.h": "Audit metrics",
+    "guide.audit.grounded": "<strong>grounded_ratio</strong> — fraction of citations that resolve to a file inside the bundle.",
+    "guide.audit.drift": "<strong>drift_rate</strong> — unknown / (known + unknown) symbols, split across three buckets:<ul><li><strong>paths</strong> — file-like references not in the bundle.</li><li><strong>apis</strong> — dotted names (<code>jwt.sign</code>) not in the bundle.</li><li><strong>symbols</strong> — plain code-shaped identifiers not in the bundle.</li></ul>",
+    "guide.audit.recall": "<strong>answer_recall</strong> — fraction of <code>--facts</code> strings present in the response (case-insensitive substring).",
+    "guide.impl.h": "What is implemented",
+    "guide.impl.server": "Local HTTP server + embedded UI (<code>internal/ui</code>).",
+    "guide.impl.endpoints": "Endpoints wrap scan, pack, replay, records list, diff, stats.",
+    "guide.impl.bundle": "Bundle is held in memory between <em>pack</em> and <em>replay</em>. Use snapshot path for cross-session replay.",
+    "guide.next.h": "What is recommended next",
+    "guide.next.stream": "Streaming scan progress (WebSocket / SSE) — today the UI blocks.",
+    "guide.next.diff": "Inline diff viewer with colour — today rendered as plain text.",
+    "guide.next.workspace": "Persistent workspace list — today one repo at a time in <code>localStorage</code>.",
+    "guide.next.api": "Optional live Claude API integration wrapped behind an explicit toggle.",
+
+    "stats.title": "Pack stats",
+    "stats.budget": "budget",
+    "stats.used": "used",
+    "stats.files": "files",
+    "stats.fragments": "fragments",
+    "stats.bundleHash": "bundle hash",
+
+    "replay.grounded": "Grounded",
+    "replay.drift": "Drift",
+    "replay.recall": "Recall",
+    "replay.savedTo": "Saved to",
+    "replay.unknownPaths": "Unknown paths",
+    "replay.unknownApis": "Unknown APIs",
+    "replay.unknownSymbols": "Unknown symbols",
+    "replay.missingFacts": "Missing facts",
+    "replay.foundFacts": "Found facts",
+
+    "common.loading": "loading…",
+    "common.searching": "searching…",
+    "common.error": "error",
+    "common.errorPrefix": "error: ",
+    "common.done": "done",
+    "common.copied": "copied",
+    "common.copyFailed": "copy failed",
+    "common.scanning": "scanning…",
+    "common.diffing": "diffing…",
+    "common.doneIn": "done in",
+    "common.ms": "ms",
+    "common.checking": "checking…",
+
+    "alert.setRepo": "Set a repo path in the Workspace tab first.",
+    "alert.enterPath": "Enter an absolute path.",
+    "alert.tilde": "Use the full absolute path — `~` isn't expanded in the browser.",
+    "alert.absolute": "Repo path must be absolute (start with /).",
+    "alert.enterQuestion": "Enter a question.",
+    "alert.pasteResponse": "Paste the model response.",
+    "alert.snapshotRequired": "Snapshot path is required in snapshot mode.",
+    "alert.noInMemoryBundle": "No in-memory bundle. Either re-pack with a snapshot name, or switch bundle source to snapshot.",
+    "alert.needBothPaths": "Need both record paths.",
+
+    "home.workingOn": "Working on",
+    "home.filesIndexedSuffix": "files indexed",
+    "home.indexNotReady": "index not ready — open Workspace to scan",
+    "home.repoSet": "Repo set. Run scan to index.",
+    "home.repoRejected": "Repo rejected — see error below.",
+
+    "stat.packed": "packed",
+
+    "bundle.h": "Bundle",
+    "bundle.tokens": "tokens",
+    "bundle.filesIncluded": "files included",
+    "bundle.compression": "compression",
+    "bundle.snapshot": "snapshot",
+    "bundle.notSaved": "not saved (no snapshot name given)",
+    "bundle.noFragments": "no fragments",
+    "bundle.fragPath": "path",
+    "bundle.fragRep": "representation",
+    "bundle.fragTokens": "tokens",
+    "bundle.fragScore": "score",
+
+    "pack.copiedClipboard": "copied (template + bundle)",
+    "pack.clipboardDenied": "clipboard denied — use download",
+
+    "records.nSuffix": "records",
+    "records.selectedSuffix": "selected",
+    "records.filterSuffix": "filter",
+    "records.noMatchFilter": "no records match filter",
+    "records.noneYet": "no records yet — run a replay and enable \"persist\"",
+
+    "journal.noWorkspace": "no workspace",
+    "journal.zeroRecords": "0 records",
+    "journal.noneYetPersist": "No records yet. Run a replay and tick \"persist\".",
+    "journal.filteredOutSuffix": "filtered out",
+    "journal.noMatchFilter": "No records match the current filter.",
+    "journal.runSingle": "run",
+    "journal.runPlural": "runs",
+    "journal.untitled": "(untitled)",
+    "journal.nRecordsSuffix": "records",
+    "journal.expandBtnLabel": "Expand",
+    "journal.collapseBtnLabel": "Collapse",
+    "journal.cmpALabel": "Use as Compare A",
+    "journal.cmpBLabel": "Use as Compare B",
+    "journal.copyPathLabel": "Copy path",
+    "journal.expandLoading": "loading…",
+    "journal.loadFail": "could not load record",
+    "journal.bundleFragmentsHeader": "Bundle fragments",
+    "journal.tokensSuffix": "tokens",
+    "journal.tokSuffix": "tok",
+    "journal.noFragmentsPersisted": "no fragments persisted in this record",
+    "journal.noContentPersisted": "no content persisted for this fragment — only metadata is available",
+    "journal.when": "when",
+    "journal.bundle": "bundle",
+
+    "audit.h": "Audit",
+    "audit.title": "title",
+    "audit.brief": "brief",
+    "audit.note": "note",
+    "audit.question": "question",
+    "audit.mode": "mode",
+    "audit.model": "model",
+    "audit.bundleHash": "bundle hash",
+    "audit.grounded": "grounded",
+    "audit.citationsSuffix": "citations",
+    "audit.drift": "drift",
+    "audit.unknownOf": "unknown of",
+    "audit.factRecall": "fact recall",
+    "audit.record": "record",
+    "audit.unknownPaths": "unknown paths",
+    "audit.unknownApis": "unknown apis",
+    "audit.unknownSymbols": "unknown symbols",
+    "audit.invalidCitations": "Invalid citations",
+    "audit.moreSuffix": "more",
+
+    "search.openInJournal": "Open in Journal",
+    "search.setRepo": "Set a repo in the Workspace tab.",
+    "search.noMatchFor": "no matches for",
+    "search.underFilters": "under current filters.",
+    "search.matchesSuffix": "matches",
+    "search.matchSuffix": "match",
+    "search.ofMatchesShown": "matches shown",
+    "search.of": "of",
+    "search.scoreLabel": "score",
+
+    "compare.diffH": "Diff",
+    "compare.sameBundle": "same bundle",
+    "compare.sameQuestion": "same question",
+    "compare.sameModel": "same model",
+    "compare.diffModeWarning": "(different — interpret deltas with care)",
+    "compare.groundedDelta": "grounded Δ",
+    "compare.driftDelta": "drift Δ",
+    "compare.recallDelta": "recall Δ",
+    "compare.pathsBucket": "paths",
+    "compare.apisBucket": "apis",
+    "compare.symbolsBucket": "symbols",
+
+    "mode.whenToUse": "When to use",
+    "mode.expectedOutput": "Expected output",
+    "mode.nextStep": "Next step",
+
+    "mode.strategy.label": "Strategy",
+    "mode.strategy.subtitle": "Decide the approach before writing code.",
+    "mode.strategy.when": "You're starting an iteration and want a plan, not an implementation.",
+    "mode.strategy.output": "A short technical design, key decisions, probable files, and a minimal test plan.",
+    "mode.strategy.next": "Read the plan, agree on scope, then switch to Build for the actual change.",
+
+    "mode.build.label": "Build",
+    "mode.build.subtitle": "Implement an iteration that is already defined.",
+    "mode.build.when": "You already have a plan (from Strategy or from your own head) and want working code.",
+    "mode.build.output": "A diff-shaped proposal: files to change, code, test notes, how to run it.",
+    "mode.build.next": "Paste the response in the Response tab and run replay; if grounded/drift look good, apply the diff.",
+
+    "mode.review.label": "Review",
+    "mode.review.subtitle": "Evaluate a response, diff, or proposal before integrating.",
+    "mode.review.when": "You have something (someone else's patch, a previous Claude answer, a refactor) and need a second read.",
+    "mode.review.output": "A structured review: what is correct, what is risky, what looks hallucinated, what to do next.",
+    "mode.review.next": "Apply the fixes you agree with, discard the rest, then run a Build iteration if needed.",
+
+    "workspace.repoKv": "repo",
+    "workspace.indexedSuffix": "indexed",
+    "workspace.bytes": "bytes",
+    "workspace.langBreakdown": "no language breakdown",
+    "workspace.auditAggregate": "Audit aggregate",
+    "workspace.recordsSuffix": "records",
+    "workspace.recall": "recall",
+  },
+  es: {
+    "brand.sub": "compilador de contexto — UI local",
+
+    "nav.home": "Inicio",
+    "nav.workspace": "Espacio",
+    "nav.task": "Nueva tarea",
+    "nav.response": "Respuesta",
+    "nav.records": "Registros",
+    "nav.journal": "Diario",
+    "nav.search": "Buscar",
+    "nav.compare": "Comparar",
+    "nav.guide": "Guía",
+
+    "common.refresh": "Refrescar",
+    "common.filter": "Filtro",
+    "common.none": "—",
+    "common.yes": "sí",
+    "common.no": "no",
+
+    "mode.strategy": "Estrategia",
+    "mode.build": "Construir",
+    "mode.review": "Revisar",
+    "mode.unknown": "Desconocido",
+    "filter.all": "Todos",
+    "filter.unknown": "Desconocido",
+
+    "landing.eyebrow": "App local — funciona con Claude y ChatGPT",
+    "landing.title":
+      'Deja de <span class="landing-strike">re-explicar</span> tu proyecto.<br><span class="landing-accent-word">Continúa.</span>',
+    "landing.subtitle":
+      "NeuroFS mantiene tu trabajo enfocado, prepara solo el contexto que importa y te ayuda a continuar donde lo dejaste.",
+    "landing.ctaPrimary": "Empezar una tarea",
+    "landing.ctaSecondary": "Retomar trabajo anterior",
+    "landing.howTo": "Ver cómo funciona",
+    "landing.card1.h": "Empieza enfocado",
+    "landing.card1.p": "Describe lo que quieres hacer. NeuroFS encuentra los archivos que importan.",
+    "landing.card2.h": "Ahorra contexto",
+    "landing.card2.p": "Envía menos ruido a Claude o ChatGPT y mantén tus prompts más ligeros.",
+    "landing.card3.h": "Continúa después",
+    "landing.card3.p": "Retoma trabajo anterior sin tener que explicar todo de nuevo.",
+    "landing.edu.before": "Sin NeuroFS",
+    "landing.edu.beforeCaption": "Pegas todo. La mayoría es ruido.",
+    "landing.edu.after": "Con NeuroFS",
+    "landing.edu.afterCaption": "Solo lo que importa. Enfocado y ligero.",
+    "landing.footer.ready": "¿Listo?",
+    "landing.footer.cta": "Crea tu primera tarea",
+
+    "modal.eyebrow": "Cómo funciona",
+    "modal.title": "Tres pasos, treinta segundos",
+    "modal.step1.caption": "\"Arregla el botón de login en mobile\"",
+    "modal.step1.title": "Describe tu tarea",
+    "modal.step1.body":
+      "Escríbela como si hablaras con un compañero. Una frase basta — no hace falta listar archivos ni rutas.",
+    "modal.step2.title": "NeuroFS elige los archivos adecuados",
+    "modal.step2.body":
+      "Escanea tu repo, se queda con lo que importa para la tarea y deja fuera el ruido. Todo local — nada sale de tu máquina.",
+    "modal.step3.title": "Pégalo en Claude o ChatGPT",
+    "modal.step3.body":
+      "Copia el bundle enfocado y pégalo. Tu IA responde más rápido, con menos confusión. Vuelve mañana y continúa.",
+    "modal.back": "← Atrás",
+    "modal.next": "Siguiente →",
+    "modal.finish": "Empezar mi primera tarea",
+
+    "workspace.h": "Espacio de trabajo",
+    "workspace.lead": "Elige una ruta absoluta a un repositorio. La ruta se guarda en <code>localStorage</code>, nunca se envía a ningún sitio más allá de este servidor local.",
+    "workspace.repoPath": "Ruta del repo",
+    "workspace.useRepo": "Usar este repo",
+    "workspace.runScan": "Escanear",
+    "workspace.verbose": "detallado",
+    "workspace.scanning": "escaneando…",
+    "workspace.scanDone": "escaneo completo",
+    "workspace.scanFailed": "falló el escaneo",
+    "workspace.saved": "guardado",
+    "workspace.noRepo": "No hay repo seleccionado.",
+    "workspace.indexedAt": "Indexado en",
+    "workspace.files": "archivos",
+    "workspace.symbols": "símbolos",
+    "workspace.imports": "imports",
+    "workspace.indexSize": "tamaño del índice",
+
+    "task.h": "Nueva tarea",
+    "task.lead": "Empaqueta un bundle. NeuroFS elige archivos, los comprime y emite un prompt con forma para Claude. Cópialo y llévalo a tu sesión de Claude.",
+    "task.mode": "Modo",
+    "task.titleLabel": "Título (etiqueta corta para esta ejecución)",
+    "task.titlePh": "ej. 010 metadata humana",
+    "task.questionLabel": "Pregunta (corta, en qué quieres que Claude se enfoque)",
+    "task.questionPh": "ej. cómo maneja el ranker el stemming",
+    "task.briefLabel": "Resumen (qué intentas hacer y por qué — va con el registro)",
+    "task.briefPh": "opcional: el resumen de un párrafo. Esto es lo que 'tú-de-la-próxima-semana' le agradecerá a 'tú-de-hoy' por escribir.",
+    "task.budget": "Presupuesto de tokens",
+    "task.focus": "Prefijo de foco (opcional, separado por comas)",
+    "task.boostChanged": "priorizar archivos cambiados en git",
+    "task.maxFiles": "Máx archivos <input type=\"number\" id=\"q-maxfiles\" value=\"8\" min=\"0\">",
+    "task.maxFrags": "Máx fragmentos <input type=\"number\" id=\"q-maxfrags\" value=\"16\" min=\"0\">",
+    "task.preferSigs": "preferir firmas",
+    "task.slug": "Slug de tarea (opcional, se usa para nombrar la ejecución)",
+    "task.snapshot": "Nombre del snapshot del bundle (auto-rellenado desde slug + modo)",
+    "task.runPreview": "El nombre será: <code>—</code>",
+    "task.template": "Plantilla de prompt para Claude (edítala antes de copiar)",
+    "task.pack": "Empaquetar bundle",
+    "task.resetTemplate": "Restablecer plantilla al modo por defecto",
+    "task.copyPrompt": "Copiar prompt completo (plantilla + bundle)",
+    "task.downloadPrompt": "Descargar prompt",
+    "task.goResponse": "Siguiente: pegar respuesta →",
+    "task.previewPrompt": "Previsualizar prompt (plantilla + bundle)",
+    "task.fragmentsIncluded": "Fragmentos incluidos",
+    "task.packing": "empaquetando…",
+    "task.packDone": "empaquetado",
+    "task.packFailed": "falló el empaquetado",
+    "task.copied": "copiado",
+    "task.downloaded": "descargado",
+    "task.runName": "El nombre será:",
+
+    "response.h": "Respuesta",
+    "response.lead": "Pega la respuesta del modelo. Replay ejecuta la auditoría offline: validación de citas, clasificador de drift, recall de hechos opcional.",
+    "response.modelId": "Id del modelo (etiqueta libre)",
+    "response.bundleSource": "Fuente del bundle",
+    "response.bundleLast": "Usar el último bundle empaquetado (en memoria)",
+    "response.bundleSnapshot": "Usar un JSON de bundle guardado (audit/bundles/...)",
+    "response.snapshotPath": "Ruta del snapshot",
+    "response.titleLabel": "Título (heredado del pack — editable)",
+    "response.titlePh": "etiqueta corta para esta ejecución",
+    "response.facts": "Hechos esperados (separados por coma, opcional)",
+    "response.briefLabel": "Resumen (heredado del pack — editable)",
+    "response.briefPh": "qué intentaba hacer la ejecución",
+    "response.textLabel": "Texto de la respuesta",
+    "response.textPh": "Pega la respuesta aquí...",
+    "response.noteLabel": "Nota (tu conclusión al leer la respuesta y la auditoría)",
+    "response.notePh": "¿qué aprendimos? ¿mantener / descartar? ¿siguiente paso?",
+    "response.runReplay": "Ejecutar replay",
+    "response.persist": "persistir en audit/records/",
+    "response.replaying": "ejecutando replay…",
+    "response.replayDone": "replay completo",
+    "response.replayFailed": "falló el replay",
+
+    "records.h": "Registros",
+    "records.lead": "Todos los registros de auditoría persistidos bajo <code>&lt;repo&gt;/audit/records/</code>. Selecciona dos para comparar.",
+    "records.col.when": "Cuándo",
+    "records.col.mode": "Modo",
+    "records.col.context": "Contexto",
+    "records.col.model": "Modelo",
+    "records.col.grounded": "Fundado",
+    "records.col.drift": "Drift",
+    "records.col.recall": "Recall",
+    "records.col.bundle": "Bundle",
+    "records.diffSelected": "Comparar seleccionados →",
+    "records.loading": "cargando…",
+    "records.loadFailed": "no se pudieron cargar",
+    "records.empty": "aún no hay registros",
+    "records.selected": "seleccionados",
+
+    "journal.h": "Diario",
+    "journal.lead": "Una línea de tiempo legible de tus registros de auditoría — cada ejecución se muestra como una tarjeta con su título, resumen, nota y métricas. Los registros antiguos (sin título/resumen/nota) también aparecen como tarjetas, ancladas a su pregunta.",
+    "journal.searchPh": "buscar título / resumen / nota / pregunta",
+    "journal.loading": "cargando…",
+    "journal.loadFailed": "no se pudieron cargar",
+    "journal.empty": "aún no hay registros",
+    "journal.noMatches": "sin coincidencias",
+    "journal.brief": "Resumen",
+    "journal.note": "Nota",
+    "journal.question": "Pregunta",
+    "journal.expand": "Mostrar fragmentos",
+    "journal.collapse": "Ocultar fragmentos",
+    "journal.fragmentsCount": "fragmentos",
+    "journal.viewFile": "ver archivo",
+
+    "search.h": "Buscar",
+    "search.lead": "Encuentra ejecuciones anteriores por título, resumen, nota, pregunta, modo, hash del bundle, rutas de fragmentos o contenido de fragmentos. Subcadena insensible a mayúsculas — rápido y local.",
+    "search.ph": "texto a buscar en tu historial de auditoría (Enter para buscar)",
+    "search.btn": "Buscar",
+    "search.scope": "Alcance",
+    "search.metadata": "Metadatos",
+    "search.paths": "Rutas",
+    "search.content": "Contenido",
+    "search.searching": "buscando…",
+    "search.noResults": "sin resultados",
+    "search.typeToSearch": "escribe algo y pulsa Enter.",
+    "search.resultsCount": "resultados",
+
+    "compare.h": "Comparar",
+    "compare.lead": "Los deltas son B − A. El drift positivo es peor; grounded y recall positivos son mejores.",
+    "compare.recA": "Registro A <input type=\"text\" id=\"cmp-a\" placeholder=\"audit/records/...\">",
+    "compare.recB": "Registro B <input type=\"text\" id=\"cmp-b\" placeholder=\"audit/records/...\">",
+    "compare.btn": "Calcular diff",
+    "compare.computing": "calculando…",
+    "compare.done": "listo",
+    "compare.failed": "falló el diff",
+
+    "guide.h": "Guía",
+    "guide.pipeline.h": "Pipeline",
+    "guide.pipeline.p": "NeuroFS es un pipeline: <strong>scan → pack → (Claude) → replay</strong>. Scan construye el índice SQLite en <code>.neurofs/index.db</code>. Pack rankea y comprime. Replay es el paso de gobernanza offline.",
+    "guide.ranker.h": "Señales del ranker",
+    "guide.ranker.filename": "<code>filename_match</code> — el token está en la ruta.",
+    "guide.ranker.path": "<code>path_match</code> — coincidencia con el prefijo de foco.",
+    "guide.ranker.symbol": "<code>symbol_match</code> — el token está en la tabla de símbolos (con stemming superficial).",
+    "guide.ranker.import": "<code>import_match</code> — el token aparece en imports.",
+    "guide.ranker.focus": "<code>focus</code> / <code>changed</code> — boosts de <code>--focus</code> / <code>--changed</code>.",
+    "guide.audit.h": "Métricas de auditoría",
+    "guide.audit.grounded": "<strong>grounded_ratio</strong> — fracción de citas que resuelven a un archivo dentro del bundle.",
+    "guide.audit.drift": "<strong>drift_rate</strong> — símbolos desconocidos / (conocidos + desconocidos), repartidos en tres cubos:<ul><li><strong>paths</strong> — referencias tipo archivo que no están en el bundle.</li><li><strong>apis</strong> — nombres con punto (<code>jwt.sign</code>) que no están en el bundle.</li><li><strong>symbols</strong> — identificadores tipo código que no están en el bundle.</li></ul>",
+    "guide.audit.recall": "<strong>answer_recall</strong> — fracción de cadenas <code>--facts</code> presentes en la respuesta (subcadena insensible a mayúsculas).",
+    "guide.impl.h": "Lo que está implementado",
+    "guide.impl.server": "Servidor HTTP local + UI embebida (<code>internal/ui</code>).",
+    "guide.impl.endpoints": "Los endpoints envuelven scan, pack, replay, lista de records, diff y stats.",
+    "guide.impl.bundle": "El bundle se mantiene en memoria entre <em>pack</em> y <em>replay</em>. Usa la ruta del snapshot para replay entre sesiones.",
+    "guide.next.h": "Qué se recomienda a continuación",
+    "guide.next.stream": "Progreso de scan en streaming (WebSocket / SSE) — hoy la UI se bloquea.",
+    "guide.next.diff": "Visor de diff inline con color — hoy se renderiza como texto plano.",
+    "guide.next.workspace": "Lista persistente de workspaces — hoy un repo a la vez en <code>localStorage</code>.",
+    "guide.next.api": "Integración opcional con la API de Claude en vivo detrás de un toggle explícito.",
+
+    "stats.title": "Estadísticas del pack",
+    "stats.budget": "presupuesto",
+    "stats.used": "usado",
+    "stats.files": "archivos",
+    "stats.fragments": "fragmentos",
+    "stats.bundleHash": "hash del bundle",
+
+    "replay.grounded": "Fundado",
+    "replay.drift": "Drift",
+    "replay.recall": "Recall",
+    "replay.savedTo": "Guardado en",
+    "replay.unknownPaths": "Rutas desconocidas",
+    "replay.unknownApis": "APIs desconocidas",
+    "replay.unknownSymbols": "Símbolos desconocidos",
+    "replay.missingFacts": "Hechos faltantes",
+    "replay.foundFacts": "Hechos encontrados",
+
+    "common.loading": "cargando…",
+    "common.searching": "buscando…",
+    "common.error": "error",
+    "common.errorPrefix": "error: ",
+    "common.done": "listo",
+    "common.copied": "copiado",
+    "common.copyFailed": "fallo al copiar",
+    "common.scanning": "escaneando…",
+    "common.diffing": "comparando…",
+    "common.doneIn": "listo en",
+    "common.ms": "ms",
+    "common.checking": "verificando…",
+
+    "alert.setRepo": "Primero configura una ruta de repo en la pestaña Espacio.",
+    "alert.enterPath": "Introduce una ruta absoluta.",
+    "alert.tilde": "Usa la ruta absoluta completa — el navegador no expande `~`.",
+    "alert.absolute": "La ruta del repo debe ser absoluta (empezar con /).",
+    "alert.enterQuestion": "Introduce una pregunta.",
+    "alert.pasteResponse": "Pega la respuesta del modelo.",
+    "alert.snapshotRequired": "En modo snapshot la ruta del snapshot es obligatoria.",
+    "alert.noInMemoryBundle": "No hay bundle en memoria. Vuelve a empaquetar con un nombre de snapshot, o cambia la fuente del bundle a snapshot.",
+    "alert.needBothPaths": "Se necesitan las dos rutas de registros.",
+
+    "home.workingOn": "Trabajando en",
+    "home.filesIndexedSuffix": "archivos indexados",
+    "home.indexNotReady": "índice no listo — abre Espacio para escanear",
+    "home.repoSet": "Repo configurado. Ejecuta escaneo para indexar.",
+    "home.repoRejected": "Repo rechazado — mira el error abajo.",
+
+    "stat.packed": "empaquetado",
+
+    "bundle.h": "Bundle",
+    "bundle.tokens": "tokens",
+    "bundle.filesIncluded": "archivos incluidos",
+    "bundle.compression": "compresión",
+    "bundle.snapshot": "snapshot",
+    "bundle.notSaved": "no guardado (no se dio nombre de snapshot)",
+    "bundle.noFragments": "sin fragmentos",
+    "bundle.fragPath": "ruta",
+    "bundle.fragRep": "representación",
+    "bundle.fragTokens": "tokens",
+    "bundle.fragScore": "puntaje",
+
+    "pack.copiedClipboard": "copiado (plantilla + bundle)",
+    "pack.clipboardDenied": "portapapeles denegado — usa descargar",
+
+    "records.nSuffix": "registros",
+    "records.selectedSuffix": "seleccionados",
+    "records.filterSuffix": "filtro",
+    "records.noMatchFilter": "ningún registro coincide con el filtro",
+    "records.noneYet": "aún no hay registros — ejecuta un replay con \"persist\" activado",
+
+    "journal.noWorkspace": "sin espacio de trabajo",
+    "journal.zeroRecords": "0 registros",
+    "journal.noneYetPersist": "Aún no hay registros. Ejecuta un replay y marca \"persist\".",
+    "journal.filteredOutSuffix": "filtrados",
+    "journal.noMatchFilter": "Ningún registro coincide con el filtro actual.",
+    "journal.runSingle": "ejecución",
+    "journal.runPlural": "ejecuciones",
+    "journal.untitled": "(sin título)",
+    "journal.nRecordsSuffix": "registros",
+    "journal.expandBtnLabel": "Expandir",
+    "journal.collapseBtnLabel": "Contraer",
+    "journal.cmpALabel": "Usar como Comparar A",
+    "journal.cmpBLabel": "Usar como Comparar B",
+    "journal.copyPathLabel": "Copiar ruta",
+    "journal.expandLoading": "cargando…",
+    "journal.loadFail": "no se pudo cargar el registro",
+    "journal.bundleFragmentsHeader": "Fragmentos del bundle",
+    "journal.tokensSuffix": "tokens",
+    "journal.tokSuffix": "tok",
+    "journal.noFragmentsPersisted": "no se persistieron fragmentos en este registro",
+    "journal.noContentPersisted": "no se persistió contenido para este fragmento — solo hay metadatos",
+    "journal.when": "cuándo",
+    "journal.bundle": "bundle",
+
+    "audit.h": "Auditoría",
+    "audit.title": "título",
+    "audit.brief": "resumen",
+    "audit.note": "nota",
+    "audit.question": "pregunta",
+    "audit.mode": "modo",
+    "audit.model": "modelo",
+    "audit.bundleHash": "hash del bundle",
+    "audit.grounded": "fundado",
+    "audit.citationsSuffix": "citas",
+    "audit.drift": "drift",
+    "audit.unknownOf": "desconocidos de",
+    "audit.factRecall": "recall de hechos",
+    "audit.record": "registro",
+    "audit.unknownPaths": "rutas desconocidas",
+    "audit.unknownApis": "apis desconocidas",
+    "audit.unknownSymbols": "símbolos desconocidos",
+    "audit.invalidCitations": "Citas inválidas",
+    "audit.moreSuffix": "más",
+
+    "search.openInJournal": "Abrir en Diario",
+    "search.setRepo": "Configura un repo en la pestaña Espacio.",
+    "search.noMatchFor": "sin coincidencias para",
+    "search.underFilters": "con los filtros actuales.",
+    "search.matchesSuffix": "coincidencias",
+    "search.matchSuffix": "coincidencia",
+    "search.ofMatchesShown": "coincidencias mostradas",
+    "search.of": "de",
+    "search.scoreLabel": "puntaje",
+
+    "compare.diffH": "Diff",
+    "compare.sameBundle": "mismo bundle",
+    "compare.sameQuestion": "misma pregunta",
+    "compare.sameModel": "mismo modelo",
+    "compare.diffModeWarning": "(distintos — interpreta los deltas con cuidado)",
+    "compare.groundedDelta": "fundado Δ",
+    "compare.driftDelta": "drift Δ",
+    "compare.recallDelta": "recall Δ",
+    "compare.pathsBucket": "rutas",
+    "compare.apisBucket": "apis",
+    "compare.symbolsBucket": "símbolos",
+
+    "mode.whenToUse": "Cuándo usarlo",
+    "mode.expectedOutput": "Salida esperada",
+    "mode.nextStep": "Siguiente paso",
+
+    "mode.strategy.label": "Estrategia",
+    "mode.strategy.subtitle": "Decide el enfoque antes de escribir código.",
+    "mode.strategy.when": "Estás empezando una iteración y quieres un plan, no una implementación.",
+    "mode.strategy.output": "Un diseño técnico corto, decisiones clave, archivos probables y un plan de tests mínimo.",
+    "mode.strategy.next": "Lee el plan, acuerda el alcance y cambia a Construir para el cambio real.",
+
+    "mode.build.label": "Construir",
+    "mode.build.subtitle": "Implementa una iteración ya definida.",
+    "mode.build.when": "Ya tienes un plan (de Estrategia o tuyo) y quieres código funcional.",
+    "mode.build.output": "Una propuesta con forma de diff: archivos a cambiar, código, notas de test y cómo ejecutarlo.",
+    "mode.build.next": "Pega la respuesta en la pestaña Respuesta y ejecuta replay; si fundado/drift pintan bien, aplica el diff.",
+
+    "mode.review.label": "Revisar",
+    "mode.review.subtitle": "Evalúa una respuesta, diff o propuesta antes de integrar.",
+    "mode.review.when": "Tienes algo (un parche ajeno, una respuesta previa de Claude, un refactor) y necesitas una segunda lectura.",
+    "mode.review.output": "Una revisión estructurada: qué es correcto, qué es arriesgado, qué parece alucinado, qué hacer después.",
+    "mode.review.next": "Aplica los arreglos con los que estés de acuerdo, descarta el resto y, si hace falta, ejecuta una iteración de Construir.",
+
+    "workspace.repoKv": "repo",
+    "workspace.indexedSuffix": "indexados",
+    "workspace.bytes": "bytes",
+    "workspace.langBreakdown": "sin desglose por lenguaje",
+    "workspace.auditAggregate": "Agregado de auditoría",
+    "workspace.recordsSuffix": "registros",
+    "workspace.recall": "recall",
+  },
+};
+
+function landingReadLang() {
+  const raw = (localStorage.getItem(LANDING_LANG_KEY) || "").toLowerCase();
+  return raw.startsWith("es") ? "es" : "en";
+}
+
+function t(key) {
+  const lang = landingReadLang();
+  return (LANDING_DICT[lang] && LANDING_DICT[lang][key]) || LANDING_DICT.en[key] || "";
+}
+
+function applyLang(lang) {
+  const normalized = lang === "es" ? "es" : "en";
+  localStorage.setItem(LANDING_LANG_KEY, normalized);
+  document.documentElement.setAttribute("lang", normalized);
+
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.textContent = value;
+  });
+  document.querySelectorAll("[data-i18n-html]").forEach(el => {
+    const key = el.getAttribute("data-i18n-html");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.innerHTML = value;
+  });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => {
+    const key = el.getAttribute("data-i18n-placeholder");
+    const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
+    if (typeof value === "string") el.setAttribute("placeholder", value);
+  });
+  document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.lang === normalized);
+    btn.setAttribute("aria-pressed", btn.dataset.lang === normalized ? "true" : "false");
+  });
+
+  // Re-render any dynamic UI that was already produced by the app code.
+  if (typeof rerenderAfterLang === "function") rerenderAfterLang();
+}
+
+document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
+  btn.addEventListener("click", () => applyLang(btn.dataset.lang));
+});
+
+// ---------- how-it-works modal ----------
+
+const landingHowtoEl = document.getElementById("landing-howto");
+const LANDING_STEPS = 3;
+let landingStep = 1;
+let landingLastFocus = null;
+
+function landingSetStep(n) {
+  landingStep = Math.min(LANDING_STEPS, Math.max(1, n));
+  if (!landingHowtoEl) return;
+  landingHowtoEl.querySelectorAll(".landing-modal-step").forEach(el => {
+    el.classList.toggle("landing-modal-step--active", Number(el.dataset.step) === landingStep);
+  });
+  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
+    dot.classList.toggle("landing-modal-dot--active", Number(dot.dataset.goStep) === landingStep);
+  });
+  const prev = landingHowtoEl.querySelector("[data-modal-prev]");
+  const next = landingHowtoEl.querySelector("[data-modal-next]");
+  const finish = landingHowtoEl.querySelector("[data-modal-finish]");
+  if (prev)   prev.hidden   = landingStep === 1;
+  if (next)   next.hidden   = landingStep === LANDING_STEPS;
+  if (finish) finish.hidden = landingStep !== LANDING_STEPS;
+}
+
+function landingOpenHowto() {
+  if (!landingHowtoEl) return;
+  landingLastFocus = document.activeElement;
+  landingHowtoEl.hidden = false;
+  landingHowtoEl.setAttribute("aria-hidden", "false");
+  landingSetStep(1);
+  const firstBtn = landingHowtoEl.querySelector("[data-modal-next], [data-modal-finish], .landing-modal-close");
+  if (firstBtn) firstBtn.focus();
+}
+
+function landingCloseHowto() {
+  if (!landingHowtoEl) return;
+  landingHowtoEl.hidden = true;
+  landingHowtoEl.setAttribute("aria-hidden", "true");
+  if (landingLastFocus && typeof landingLastFocus.focus === "function") landingLastFocus.focus();
+}
+
+const landingHowtoOpenBtn = document.getElementById("landing-howto-open");
+if (landingHowtoOpenBtn) landingHowtoOpenBtn.addEventListener("click", landingOpenHowto);
+
+if (landingHowtoEl) {
+  landingHowtoEl.querySelectorAll("[data-howto-close]").forEach(el => {
+    el.addEventListener("click", landingCloseHowto);
+  });
+  const prevBtn = landingHowtoEl.querySelector("[data-modal-prev]");
+  const nextBtn = landingHowtoEl.querySelector("[data-modal-next]");
+  if (prevBtn) prevBtn.addEventListener("click", () => landingSetStep(landingStep - 1));
+  if (nextBtn) nextBtn.addEventListener("click", () => landingSetStep(landingStep + 1));
+  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
+    dot.addEventListener("click", () => landingSetStep(Number(dot.dataset.goStep)));
+  });
+  const finishBtn = landingHowtoEl.querySelector("[data-modal-finish]");
+  if (finishBtn) finishBtn.addEventListener("click", landingCloseHowto);
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (landingHowtoEl && !landingHowtoEl.hidden) landingCloseHowto();
+});
+
 // ------------------------------ init ------------------------------
 
+applyLang(landingReadLang());
 applyMode(state.mode);
 switchTab("home");

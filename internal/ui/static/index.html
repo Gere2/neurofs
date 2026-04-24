@@ -9,54 +9,170 @@
   <header>
     <div class="brand">
       <h1>NeuroFS</h1>
-      <span class="sub">context compiler — local UI</span>
+      <span class="sub" data-i18n="brand.sub">context compiler — local UI</span>
+      <div class="lang-toggle" role="group" aria-label="Language">
+        <button type="button" data-lang="en" class="active">EN</button>
+        <button type="button" data-lang="es">ES</button>
+      </div>
     </div>
     <nav id="tabs">
-      <button data-tab="home" class="active">Home</button>
-      <button data-tab="workspace">Workspace</button>
-      <button data-tab="task">New task</button>
-      <button data-tab="response">Response</button>
-      <button data-tab="records">Records</button>
-      <button data-tab="journal">Journal</button>
-      <button data-tab="search">Search</button>
-      <button data-tab="compare">Compare</button>
-      <button data-tab="guide">Guide</button>
+      <button data-tab="home" class="active" data-i18n="nav.home">Home</button>
+      <button data-tab="workspace" data-i18n="nav.workspace">Workspace</button>
+      <button data-tab="task" data-i18n="nav.task">New task</button>
+      <button data-tab="response" data-i18n="nav.response">Response</button>
+      <button data-tab="records" data-i18n="nav.records">Records</button>
+      <button data-tab="journal" data-i18n="nav.journal">Journal</button>
+      <button data-tab="search" data-i18n="nav.search">Search</button>
+      <button data-tab="compare" data-i18n="nav.compare">Compare</button>
+      <button data-tab="guide" data-i18n="nav.guide">Guide</button>
     </nav>
   </header>
 
   <main>
     <!-- ============================ HOME ============================ -->
     <section id="tab-home" class="tab active">
-      <h2>Workflow</h2>
-      <p class="lead">This UI wraps the existing CLI. Nothing is sent to an LLM — responses are pasted manually. Open each tab in order for a full round.</p>
-      <ol class="flow">
-        <li><strong>Workspace</strong> — point at a repo, run <code>scan</code> to build the index.</li>
-        <li><strong>New task</strong> — ask a question, pack a bundle, copy the Claude prompt.</li>
-        <li><strong>Response</strong> — paste the answer, replay the audit, persist the record.</li>
-        <li><strong>Records</strong> — browse past audits for the current repo as a table.</li>
-        <li><strong>Journal</strong> — same records, rendered as a chronological timeline of cards.</li>
-        <li><strong>Compare</strong> — diff two records (e.g. before vs after a ranker change).</li>
-        <li><strong>Guide</strong> — quick reference for the primitives.</li>
-      </ol>
-      <div id="home-stats" class="card">
-        <h3>Current workspace</h3>
-        <div id="home-stats-body" class="muted">No workspace set. Open the Workspace tab.</div>
+      <div class="landing">
+        <div class="landing-hero">
+          <div class="landing-eyebrow"><span class="landing-eyebrow-dot" aria-hidden="true">●</span><span data-i18n="landing.eyebrow">Local app — works with Claude &amp; ChatGPT</span></div>
+          <h2 class="landing-title" data-i18n-html="landing.title">Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span></h2>
+          <p class="landing-subtitle" data-i18n="landing.subtitle">NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.</p>
+          <div class="landing-cta">
+            <button class="primary" data-tab-target="task" data-i18n="landing.ctaPrimary">Start a task</button>
+            <button class="muted-btn landing-cta-back" data-tab-target="journal" data-i18n="landing.ctaSecondary">Continue previous work</button>
+          </div>
+          <button class="landing-howto-link" type="button" id="landing-howto-open" data-i18n="landing.howTo">See how it works</button>
+        </div>
+
+        <div class="landing-cards">
+          <div class="landing-card">
+            <div class="landing-card-number">01</div>
+            <h3 data-i18n="landing.card1.h">Start focused</h3>
+            <p data-i18n="landing.card1.p">Describe what you want to do. NeuroFS finds the files that matter.</p>
+          </div>
+          <div class="landing-card">
+            <div class="landing-card-number">02</div>
+            <h3 data-i18n="landing.card2.h">Save context</h3>
+            <p data-i18n="landing.card2.p">Send less noise to Claude or ChatGPT and keep your prompts lighter.</p>
+          </div>
+          <div class="landing-card">
+            <div class="landing-card-number">03</div>
+            <h3 data-i18n="landing.card3.h">Continue later</h3>
+            <p data-i18n="landing.card3.p">Pick up from previous work without explaining everything again.</p>
+          </div>
+        </div>
+
+        <div class="landing-edu">
+          <div class="landing-edu-side landing-edu-side--before">
+            <div class="landing-edu-label landing-edu-label--before" data-i18n="landing.edu.before">Without NeuroFS</div>
+            <div class="landing-noise-lines" aria-hidden="true">
+              <div class="landing-noise-line" style="width:100%"></div>
+              <div class="landing-noise-line" style="width:88%"></div>
+              <div class="landing-noise-line" style="width:95%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:70%"></div>
+              <div class="landing-noise-line" style="width:82%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:60%"></div>
+              <div class="landing-noise-line" style="width:91%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:45%"></div>
+              <div class="landing-noise-line" style="width:78%"></div>
+              <div class="landing-noise-line landing-noise-line--dim" style="width:55%"></div>
+            </div>
+            <p class="landing-edu-caption" data-i18n="landing.edu.beforeCaption">You paste everything. Most of it is noise.</p>
+          </div>
+          <div class="landing-edu-side landing-edu-side--after">
+            <div class="landing-edu-label landing-edu-label--after" data-i18n="landing.edu.after">With NeuroFS</div>
+            <div class="landing-clean-lines" aria-hidden="true">
+              <div class="landing-clean-line landing-clean-line--active" style="width:80%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:65%"></div>
+              <div class="landing-clean-line landing-clean-line--active" style="width:72%"></div>
+              <div class="landing-clean-line landing-clean-line--dim" style="width:40%"></div>
+            </div>
+            <p class="landing-edu-caption" data-i18n="landing.edu.afterCaption">Only what matters. Focused and lighter.</p>
+          </div>
+        </div>
+
+        <div class="landing-footer-cta">
+          <p data-i18n="landing.footer.ready">Ready?</p>
+          <button class="primary" data-tab-target="task" data-i18n="landing.footer.cta">Create your first task</button>
+        </div>
+
+        <div id="home-stats" class="landing-status" hidden>
+          <div id="home-stats-body" class="muted"></div>
+        </div>
+      </div>
+
+      <!-- HOW-IT-WORKS MODAL -->
+      <div class="landing-modal" id="landing-howto" hidden aria-hidden="true">
+        <div class="landing-modal-backdrop" data-howto-close></div>
+        <div class="landing-modal-panel" role="dialog" aria-modal="true" aria-labelledby="landing-howto-title">
+          <button class="landing-modal-close" type="button" data-howto-close aria-label="Close">✕</button>
+          <div class="landing-modal-header">
+            <div class="landing-modal-eyebrow" data-i18n="modal.eyebrow">How it works</div>
+            <h3 id="landing-howto-title" data-i18n="modal.title">Three steps, thirty seconds</h3>
+          </div>
+          <div class="landing-modal-steps">
+            <div class="landing-modal-step landing-modal-step--active" data-step="1">
+              <div class="landing-modal-step-visual landing-modal-step-visual--1">
+                <div class="lmsv-bubble">
+                  <span class="lmsv-dot"></span><span class="lmsv-dot"></span><span class="lmsv-dot"></span>
+                </div>
+                <div class="lmsv-caption" data-i18n="modal.step1.caption">"Fix the login button on mobile"</div>
+              </div>
+              <h4 data-i18n="modal.step1.title">Describe your task</h4>
+              <p data-i18n="modal.step1.body">Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.</p>
+            </div>
+            <div class="landing-modal-step" data-step="2">
+              <div class="landing-modal-step-visual landing-modal-step-visual--2">
+                <div class="lmsv-funnel">
+                  <div class="lmsv-funnel-top"></div>
+                  <div class="lmsv-funnel-mid"></div>
+                  <div class="lmsv-funnel-out"></div>
+                </div>
+              </div>
+              <h4 data-i18n="modal.step2.title">NeuroFS picks the right files</h4>
+              <p data-i18n="modal.step2.body">It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.</p>
+            </div>
+            <div class="landing-modal-step" data-step="3">
+              <div class="landing-modal-step-visual landing-modal-step-visual--3">
+                <div class="lmsv-paste">
+                  <div class="lmsv-paste-line" style="width:80%"></div>
+                  <div class="lmsv-paste-line" style="width:65%"></div>
+                  <div class="lmsv-paste-line" style="width:72%"></div>
+                  <div class="lmsv-paste-cursor"></div>
+                </div>
+              </div>
+              <h4 data-i18n="modal.step3.title">Paste into Claude or ChatGPT</h4>
+              <p data-i18n="modal.step3.body">Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.</p>
+            </div>
+          </div>
+          <div class="landing-modal-footer">
+            <div class="landing-modal-dots">
+              <span class="landing-modal-dot landing-modal-dot--active" data-go-step="1"></span>
+              <span class="landing-modal-dot" data-go-step="2"></span>
+              <span class="landing-modal-dot" data-go-step="3"></span>
+            </div>
+            <div class="landing-modal-actions">
+              <button class="muted-btn" type="button" data-modal-prev data-i18n="modal.back" hidden>← Back</button>
+              <button class="primary" type="button" data-modal-next data-i18n="modal.next">Next →</button>
+              <button class="primary" type="button" data-tab-target="task" data-modal-finish data-i18n="modal.finish" hidden>Start my first task</button>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- ============================ WORKSPACE ============================ -->
     <section id="tab-workspace" class="tab">
-      <h2>Workspace</h2>
-      <p class="lead">Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.</p>
+      <h2 data-i18n="workspace.h">Workspace</h2>
+      <p class="lead" data-i18n-html="workspace.lead">Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.</p>
       <div class="row">
-        <label>Repo path
+        <label data-i18n-html="workspace.repoPath">Repo path
           <input type="text" id="repo-input" placeholder="/absolute/path/to/repo" autocomplete="off">
         </label>
-        <button id="save-repo" class="primary">Use this repo</button>
+        <button id="save-repo" class="primary" data-i18n="workspace.useRepo">Use this repo</button>
       </div>
       <div class="row">
-        <button id="scan-btn">Run scan</button>
-        <label class="inline"><input type="checkbox" id="scan-verbose"> verbose</label>
+        <button id="scan-btn" data-i18n="workspace.runScan">Run scan</button>
+        <label class="inline"><input type="checkbox" id="scan-verbose"> <span data-i18n="workspace.verbose">verbose</span></label>
         <span id="scan-status" class="muted"></span>
       </div>
       <pre id="scan-output" class="log"></pre>
@@ -65,127 +181,127 @@
 
     <!-- ============================ NEW TASK ============================ -->
     <section id="tab-task" class="tab">
-      <h2>New task</h2>
-      <p class="lead">Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.</p>
+      <h2 data-i18n="task.h">New task</h2>
+      <p class="lead" data-i18n="task.lead">Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.</p>
 
       <div class="mode-bar">
-        <span class="mode-label">Mode</span>
+        <span class="mode-label" data-i18n="task.mode">Mode</span>
         <div id="mode-pills" class="pills">
-          <button data-mode="strategy">Strategy</button>
-          <button data-mode="build" class="active">Build</button>
-          <button data-mode="review">Review</button>
+          <button data-mode="strategy" data-i18n="mode.strategy">Strategy</button>
+          <button data-mode="build" class="active" data-i18n="mode.build">Build</button>
+          <button data-mode="review" data-i18n="mode.review">Review</button>
         </div>
       </div>
       <div id="mode-card" class="card mode-card"></div>
 
       <div class="grid-2">
-        <label>Title (short label for this run)
-          <input type="text" id="q-title" placeholder="e.g. 010 human metadata">
+        <label data-i18n="task.titleLabel">Title (short label for this run)
+          <input type="text" id="q-title" placeholder="e.g. 010 human metadata" data-i18n-placeholder="task.titlePh">
         </label>
-        <label>Question (short, what you ask Claude to focus on)
-          <textarea id="q-input" rows="2" placeholder="e.g. how does the ranker handle stemming"></textarea>
+        <label data-i18n="task.questionLabel">Question (short, what you ask Claude to focus on)
+          <textarea id="q-input" rows="2" placeholder="e.g. how does the ranker handle stemming" data-i18n-placeholder="task.questionPh"></textarea>
         </label>
       </div>
 
-      <label>Brief (what you are trying to do and why — goes with the record)
-        <textarea id="q-brief" rows="3" placeholder="optional: the one-paragraph brief. This is what 'you-from-next-week' will thank 'you-from-today' for writing."></textarea>
+      <label data-i18n="task.briefLabel">Brief (what you are trying to do and why — goes with the record)
+        <textarea id="q-brief" rows="3" placeholder="optional: the one-paragraph brief. This is what 'you-from-next-week' will thank 'you-from-today' for writing." data-i18n-placeholder="task.briefPh"></textarea>
       </label>
 
       <div class="grid-2">
         <div>
-          <label>Token budget
+          <label data-i18n="task.budget">Token budget
             <input type="number" id="q-budget" value="3500" min="500" max="100000" step="500">
           </label>
-          <label>Focus prefix (optional, comma-separated)
+          <label data-i18n="task.focus">Focus prefix (optional, comma-separated)
             <input type="text" id="q-focus" placeholder="internal/ranking">
           </label>
-          <label class="inline"><input type="checkbox" id="q-changed"> boost git-changed files</label>
+          <label class="inline"><input type="checkbox" id="q-changed"> <span data-i18n="task.boostChanged">boost git-changed files</span></label>
         </div>
         <div>
           <div class="row">
-            <label>Max files <input type="number" id="q-maxfiles" value="8" min="0"></label>
-            <label>Max fragments <input type="number" id="q-maxfrags" value="16" min="0"></label>
+            <label data-i18n-html="task.maxFiles">Max files <input type="number" id="q-maxfiles" value="8" min="0"></label>
+            <label data-i18n-html="task.maxFrags">Max fragments <input type="number" id="q-maxfrags" value="16" min="0"></label>
           </div>
-          <label class="inline"><input type="checkbox" id="q-signatures" checked> prefer signatures</label>
+          <label class="inline"><input type="checkbox" id="q-signatures" checked> <span data-i18n="task.preferSigs">prefer signatures</span></label>
         </div>
       </div>
 
       <div class="grid-2">
-        <label>Task slug (optional, used to name the run)
+        <label data-i18n="task.slug">Task slug (optional, used to name the run)
           <input type="text" id="q-slug" placeholder="008-ui-hardening">
         </label>
-        <label>Bundle snapshot name (auto-filled from slug + mode)
+        <label data-i18n="task.snapshot">Bundle snapshot name (auto-filled from slug + mode)
           <input type="text" id="q-snapshot" placeholder="audit/bundles/008-ui-hardening-build.json">
         </label>
       </div>
-      <div class="muted" id="run-preview">Run name will be: <code>—</code></div>
+      <div class="muted" id="run-preview" data-i18n-html="task.runPreview">Run name will be: <code>—</code></div>
 
-      <label>Claude prompt template (edit before copying)
+      <label data-i18n="task.template">Claude prompt template (edit before copying)
         <textarea id="q-template" rows="10"></textarea>
       </label>
 
       <div class="row">
-        <button id="pack-btn" class="primary">Pack bundle</button>
-        <button id="reset-mode" class="muted-btn">Reset template to mode default</button>
+        <button id="pack-btn" class="primary" data-i18n="task.pack">Pack bundle</button>
+        <button id="reset-mode" class="muted-btn" data-i18n="task.resetTemplate">Reset template to mode default</button>
         <span id="pack-status" class="muted"></span>
       </div>
 
       <div id="pack-stats" class="card"></div>
       <div class="row">
-        <button id="copy-prompt" disabled>Copy full prompt (template + bundle)</button>
-        <button id="download-prompt" disabled>Download prompt</button>
-        <button id="go-response" disabled>Next: paste response →</button>
+        <button id="copy-prompt" disabled data-i18n="task.copyPrompt">Copy full prompt (template + bundle)</button>
+        <button id="download-prompt" disabled data-i18n="task.downloadPrompt">Download prompt</button>
+        <button id="go-response" disabled data-i18n="task.goResponse">Next: paste response →</button>
       </div>
       <details>
-        <summary>Preview prompt (template + bundle)</summary>
+        <summary data-i18n="task.previewPrompt">Preview prompt (template + bundle)</summary>
         <pre id="pack-prompt" class="log tall"></pre>
       </details>
       <details>
-        <summary>Fragments included</summary>
+        <summary data-i18n="task.fragmentsIncluded">Fragments included</summary>
         <div id="pack-fragments"></div>
       </details>
     </section>
 
     <!-- ============================ RESPONSE ============================ -->
     <section id="tab-response" class="tab">
-      <h2>Response</h2>
-      <p class="lead">Paste the model's answer. Replay runs the offline audit: citation validation, drift classifier, optional fact recall.</p>
+      <h2 data-i18n="response.h">Response</h2>
+      <p class="lead" data-i18n="response.lead">Paste the model's answer. Replay runs the offline audit: citation validation, drift classifier, optional fact recall.</p>
 
       <div class="grid-2">
-        <label>Model id (free-form label)
+        <label data-i18n="response.modelId">Model id (free-form label)
           <input type="text" id="r-model" value="claude-manual">
         </label>
-        <label>Bundle source
+        <label data-i18n="response.bundleSource">Bundle source
           <select id="r-bundle-source">
-            <option value="last-pack">Use the last packed bundle (in-memory)</option>
-            <option value="snapshot">Use a saved bundle JSON (audit/bundles/...)</option>
+            <option value="last-pack" data-i18n="response.bundleLast">Use the last packed bundle (in-memory)</option>
+            <option value="snapshot" data-i18n="response.bundleSnapshot">Use a saved bundle JSON (audit/bundles/...)</option>
           </select>
         </label>
       </div>
-      <label id="r-snapshot-wrap" style="display:none">Snapshot path
+      <label id="r-snapshot-wrap" style="display:none" data-i18n="response.snapshotPath">Snapshot path
         <input type="text" id="r-snapshot" placeholder="audit/bundles/stemming.json">
       </label>
 
       <div class="grid-2">
-        <label>Title (inherited from pack — editable)
-          <input type="text" id="r-title" placeholder="short label for this run">
+        <label data-i18n="response.titleLabel">Title (inherited from pack — editable)
+          <input type="text" id="r-title" placeholder="short label for this run" data-i18n-placeholder="response.titlePh">
         </label>
-        <label>Expected facts (comma-separated, optional)
+        <label data-i18n="response.facts">Expected facts (comma-separated, optional)
           <input type="text" id="r-facts">
         </label>
       </div>
-      <label>Brief (inherited from pack — editable)
-        <textarea id="r-brief" rows="2" placeholder="what the run was trying to do"></textarea>
+      <label data-i18n="response.briefLabel">Brief (inherited from pack — editable)
+        <textarea id="r-brief" rows="2" placeholder="what the run was trying to do" data-i18n-placeholder="response.briefPh"></textarea>
       </label>
-      <label>Response text
-        <textarea id="r-text" rows="12" placeholder="Paste the answer here..."></textarea>
+      <label data-i18n="response.textLabel">Response text
+        <textarea id="r-text" rows="12" placeholder="Paste the answer here..." data-i18n-placeholder="response.textPh"></textarea>
       </label>
-      <label>Note (your conclusion once you read the response and the audit)
-        <textarea id="r-note" rows="3" placeholder="what did we learn? keep / discard? next step?"></textarea>
+      <label data-i18n="response.noteLabel">Note (your conclusion once you read the response and the audit)
+        <textarea id="r-note" rows="3" placeholder="what did we learn? keep / discard? next step?" data-i18n-placeholder="response.notePh"></textarea>
       </label>
       <div class="row">
-        <button id="replay-btn" class="primary">Run replay</button>
-        <label class="inline"><input type="checkbox" id="r-save" checked> persist under audit/records/</label>
+        <button id="replay-btn" class="primary" data-i18n="response.runReplay">Run replay</button>
+        <label class="inline"><input type="checkbox" id="r-save" checked> <span data-i18n="response.persist">persist under audit/records/</span></label>
         <span id="replay-status" class="muted"></span>
       </div>
       <div id="replay-report" class="card"></div>
@@ -193,17 +309,17 @@
 
     <!-- ============================ RECORDS ============================ -->
     <section id="tab-records" class="tab">
-      <h2>Records</h2>
-      <p class="lead">All persisted audit records under <code>&lt;repo&gt;/audit/records/</code>. Select two to compare.</p>
+      <h2 data-i18n="records.h">Records</h2>
+      <p class="lead" data-i18n-html="records.lead">All persisted audit records under <code>&lt;repo&gt;/audit/records/</code>. Select two to compare.</p>
       <div class="row">
-        <button id="records-refresh">Refresh</button>
-        <span class="mode-label">Filter</span>
+        <button id="records-refresh" data-i18n="common.refresh">Refresh</button>
+        <span class="mode-label" data-i18n="common.filter">Filter</span>
         <div id="records-filter" class="pills">
-          <button data-filter="all" class="active">All</button>
-          <button data-filter="strategy">Strategy</button>
-          <button data-filter="build">Build</button>
-          <button data-filter="review">Review</button>
-          <button data-filter="unknown">Unknown</button>
+          <button data-filter="all" class="active" data-i18n="filter.all">All</button>
+          <button data-filter="strategy" data-i18n="mode.strategy">Strategy</button>
+          <button data-filter="build" data-i18n="mode.build">Build</button>
+          <button data-filter="review" data-i18n="mode.review">Review</button>
+          <button data-filter="unknown" data-i18n="filter.unknown">Unknown</button>
         </div>
         <span id="records-status" class="muted"></span>
       </div>
@@ -211,41 +327,42 @@
         <thead>
           <tr>
             <th></th>
-            <th>When</th>
-            <th>Mode</th>
-            <th>Context</th>
-            <th>Model</th>
-            <th>Grounded</th>
-            <th>Drift</th>
-            <th>Recall</th>
-            <th>Bundle</th>
+            <th data-i18n="records.col.when">When</th>
+            <th data-i18n="records.col.mode">Mode</th>
+            <th data-i18n="records.col.context">Context</th>
+            <th data-i18n="records.col.model">Model</th>
+            <th data-i18n="records.col.grounded">Grounded</th>
+            <th data-i18n="records.col.drift">Drift</th>
+            <th data-i18n="records.col.recall">Recall</th>
+            <th data-i18n="records.col.bundle">Bundle</th>
           </tr>
         </thead>
         <tbody></tbody>
       </table>
       <div class="row">
-        <button id="records-diff-btn" disabled>Diff selected →</button>
+        <button id="records-diff-btn" disabled data-i18n="records.diffSelected">Diff selected →</button>
         <span id="records-selected" class="muted"></span>
       </div>
     </section>
 
     <!-- ============================ JOURNAL ============================ -->
     <section id="tab-journal" class="tab">
-      <h2>Journal</h2>
-      <p class="lead">A readable timeline of your audit records — each run rendered as a card with its title, brief, note and the metrics. Legacy records (no title/brief/note) show up as cards too, anchored to their question.</p>
+      <h2 data-i18n="journal.h">Journal</h2>
+      <p class="lead" data-i18n="journal.lead">A readable timeline of your audit records — each run rendered as a card with its title, brief, note and the metrics. Legacy records (no title/brief/note) show up as cards too, anchored to their question.</p>
       <div class="row">
-        <button id="journal-refresh">Refresh</button>
-        <span class="mode-label">Mode</span>
+        <button id="journal-refresh" data-i18n="common.refresh">Refresh</button>
+        <span class="mode-label" data-i18n="task.mode">Mode</span>
         <div id="journal-filter" class="pills">
-          <button data-filter="all" class="active">All</button>
-          <button data-filter="strategy">Strategy</button>
-          <button data-filter="build">Build</button>
-          <button data-filter="review">Review</button>
-          <button data-filter="unknown">Unknown</button>
+          <button data-filter="all" class="active" data-i18n="filter.all">All</button>
+          <button data-filter="strategy" data-i18n="mode.strategy">Strategy</button>
+          <button data-filter="build" data-i18n="mode.build">Build</button>
+          <button data-filter="review" data-i18n="mode.review">Review</button>
+          <button data-filter="unknown" data-i18n="filter.unknown">Unknown</button>
         </div>
         <label class="inline" style="flex:1;min-width:240px;margin:0">
           <input type="text" id="journal-search"
                  placeholder="search title / brief / note / question"
+                 data-i18n-placeholder="journal.searchPh"
                  autocomplete="off">
         </label>
         <span id="journal-status" class="muted"></span>
@@ -255,32 +372,33 @@
 
     <!-- ============================ SEARCH ============================ -->
     <section id="tab-search" class="tab">
-      <h2>Search</h2>
-      <p class="lead">Find prior runs by title, brief, note, question, mode, bundle hash, fragment paths, or fragment content. Case-insensitive substring — quick and local.</p>
+      <h2 data-i18n="search.h">Search</h2>
+      <p class="lead" data-i18n="search.lead">Find prior runs by title, brief, note, question, mode, bundle hash, fragment paths, or fragment content. Case-insensitive substring — quick and local.</p>
       <div class="row">
         <label class="inline" style="flex:1;min-width:280px;margin:0">
           <input type="text" id="search-q"
                  placeholder="text to find across your audit history (Enter to search)"
+                 data-i18n-placeholder="search.ph"
                  autocomplete="off">
         </label>
-        <button id="search-btn" class="primary">Search</button>
+        <button id="search-btn" class="primary" data-i18n="search.btn">Search</button>
         <span id="search-status" class="muted"></span>
       </div>
       <div class="row">
-        <span class="mode-label">Scope</span>
+        <span class="mode-label" data-i18n="search.scope">Scope</span>
         <div id="search-scope" class="pills">
-          <button data-scope="all" class="active">All</button>
-          <button data-scope="metadata">Metadata</button>
-          <button data-scope="paths">Paths</button>
-          <button data-scope="content">Content</button>
+          <button data-scope="all" class="active" data-i18n="filter.all">All</button>
+          <button data-scope="metadata" data-i18n="search.metadata">Metadata</button>
+          <button data-scope="paths" data-i18n="search.paths">Paths</button>
+          <button data-scope="content" data-i18n="search.content">Content</button>
         </div>
-        <span class="mode-label">Mode</span>
+        <span class="mode-label" data-i18n="task.mode">Mode</span>
         <div id="search-mode" class="pills">
-          <button data-filter="all" class="active">All</button>
-          <button data-filter="strategy">Strategy</button>
-          <button data-filter="build">Build</button>
-          <button data-filter="review">Review</button>
-          <button data-filter="unknown">Unknown</button>
+          <button data-filter="all" class="active" data-i18n="filter.all">All</button>
+          <button data-filter="strategy" data-i18n="mode.strategy">Strategy</button>
+          <button data-filter="build" data-i18n="mode.build">Build</button>
+          <button data-filter="review" data-i18n="mode.review">Review</button>
+          <button data-filter="unknown" data-i18n="filter.unknown">Unknown</button>
         </div>
       </div>
       <div id="search-body"></div>
@@ -288,14 +406,14 @@
 
     <!-- ============================ COMPARE ============================ -->
     <section id="tab-compare" class="tab">
-      <h2>Compare</h2>
-      <p class="lead">Deltas are B − A. Positive drift is worse; positive grounded and recall are better.</p>
+      <h2 data-i18n="compare.h">Compare</h2>
+      <p class="lead" data-i18n="compare.lead">Deltas are B − A. Positive drift is worse; positive grounded and recall are better.</p>
       <div class="grid-2">
-        <label>Record A <input type="text" id="cmp-a" placeholder="audit/records/..."></label>
-        <label>Record B <input type="text" id="cmp-b" placeholder="audit/records/..."></label>
+        <label data-i18n-html="compare.recA">Record A <input type="text" id="cmp-a" placeholder="audit/records/..."></label>
+        <label data-i18n-html="compare.recB">Record B <input type="text" id="cmp-b" placeholder="audit/records/..."></label>
       </div>
       <div class="row">
-        <button id="compare-btn" class="primary">Compute diff</button>
+        <button id="compare-btn" class="primary" data-i18n="compare.btn">Compute diff</button>
         <span id="compare-status" class="muted"></span>
       </div>
       <div id="compare-report" class="card"></div>
@@ -303,46 +421,46 @@
 
     <!-- ============================ GUIDE ============================ -->
     <section id="tab-guide" class="tab">
-      <h2>Guide</h2>
+      <h2 data-i18n="guide.h">Guide</h2>
       <div class="guide">
-        <h3>Pipeline</h3>
-        <p>NeuroFS is a pipeline: <strong>scan → pack → (Claude) → replay</strong>. Scan builds the SQLite index at <code>.neurofs/index.db</code>. Pack ranks and compresses. Replay is the offline governance step.</p>
+        <h3 data-i18n="guide.pipeline.h">Pipeline</h3>
+        <p data-i18n-html="guide.pipeline.p">NeuroFS is a pipeline: <strong>scan → pack → (Claude) → replay</strong>. Scan builds the SQLite index at <code>.neurofs/index.db</code>. Pack ranks and compresses. Replay is the offline governance step.</p>
 
-        <h3>Ranker signals</h3>
+        <h3 data-i18n="guide.ranker.h">Ranker signals</h3>
         <ul>
-          <li><code>filename_match</code> — token is in the path.</li>
-          <li><code>path_match</code> — focus prefix hit.</li>
-          <li><code>symbol_match</code> — token is in the symbols table (with shallow stemming).</li>
-          <li><code>import_match</code> — token appears in imports.</li>
-          <li><code>focus</code> / <code>changed</code> — boosts from <code>--focus</code> / <code>--changed</code>.</li>
+          <li data-i18n-html="guide.ranker.filename"><code>filename_match</code> — token is in the path.</li>
+          <li data-i18n-html="guide.ranker.path"><code>path_match</code> — focus prefix hit.</li>
+          <li data-i18n-html="guide.ranker.symbol"><code>symbol_match</code> — token is in the symbols table (with shallow stemming).</li>
+          <li data-i18n-html="guide.ranker.import"><code>import_match</code> — token appears in imports.</li>
+          <li data-i18n-html="guide.ranker.focus"><code>focus</code> / <code>changed</code> — boosts from <code>--focus</code> / <code>--changed</code>.</li>
         </ul>
 
-        <h3>Audit metrics</h3>
+        <h3 data-i18n="guide.audit.h">Audit metrics</h3>
         <ul>
-          <li><strong>grounded_ratio</strong> — fraction of citations that resolve to a file inside the bundle.</li>
-          <li><strong>drift_rate</strong> — unknown / (known + unknown) symbols, split across three buckets:
+          <li data-i18n-html="guide.audit.grounded"><strong>grounded_ratio</strong> — fraction of citations that resolve to a file inside the bundle.</li>
+          <li data-i18n-html="guide.audit.drift"><strong>drift_rate</strong> — unknown / (known + unknown) symbols, split across three buckets:
             <ul>
               <li><strong>paths</strong> — file-like references not in the bundle.</li>
               <li><strong>apis</strong> — dotted names (<code>jwt.sign</code>) not in the bundle.</li>
               <li><strong>symbols</strong> — plain code-shaped identifiers not in the bundle.</li>
             </ul>
           </li>
-          <li><strong>answer_recall</strong> — fraction of <code>--facts</code> strings present in the response (case-insensitive substring).</li>
+          <li data-i18n-html="guide.audit.recall"><strong>answer_recall</strong> — fraction of <code>--facts</code> strings present in the response (case-insensitive substring).</li>
         </ul>
 
-        <h3>What is implemented</h3>
+        <h3 data-i18n="guide.impl.h">What is implemented</h3>
         <ul>
-          <li>Local HTTP server + embedded UI (<code>internal/ui</code>).</li>
-          <li>Endpoints wrap scan, pack, replay, records list, diff, stats.</li>
-          <li>Bundle is held in memory between <em>pack</em> and <em>replay</em>. Use snapshot path for cross-session replay.</li>
+          <li data-i18n-html="guide.impl.server">Local HTTP server + embedded UI (<code>internal/ui</code>).</li>
+          <li data-i18n-html="guide.impl.endpoints">Endpoints wrap scan, pack, replay, records list, diff, stats.</li>
+          <li data-i18n-html="guide.impl.bundle">Bundle is held in memory between <em>pack</em> and <em>replay</em>. Use snapshot path for cross-session replay.</li>
         </ul>
 
-        <h3>What is recommended next</h3>
+        <h3 data-i18n="guide.next.h">What is recommended next</h3>
         <ul>
-          <li>Streaming scan progress (WebSocket / SSE) — today the UI blocks.</li>
-          <li>Inline diff viewer with colour — today rendered as plain text.</li>
-          <li>Persistent workspace list — today one repo at a time in <code>localStorage</code>.</li>
-          <li>Optional live Claude API integration wrapped behind an explicit toggle.</li>
+          <li data-i18n-html="guide.next.stream">Streaming scan progress (WebSocket / SSE) — today the UI blocks.</li>
+          <li data-i18n-html="guide.next.diff">Inline diff viewer with colour — today rendered as plain text.</li>
+          <li data-i18n-html="guide.next.workspace">Persistent workspace list — today one repo at a time in <code>localStorage</code>.</li>
+          <li data-i18n-html="guide.next.api">Optional live Claude API integration wrapped behind an explicit toggle.</li>
         </ul>
       </div>
     </section>
