@@ -3,6 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <title>NeuroFS — local UI</title>
+  <!-- Space Grotesk from Google Fonts. The CSS falls back to system-ui
+       if the network is offline, so the UI never blocks on a font fetch
+       — important for a local-first tool. -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>

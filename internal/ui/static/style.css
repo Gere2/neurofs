@@ -1,9 +1,9 @@
 :root {
-  /* Dusk Ember — warm, grounded, calm focus */
-  --bg:      #131210;
-  --panel:   #1b1916;
-  --panel-2: #232018;
-  --border:  #302c25;
+  /* Dusk Ember v5 — same warmth, deeper ground */
+  --bg:      #0e0d0b;
+  --panel:   #1a1815;
+  --panel-2: #21201b;
+  --border:  #2e2b25;
   --fg:      #ece7e0;
   --muted:   #9a9088;
   --accent:  #e8895e;
@@ -20,10 +20,17 @@
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* Space Grotesk loaded from Google Fonts in index.html. The system-
+     ui chain stays as a fallback so the UI degrades gracefully when
+     offline (or when the network blocks Google) — neurofs is a local
+     tool, the font must never be a hard dependency. */
+  font-family: "Space Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   background: var(--bg);
   color: var(--fg);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 header {
