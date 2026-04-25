@@ -221,6 +221,9 @@ Pass --save to persist a JSON record under audit/records/.`,
 				if err != nil {
 					return fmt.Errorf("audit replay: %w", err)
 				}
+				if err := cfg.Validate(); err != nil {
+					return fmt.Errorf("audit replay: config: %w", err)
+				}
 				bundle, err = rebuildBundle(cfg, args[0], budget, focus, changedFlag, maxFiles, maxFragments)
 				if err != nil {
 					return fmt.Errorf("audit replay: %w", err)

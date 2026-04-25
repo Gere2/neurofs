@@ -93,4 +93,29 @@ type AuditRecord struct {
 	Title string `json:"title,omitempty"`
 	Brief string `json:"brief,omitempty"`
 	Note  string `json:"note,omitempty"`
+
+	// Stats freezes the BundleStats the packager produced for this run so
+	// "how much context did NeuroFS save" survives next to "how grounded
+	// was the answer". A pointer + omitempty keeps legacy records
+	// (written before this field existed) decoding cleanly with Stats==nil
+	// — the UI renders such rows as "—" rather than as zero-cost runs.
+	Stats *models.BundleStats `json:"stats,omitempty"`
+
+	// Parent-context reuse. All three fields are optional — legacy records
+	// decode cleanly and from-scratch runs leave them unset. A single
+	// back-pointer per record, never a tree: walking the chain forwards is
+	// the consumer's job, and a record never knows its children.
+	//
+	//   ParentRecord   — path to the record this run was resumed from.
+	//   ParentTitle    — snapshot of the parent's Title (or Question, if
+	//                    Title was empty) captured at resume time, so the
+	//                    child can render a breadcrumb without re-reading
+	//                    the parent.
+	//   InheritedFocus — rel_paths carried over from the parent's fragments
+	//                    that actually applied on this run. The user edits
+	//                    the list before packing, so what lands here is
+	//                    the final seed the ranker saw.
+	ParentRecord   string   `json:"parent_record,omitempty"`
+	ParentTitle    string   `json:"parent_title,omitempty"`
+	InheritedFocus []string `json:"inherited_focus,omitempty"`
 }

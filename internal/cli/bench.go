@@ -41,6 +41,9 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 			if err != nil {
 				return fmt.Errorf("bench: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("bench: config: %w", err)
+			}
 
 			benchPath := benchArg
 			if len(args) > 0 {

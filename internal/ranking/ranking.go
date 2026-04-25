@@ -220,8 +220,14 @@ func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info)
 	for i, sf := range scored {
 		base := strings.ToLower(stripExt(filepath.Base(sf.Record.RelPath)))
 		for imp := range importedPaths {
-			if strings.HasSuffix(imp, "/"+base) || imp == base ||
-				strings.Contains(imp, base) {
+			// Require a path- or extension-boundary match. Plain substring
+			// (imp contains base) used to fire here too, but that matched
+			// `util` against `futility` / `auth_utilities` and inflated the
+			// expansion score for accidental lookalikes.
+			if imp == base ||
+				strings.HasSuffix(imp, "/"+base) ||
+				strings.HasPrefix(imp, base+".") ||
+				strings.Contains(imp, "/"+base+".") {
 				scored[i].Score += weightImportExpansion
 				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 					Signal: "import_expansion",

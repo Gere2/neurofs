@@ -33,6 +33,9 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			if err != nil {
 				return fmt.Errorf("scan: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("scan: config: %w", err)
+			}
 
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {
@@ -69,7 +72,9 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			fmt.Fprintf(os.Stderr, "  index      : %s\n", cfg.DBPath)
 			fmt.Fprintf(os.Stderr, "  time       : %s\n", stats.Duration.Round(1e6))
 			fmt.Fprintf(os.Stderr, "\n")
-			fmt.Fprintf(os.Stderr, "  Ready. Run: neurofs ask \"<your question>\" --budget 8000\n")
+			fmt.Fprintf(os.Stderr, "  Ready.\n")
+			fmt.Fprintf(os.Stderr, "    Open the UI    : neurofs ui\n")
+			fmt.Fprintf(os.Stderr, "    Or ask via CLI : neurofs ask \"<your question>\" --budget 8000\n")
 
 			return nil
 		},

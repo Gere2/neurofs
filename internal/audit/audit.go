@@ -54,7 +54,7 @@ func Run(ctx context.Context, m Model, bundle models.Bundle, opts Options) (Audi
 		factsHit, recall = ScoreFacts(resp, opts.ExpectsFacts)
 	}
 
-	return AuditRecord{
+	rec := AuditRecord{
 		Question:      bundle.Query,
 		Model:         m.ID(),
 		Mode:          opts.Mode,
@@ -68,7 +68,16 @@ func Run(ctx context.Context, m Model, bundle models.Bundle, opts Options) (Audi
 		ExpectsFacts:  opts.ExpectsFacts,
 		FactsHit:      factsHit,
 		AnswerRecall:  recall,
-	}, nil
+	}
+	// Freeze the cost ledger only when the packager actually produced
+	// something. A zero BundleStats (e.g. empty fixture in tests, or a
+	// bundle the caller assembled by hand) would otherwise persist as a
+	// misleading "0 tokens, 0 files" record.
+	if bundle.Stats.TokensUsed > 0 {
+		stats := bundle.Stats
+		rec.Stats = &stats
+	}
+	return rec, nil
 }
 
 // BuildPrompt composes the model input from the bundle. This is the same

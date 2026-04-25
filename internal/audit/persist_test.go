@@ -45,6 +45,52 @@ func TestSaveAndLoadRecordRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSaveAndLoadRecordPreservesParentRecord guards the lineage field:
+// when set, ParentRecord must round-trip through disk; when unset, the
+// loaded record must also have it unset (so legacy and from-scratch
+// runs stay indistinguishable from the consumer's point of view).
+func TestSaveAndLoadRecordPreservesParentRecord(t *testing.T) {
+	dir := t.TempDir()
+	parent := "1776696402-ddbb265c-abc123.json"
+	rec := AuditRecord{
+		Question:     "follow-up to the auth audit",
+		BundleHash:   "deadbeef00112233",
+		Timestamp:    time.Unix(1_700_000_100, 0).UTC(),
+		ParentRecord: parent,
+	}
+	path, err := SaveRecord(dir, rec)
+	if err != nil {
+		t.Fatalf("SaveRecord: %v", err)
+	}
+	loaded, err := LoadRecord(path)
+	if err != nil {
+		t.Fatalf("LoadRecord: %v", err)
+	}
+	if loaded.ParentRecord != parent {
+		t.Fatalf("ParentRecord lost in round-trip: got %q, want %q", loaded.ParentRecord, parent)
+	}
+
+	// Empty ParentRecord must stay empty after a round-trip — omitempty
+	// drops the field on write and the zero value on read makes from-scratch
+	// runs visually identical to legacy ones.
+	rec2 := AuditRecord{
+		Question:   "from-scratch run",
+		BundleHash: "cafefacecafeface",
+		Timestamp:  time.Unix(1_700_000_200, 0).UTC(),
+	}
+	path2, err := SaveRecord(dir, rec2)
+	if err != nil {
+		t.Fatalf("SaveRecord (no parent): %v", err)
+	}
+	loaded2, err := LoadRecord(path2)
+	if err != nil {
+		t.Fatalf("LoadRecord (no parent): %v", err)
+	}
+	if loaded2.ParentRecord != "" {
+		t.Fatalf("ParentRecord should stay empty, got %q", loaded2.ParentRecord)
+	}
+}
+
 func TestListRecordsMissingDirIsNotError(t *testing.T) {
 	paths, err := ListRecords(filepath.Join(t.TempDir(), "never-created"))
 	if err != nil {

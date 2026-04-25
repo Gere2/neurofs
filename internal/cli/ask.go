@@ -44,6 +44,9 @@ Run 'neurofs scan' first to build the index.`,
 			if err != nil {
 				return fmt.Errorf("ask: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("ask: config: %w", err)
+			}
 
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {

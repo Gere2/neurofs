@@ -54,6 +54,9 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("pack: %w", err)
 			}
+			if err := cfg.Validate(); err != nil {
+				return fmt.Errorf("pack: config: %w", err)
+			}
 
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {

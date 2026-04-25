@@ -1,4 +1,4 @@
-.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain deps
+.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps
 
 BINARY   := neurofs
 CMD_PATH := ./cmd/neurofs
@@ -30,6 +30,10 @@ test-short:
 clean:
 	rm -rf $(OUT_DIR)
 	find . -name '*.neurofs' -prune -o -name 'index.db' -print | xargs rm -f 2>/dev/null || true
+
+## run-ui: Start the local UI against the current directory (recommended entry point)
+run-ui: build
+	$(OUT_DIR)/$(BINARY) ui
 
 ## run-scan: Index the sample repository (useful for quick smoke-testing)
 run-scan: build
