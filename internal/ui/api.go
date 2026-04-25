@@ -500,6 +500,14 @@ type recordRow struct {
 	Title string `json:"title"`
 	Brief string `json:"brief"`
 	Note  string `json:"note"`
+
+	// Parent linkage. Always emitted (possibly ""). ParentRecord is the
+	// absolute path of the record this run was resumed from, so the UI can
+	// match it against another row's Path to render a clickable breadcrumb.
+	// ParentTitle is a frozen snapshot captured at resume time — survives
+	// if the parent record is later renamed or deleted.
+	ParentRecord string `json:"parent_record"`
+	ParentTitle  string `json:"parent_title"`
 }
 
 func handleRecords(w http.ResponseWriter, r *http.Request) {
@@ -536,8 +544,10 @@ func handleRecords(w http.ResponseWriter, r *http.Request) {
 			// Brief/Note can be long; ship a short preview on the list
 			// endpoint. The Compare endpoint loads the full record so the
 			// UI never truly loses the original text.
-			Brief: previewText(rec.Brief, 280),
-			Note:  previewText(rec.Note, 280),
+			Brief:        previewText(rec.Brief, 280),
+			Note:         previewText(rec.Note, 280),
+			ParentRecord: rec.ParentRecord,
+			ParentTitle:  rec.ParentTitle,
 		})
 	}
 	// Most recent first — ListRecords returns sorted ascending by name/time.
