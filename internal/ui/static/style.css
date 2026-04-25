@@ -1603,3 +1603,25 @@ table.records td code { font-size: 0.75rem; }
   font-size: 0.85rem;
 }
 .pack-details summary { cursor: pointer; color: var(--muted); }
+
+.oneshot {
+  margin-bottom: 1rem;
+}
+.oneshot-head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin-bottom: 0.5rem;
+}
+.oneshot-result {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+.oneshot-picks {
+  margin: 0.4rem 0 0 1.1rem;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+.oneshot-picks li { margin: 0; padding: 0; }

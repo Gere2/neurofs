@@ -6,10 +6,17 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
 )
+
+// startupDir is the absolute path where the binary was launched. The UI
+// reads it via /api/bootstrap to suggest a sensible default repo when
+// the user has nothing in localStorage yet — so `cd <repo> && neurofs ui`
+// just works without forcing a manual paste.
+var startupDir string
 
 // Options configures the local UI server. Defaults (127.0.0.1:7777, open
 // browser on start) match the expected "zero-config local tool" use case —
@@ -29,6 +36,13 @@ type Options struct {
 func Run(opts Options) error {
 	if opts.Addr == "" {
 		opts.Addr = "127.0.0.1:7777"
+	}
+
+	// Capture cwd once at startup. Later os.Chdir calls (none today, but
+	// belt-and-braces) cannot mutate this snapshot, so the bootstrap
+	// suggestion stays stable for the life of the process.
+	if cwd, err := os.Getwd(); err == nil {
+		startupDir = cwd
 	}
 
 	mux := http.NewServeMux()

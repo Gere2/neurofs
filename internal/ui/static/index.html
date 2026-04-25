@@ -184,6 +184,22 @@
       <h2 data-i18n="task.h">New task</h2>
       <p class="lead" data-i18n="task.lead">Say what you want to do. NeuroFS picks only the files that matter and builds a ready-to-paste prompt — so you don't re-send your whole project every time.</p>
 
+      <div class="oneshot card">
+        <div class="oneshot-head">
+          <strong data-i18n="oneshot.h">One-shot prompt</strong>
+          <span class="muted" data-i18n="oneshot.sub">Type the question, get a paste-ready prompt. Auto-scans on first use; cached after.</span>
+        </div>
+        <label data-i18n="oneshot.questionLabel">Your question
+          <input type="text" id="oneshot-q" placeholder="e.g. where is jwt verified" data-i18n-placeholder="oneshot.questionPh" autocomplete="off">
+        </label>
+        <div class="row">
+          <button id="oneshot-btn" class="primary" data-i18n="oneshot.btn">Generate prompt</button>
+          <label class="inline"><input type="checkbox" id="oneshot-force"> <span data-i18n="oneshot.force">force re-rank (skip cache)</span></label>
+          <span id="oneshot-status" class="muted"></span>
+        </div>
+        <div id="oneshot-result" class="oneshot-result" hidden></div>
+      </div>
+
       <div id="resume-banner" class="resume-banner" hidden>
         <div class="resume-head">
           <span class="resume-tag" data-i18n="resume.tag">Resuming from</span>

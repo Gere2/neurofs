@@ -433,6 +433,111 @@ async function refreshWorkspaceStats() {
 
 // ------------------------------ new task ------------------------------
 
+// One-shot generator: same flow as `neurofs task <q>` from the CLI. The
+// server auto-scans on first use, caches the prompt by (query, budget),
+// and returns the Claude-shaped text plus a small TopPicks list for
+// transparency. Deliberately decoupled from the full Pack form below
+// so a beginner can hit Generate without learning every flag.
+document.getElementById("oneshot-btn").addEventListener("click", async () => {
+  if (!requireRepo()) return;
+  const query = document.getElementById("oneshot-q").value.trim();
+  if (!query) { alert(t("alert.enterQuestion") || "Enter a question."); return; }
+  const btn = document.getElementById("oneshot-btn");
+  const status = document.getElementById("oneshot-status");
+  const out = document.getElementById("oneshot-result");
+  btn.disabled = true;
+  status.textContent = t("oneshot.running");
+  out.hidden = true;
+  try {
+    const r = await j("POST", "/api/task", {
+      repo: state.repo,
+      query,
+      budget: parseInt(document.getElementById("q-budget").value, 10) || 0,
+      force: document.getElementById("oneshot-force").checked,
+    });
+    renderOneshotResult(r);
+    out.hidden = false;
+    status.textContent = r.reused ? t("oneshot.cached") : t("oneshot.fresh");
+  } catch (e) {
+    status.textContent = t("common.error");
+    out.hidden = false;
+    out.innerHTML = `<span class="muted">${esc(e.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+function renderOneshotResult(r) {
+  const out = document.getElementById("oneshot-result");
+  const stats = r.stats || {};
+  const used = stats.tokens_used || 0;
+  const ratio = stats.compression_ratio || 0;
+  const rawEstimate = ratio > 0 ? Math.round(used * ratio) : 0;
+  const saved = rawEstimate > used ? rawEstimate - used : 0;
+  const headline = saved >= 500
+    ? `<div class="pack-savings-big">${t("pack.savedBig").replace("{n}", fmtTokens(saved))}</div>`
+    : `<div class="pack-savings-big">${t("pack.ready")}</div>`;
+
+  const picks = (r.top_picks || []).map(p =>
+    `<li><code>${esc(p.rel_path)}</code> <span class="muted">· ${p.tokens} tok · ${esc(p.representation)}</span></li>`
+  ).join("");
+  const picksBlock = picks
+    ? `<details class="pack-details" open><summary>${t("oneshot.topPicks")}</summary><ul class="oneshot-picks">${picks}</ul></details>`
+    : "";
+
+  const noteCached = r.reused
+    ? `<span class="muted">· ${t("oneshot.cachedNote")}</span>`
+    : "";
+  const noteScanned = r.auto_scanned
+    ? `<span class="muted">· ${t("oneshot.autoScanned")}</span>`
+    : "";
+
+  out.innerHTML = `
+    <div class="pack-savings">${headline}</div>
+    <div class="pack-meta muted">
+      ${stats.files_included || 0} ${(stats.files_included === 1) ? t("pack.fileOne") : t("pack.fileMany")} ·
+      ${used} / ${stats.tokens_budget || 0} tok
+      ${noteCached} ${noteScanned}
+    </div>
+    <div class="row">
+      <button id="oneshot-copy" class="primary" data-i18n="oneshot.copy">Copy prompt</button>
+      <button id="oneshot-download" data-i18n="oneshot.download">Download .prompt.txt</button>
+      ${r.prompt_path ? `<span class="muted"><code>${esc(r.prompt_path)}</code></span>` : ""}
+    </div>
+    ${picksBlock}
+    <details class="pack-details">
+      <summary>${t("oneshot.previewPrompt")}</summary>
+      <pre class="log tall">${esc(r.prompt || "")}</pre>
+    </details>`;
+  // Re-apply i18n labels to the freshly-injected buttons so a language
+  // switch before/after Generate doesn't leave English text in an ES UI.
+  applyLang(landingReadLang());
+
+  document.getElementById("oneshot-copy").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(r.prompt || "");
+      document.getElementById("oneshot-status").textContent = t("oneshot.copied");
+    } catch {
+      document.getElementById("oneshot-status").textContent = t("oneshot.clipboardDenied");
+    }
+  });
+  document.getElementById("oneshot-download").addEventListener("click", () => {
+    const blob = new Blob([r.prompt || ""], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${(r.query || "task").replace(/[^a-z0-9]+/gi, "-").slice(0, 40) || "task"}.prompt.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+}
+
+document.getElementById("oneshot-q").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById("oneshot-btn").click();
+  }
+});
+
 document.getElementById("pack-btn").addEventListener("click", async () => {
   if (!requireRepo()) return;
   const query = document.getElementById("q-input").value.trim();
@@ -1773,6 +1878,24 @@ const LANDING_DICT = {
     "task.h": "New task",
     "task.lead": "Say what you want to do. NeuroFS picks only the files that matter and builds a ready-to-paste prompt — so you don't re-send your whole project every time.",
     "task.mode": "Mode",
+    "oneshot.h": "One-shot prompt",
+    "oneshot.sub": "Type the question, get a paste-ready prompt. Auto-scans on first use; cached after.",
+    "oneshot.questionLabel": "Your question",
+    "oneshot.questionPh": "e.g. where is jwt verified",
+    "oneshot.btn": "Generate prompt",
+    "oneshot.force": "force re-rank (skip cache)",
+    "oneshot.running": "generating…",
+    "oneshot.cached": "served from cache",
+    "oneshot.fresh": "freshly ranked",
+    "oneshot.cachedNote": "cache hit",
+    "oneshot.autoScanned": "scan ran first",
+    "oneshot.copy": "Copy prompt",
+    "oneshot.copied": "copied",
+    "oneshot.clipboardDenied": "clipboard denied — use download",
+    "oneshot.download": "Download .prompt.txt",
+    "oneshot.topPicks": "Top picks",
+    "oneshot.previewPrompt": "Preview prompt",
+    "alert.enterQuestion": "Enter a question.",
     "resume.tag": "Resuming from",
     "resume.clear": "Clear",
     "resume.focusLabel": "Inherited focus paths (edit freely — removed paths won't boost the ranker)",
@@ -2164,6 +2287,24 @@ const LANDING_DICT = {
 
     "task.h": "Nueva tarea",
     "task.lead": "Di qué quieres hacer. NeuroFS elige solo los archivos que importan y arma un prompt listo para pegar — para que no tengas que reenviar todo tu proyecto cada vez.",
+    "oneshot.h": "Prompt de un solo paso",
+    "oneshot.sub": "Escribe la pregunta y obtén un prompt listo para pegar. Escanea solo la primera vez; luego usa caché.",
+    "oneshot.questionLabel": "Tu pregunta",
+    "oneshot.questionPh": "p. ej. dónde se verifica el jwt",
+    "oneshot.btn": "Generar prompt",
+    "oneshot.force": "forzar re-ranking (saltar caché)",
+    "oneshot.running": "generando…",
+    "oneshot.cached": "servido desde caché",
+    "oneshot.fresh": "rankeado en fresco",
+    "oneshot.cachedNote": "cache hit",
+    "oneshot.autoScanned": "escaneo previo",
+    "oneshot.copy": "Copiar prompt",
+    "oneshot.copied": "copiado",
+    "oneshot.clipboardDenied": "portapapeles denegado — usa descargar",
+    "oneshot.download": "Descargar .prompt.txt",
+    "oneshot.topPicks": "Mejores candidatos",
+    "oneshot.previewPrompt": "Previsualizar prompt",
+    "alert.enterQuestion": "Escribe una pregunta.",
     "task.mode": "Modo",
     "resume.tag": "Continuando desde",
     "resume.clear": "Limpiar",
@@ -2671,3 +2812,20 @@ function readResumeFocusPaths() {
 applyLang(landingReadLang());
 applyMode(state.mode);
 switchTab("home");
+
+// Bootstrap: when the user has nothing in localStorage yet, prefill the
+// repo input with the directory the binary was launched from. Best-
+// effort — a missing endpoint (older binary) or a network blip just
+// leaves the field blank, which is the legacy behaviour anyway.
+(async () => {
+  if (state.repo) return;
+  try {
+    const r = await j("GET", "/api/bootstrap");
+    const cwd = (r && r.cwd) ? String(r.cwd).trim() : "";
+    if (!cwd || !cwd.startsWith("/")) return;
+    const input = document.getElementById("repo-input");
+    if (input && !input.value) input.value = cwd;
+  } catch {
+    // Silent: the user can still paste a path manually.
+  }
+})();
