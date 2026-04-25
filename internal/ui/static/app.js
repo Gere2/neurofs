@@ -2813,18 +2813,24 @@ applyLang(landingReadLang());
 applyMode(state.mode);
 switchTab("home");
 
-// Bootstrap: when the user has nothing in localStorage yet, prefill the
-// repo input with the directory the binary was launched from. Best-
-// effort — a missing endpoint (older binary) or a network blip just
-// leaves the field blank, which is the legacy behaviour anyway.
+// Bootstrap: when the user has nothing in localStorage yet, adopt the
+// launch directory as the active repo — not just as a placeholder. The
+// browser cannot offer a real directory picker (no absolute paths from
+// showDirectoryPicker), so the launch cwd is the closest thing to a
+// "default" and the user can still overwrite it in the input. Best-
+// effort: a missing endpoint (older binary) or a network blip leaves
+// the field blank, which is the legacy behaviour.
 (async () => {
   if (state.repo) return;
   try {
     const r = await j("GET", "/api/bootstrap");
     const cwd = (r && r.cwd) ? String(r.cwd).trim() : "";
     if (!cwd || !cwd.startsWith("/")) return;
+    state.repo = cwd;
+    localStorage.setItem("neurofs.repo", cwd);
     const input = document.getElementById("repo-input");
-    if (input && !input.value) input.value = cwd;
+    if (input) input.value = cwd;
+    refreshWorkspaceStats();
   } catch {
     // Silent: the user can still paste a path manually.
   }
