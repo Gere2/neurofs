@@ -6,10 +6,17 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 	"time"
 )
+
+// startupDir is the absolute path where the binary was launched. The UI
+// reads it via /api/bootstrap to suggest a sensible default repo when
+// the user has nothing in localStorage yet — so `cd <repo> && neurofs ui`
+// just works without forcing a manual paste.
+var startupDir string
 
 // Options configures the local UI server. Defaults (127.0.0.1:7777, open
 // browser on start) match the expected "zero-config local tool" use case —
@@ -31,6 +38,13 @@ func Run(opts Options) error {
 		opts.Addr = "127.0.0.1:7777"
 	}
 
+	// Capture cwd once at startup. Later os.Chdir calls (none today, but
+	// belt-and-braces) cannot mutate this snapshot, so the bootstrap
+	// suggestion stays stable for the life of the process.
+	if cwd, err := os.Getwd(); err == nil {
+		startupDir = cwd
+	}
+
 	mux := http.NewServeMux()
 
 	// Static assets are served from the embedded subtree rooted at static/.
@@ -40,8 +54,20 @@ func Run(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("ui: embed subfs: %w", err)
 	}
+	// no-cache wrapper: assets are embedded at build time, so the binary
+	// is the source of truth. Without these headers, browsers happily
+	// serve a stale app.js after the user upgrades, and the resulting
+	// HTML/JS skew throws "null is not an object" at every getElementById.
+	noCache := func(h http.Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			h.ServeHTTP(w, r)
+		}
+	}
 	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
+	mux.Handle("/static/", noCache(http.StripPrefix("/static/", fileServer)))
 
 	// Root serves index.html directly so the app opens at `/` without a
 	// trailing /static path. Everything else is delegated by the API.
@@ -56,6 +82,9 @@ func Run(opts Options) error {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		_, _ = w.Write(data)
 	})
 

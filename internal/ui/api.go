@@ -25,6 +25,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/neuromfs/neuromfs/internal/taskflow"
 )
 
 // registerAPI wires every endpoint onto mux. The routes are flat and match
@@ -40,6 +41,8 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("/api/diff", postOnly(handleDiff))
 	mux.HandleFunc("/api/stats", getOnly(handleStats))
 	mux.HandleFunc("/api/resume-seed", getOnly(handleResumeSeed))
+	mux.HandleFunc("/api/task", postOnly(handleTask))
+	mux.HandleFunc("/api/bootstrap", getOnly(handleBootstrap))
 }
 
 // --------------------- method gates ---------------------
@@ -1377,4 +1380,64 @@ func handleResumeSeed(w http.ResponseWriter, r *http.Request) {
 		SuggestedFocusPaths: paths,
 		ParentTokens:        tokens,
 	})
+}
+
+// --------------------- /api/task ---------------------
+//
+// One-shot task flow: a single POST that auto-scans (if needed), ranks,
+// packs, and returns the Claude-shaped prompt. This is the UI mirror of
+// `neurofs task <query>` — both routes call taskflow.Run so the prompt
+// the UI shows is byte-for-byte what the CLI emits, and the cache
+// (.neurofs/task/) is shared.
+
+type taskReq struct {
+	Repo   string `json:"repo"`
+	Query  string `json:"query"`
+	Budget int    `json:"budget"`
+	Force  bool   `json:"force"`
+}
+
+func handleTask(w http.ResponseWriter, r *http.Request) {
+	var req taskReq
+	if err := decode(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		writeErr(w, http.StatusBadRequest, "query is required")
+		return
+	}
+	// mustRepo enforces the same absolute-path / valid-config rules as
+	// every other handler, so the bootstrap-suggested cwd cannot be
+	// silently massaged into something exotic.
+	if _, ok := mustRepo(w, req.Repo); !ok {
+		return
+	}
+
+	res, err := taskflow.Run(taskflow.Opts{
+		RepoRoot: req.Repo,
+		Query:    req.Query,
+		Budget:   req.Budget,
+		Force:    req.Force,
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "task: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// --------------------- /api/bootstrap ---------------------
+//
+// Returns the directory the binary was launched from. The UI uses this
+// to prefill the repo input on first run — `cd <project> && neurofs ui`
+// then opens at /, sees an empty localStorage, and quietly fills the
+// path so the user can hit Pack without typing.
+
+type bootstrapResp struct {
+	Cwd string `json:"cwd"`
+}
+
+func handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, bootstrapResp{Cwd: startupDir})
 }
