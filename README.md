@@ -44,17 +44,19 @@ The output is a self-contained, auditable bundle ready for any LLM interface.
 # Build the binary
 make build
 
-# Index this repository
-./bin/neurofs scan .
+# Shortest path: one-shot prompt from a question, auto-scan included
+./bin/neurofs task "where is jwt verified" | pbcopy
 
-# Open the local UI (loopback only — nothing leaves your machine)
+# Or open the local UI (loopback only — nothing leaves your machine)
 ./bin/neurofs ui
 ```
 
-The UI wraps `scan`, `pack`, `replay` and records in one place. It opens at
-<http://127.0.0.1:7777> automatically. If you prefer the command line, the
-same flow is available via `neurofs ask` / `neurofs pack` — see
-[Commands](#commands) below.
+`neurofs task` writes a paste-ready prompt to stdout and the summary
+(tokens, files, top picks, cache status) to stderr — composes as a Unix
+filter. The UI wraps the same flow plus `scan`, `pack`, `replay`, the
+journal, and global search in one page; it opens at
+<http://127.0.0.1:7777> automatically. The lower-level `neurofs ask` /
+`neurofs pack` commands stay available — see [Commands](#commands).
 
 ---
 
@@ -72,6 +74,24 @@ make install   # installs to $GOPATH/bin
 ---
 
 ## Commands
+
+### `neurofs task <query>`
+
+The shortest path from a repository and a question to a paste-ready
+prompt. Auto-scans on first use, caches by `(query, budget)`, and writes
+the prompt to stdout — pipe it, redirect it, or let your shell's
+clipboard helper handle it.
+
+```
+neurofs task "where is jwt verified"               # prints prompt to stdout
+neurofs task "review my ranking changes" > p.md    # redirect to a file
+neurofs task "resume seed UI" --budget 3000        # tighter budget
+neurofs task "..." --force                         # ignore the cache
+```
+
+Stderr carries a short summary (tokens, files, top picks, cache
+status) so pipes stay clean. Shared logic lives in `internal/taskflow`,
+so `neurofs task` and the UI's Task tab can never drift.
 
 ### `neurofs scan [path]`
 
@@ -418,14 +438,27 @@ make fmt       # gofmt
 
 ## Roadmap
 
-**Phase 1 — Package** *(current)*  
-Local context packager. Scan, rank, compress, export. No external dependencies.
+**Phase 1 — Package** *(shipped)*  
+Local context packager. Scan, rank, compress, export. No external
+dependencies. `scan` / `ask` / `pack` cover the bare metal.
 
-**Phase 2 — Integrate**  
-CLI adapters, IDE extension hooks, MCP server, optional semantic indexing via embeddings.
+**Phase 2 — Govern** *(shipped)*  
+`audit replay` parses citations and grounds the model's answer against
+the bundle. The local UI exposes the journal, compare, global search,
+human metadata (title/brief/note) per run, mode presets
+(strategy/build/review), and the resume flow — pick a previous run,
+inherit its focus paths, continue with a parent_record breadcrumb on
+the new audit so the causal chain survives on disk. EN/ES i18n.
 
-**Phase 3 — Orchestrate**  
-Hierarchical bundles, progressive expansion, attention routing for large context windows.
+**Phase 3 — One-shot** *(shipped)*  
+`neurofs task <query>` collapses scan → rank → pack → prompt into a
+single command, with a `(query, budget)` cache. The shared
+`internal/taskflow` package keeps CLI and UI behaviour identical.
+
+**Next**  
+IDE extension hooks, MCP server, optional semantic indexing via
+embeddings. Hierarchical bundles, progressive expansion, attention
+routing for large context windows.
 
 ---
 
