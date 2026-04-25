@@ -41,6 +41,12 @@ const state = {
   // page load usually means a new task, and stale briefs silently
   // attaching themselves to the next record would be a bad default.
   task: { title: "", brief: "" },
+  // Parent-context reuse. null when starting from scratch; an object
+  // { parentPath, parentTitle, focusPaths[] } after the user clicks
+  // "Resume from this" on a Journal card. In-memory only — page reloads
+  // reset to a clean slate so a stale parent can't silently attach
+  // itself to the next run.
+  resume: null,
 };
 
 // ------------------------------ modes ------------------------------
@@ -441,6 +447,13 @@ document.getElementById("pack-btn").addEventListener("click", async () => {
   state.task.title = document.getElementById("q-title").value.trim();
   state.task.brief = document.getElementById("q-brief").value.trim();
 
+  // When resuming, read the freshly-edited focus textarea rather than
+  // state.resume.focusPaths — the user may have pruned entries since
+  // the seed was applied, and the record should reflect what actually
+  // ran.
+  const inheritedFocus = state.resume ? readResumeFocusPaths() : [];
+  if (state.resume) state.resume.focusPaths = inheritedFocus;
+
   try {
     const r = await j("POST", "/api/pack", {
       repo: state.repo,
@@ -452,6 +465,7 @@ document.getElementById("pack-btn").addEventListener("click", async () => {
       max_fragments: parseInt(document.getElementById("q-maxfrags").value, 10) || 0,
       prefer_signatures: document.getElementById("q-signatures").checked,
       snapshot_name: document.getElementById("q-snapshot").value.trim(),
+      inherited_focus: inheritedFocus,
     });
     // The "full prompt" users copy is the mode template concatenated in
     // front of the bundle prompt. We keep the server response verbatim so
@@ -475,20 +489,62 @@ document.getElementById("pack-btn").addEventListener("click", async () => {
 
 function renderPackStats(r) {
   const s = r.stats;
+  const used = s.tokens_used || 0;
+  const ratio = s.compression_ratio || 0;
+  const rawEstimate = ratio > 0 ? Math.round(used * ratio) : 0;
+  const saved = rawEstimate > used ? rawEstimate - used : 0;
+  const files = s.files_included || 0;
+
+  // Headline: turn compression_ratio into plain language so the user sees
+  // the value right after Pack. Threshold (~500 tokens) keeps us from
+  // bragging about negligible savings on tiny repos — there we fall back
+  // to a neutral confirmation. The benefit line is identical in both
+  // branches because it describes the product, not this particular run.
+  const savingIsMeaningful = saved >= 500;
+  const headline = savingIsMeaningful
+    ? `<div class="pack-savings-big">${t("pack.savedBig").replace("{n}", fmtTokens(saved))}</div>`
+    : `<div class="pack-savings-big">${t("pack.ready")}</div>`;
+  const benefit = `<div class="pack-savings-sub">${t("pack.benefit")}</div>`;
+
+  const filesLabel = files === 1 ? t("pack.fileOne") : t("pack.fileMany");
+  const meta = `
+    <div class="pack-meta muted">
+      ${files} ${filesLabel} · ${t("pack.readyToPaste")}${
+        r.bundle_path ? ` · ${t("pack.savedAs")} <code>${esc(r.bundle_path)}</code>` : ""
+      }
+    </div>`;
+
+  document.getElementById("pack-stats").innerHTML = `
+    <h3>${t("pack.headline")}</h3>
+    <div class="pack-savings">${headline}${benefit}</div>
+    ${meta}
+    <details class="pack-details">
+      <summary>${t("pack.technical")}</summary>
+      <dl class="kv">
+        <dt>tokens</dt><dd>${s.tokens_used} / ${s.tokens_budget}</dd>
+        <dt>files included</dt><dd>${s.files_included}</dd>
+        <dt>compression</dt><dd>${s.compression_ratio ? s.compression_ratio.toFixed(2) + "×" : "—"}</dd>
+        <dt>snapshot</dt><dd>${r.bundle_path ? `<code>${esc(r.bundle_path)}</code>` : '<span class="muted">not saved (no snapshot name given)</span>'}</dd>
+      </dl>
+    </details>`;
+
   const frags = (r.fragments || []).map(f =>
     `<tr><td><code>${esc(f.rel_path)}</code></td><td>${esc(f.representation)}</td><td>${f.tokens}</td><td>${f.score.toFixed(2)}</td></tr>`
   ).join("");
-  document.getElementById("pack-stats").innerHTML = `
-    <h3>Bundle</h3>
-    <dl class="kv">
-      <dt>tokens</dt><dd>${s.tokens_used} / ${s.tokens_budget}</dd>
-      <dt>files included</dt><dd>${s.files_included}</dd>
-      <dt>compression</dt><dd>${s.compression_ratio ? s.compression_ratio.toFixed(2) + "×" : "—"}</dd>
-      <dt>snapshot</dt><dd>${r.bundle_path ? `<code>${esc(r.bundle_path)}</code>` : '<span class="muted">not saved (no snapshot name given)</span>'}</dd>
-    </dl>`;
   document.getElementById("pack-fragments").innerHTML = frags
     ? `<table class="records"><thead><tr><th>path</th><th>representation</th><th>tokens</th><th>score</th></tr></thead><tbody>${frags}</tbody></table>`
     : `<span class="muted">no fragments</span>`;
+}
+
+// fmtTokens prints an approximate token count in a form a human can grok
+// at a glance: "24k" for ten-thousands, "2.4k" for thousands, bare numbers
+// with thousands separators below that. Rounding is deliberate — exact-
+// looking counts on estimates invite false precision.
+function fmtTokens(n) {
+  n = Math.max(0, Math.round(n));
+  if (n >= 10000) return Math.round(n / 1000) + "k";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return n.toLocaleString();
 }
 
 // refreshFullPrompt re-renders the preview pane with the current template
@@ -589,6 +645,10 @@ document.getElementById("replay-btn").addEventListener("click", async () => {
       title: document.getElementById("r-title").value.trim(),
       brief: document.getElementById("r-brief").value.trim(),
       note:  document.getElementById("r-note").value.trim(),
+      // Parent linkage. When resuming, send both fields so the record
+      // persists the breadcrumb + the exact focus list that ran.
+      parent_record:   state.resume ? state.resume.parentPath : "",
+      inherited_focus: state.resume ? (state.resume.focusPaths || []) : [],
     });
     renderReplayReport(r);
     status.textContent = r.saved_path ? `saved: ${r.saved_path}` : "done";
@@ -917,6 +977,19 @@ function renderJournalCard(rec) {
   const questionBlock = rec.title && rec.question
     ? `<div class="journal-question">${esc(rec.question)}</div>`
     : "";
+  // Parent breadcrumb: shown only when this record was resumed from
+  // another. Click delegates to focusJournalCard, which silently no-ops
+  // if the parent isn't currently in the DOM (filtered / deleted) — the
+  // static parent_title still tells the user where this came from.
+  const parentBlock = rec.parent_record
+    ? `<div class="journal-parent">
+         <button type="button" data-action="goto-parent"
+                 data-parent-path="${esc(rec.parent_record)}"
+                 title="${esc(t("journal.gotoParentTitle"))}">
+           ↳ ${esc(t("journal.continuesFrom"))} ${esc(rec.parent_title || rec.parent_record.split("/").pop() || "parent")}
+         </button>
+       </div>`
+    : "";
   const briefBlock = rec.brief
     ? `<div class="journal-block"><span class="journal-block-tag">brief</span>${esc(rec.brief)}</div>`
     : "";
@@ -943,6 +1016,7 @@ function renderJournalCard(rec) {
         ${modeBadge(rec.mode)}
         <span class="journal-time">${esc(time)}</span>
       </div>
+      ${parentBlock}
       ${questionBlock}
       ${briefBlock}
       ${noteBlock}
@@ -953,6 +1027,7 @@ function renderJournalCard(rec) {
       </div>
       <div class="journal-actions">
         <button data-action="expand">Expand</button>
+        <button data-action="resume">${t("journal.resumeFromThis")}</button>
         <button data-action="cmp-a">Use as Compare A</button>
         <button data-action="cmp-b">Use as Compare B</button>
         <button data-action="copy">Copy path</button>
@@ -982,6 +1057,19 @@ function wireJournalCardActions() {
             () => flashButton(btn, "copied"),
             () => flashButton(btn, "copy failed"),
           );
+        } else if (act === "resume") {
+          resumeFromRecord(path);
+        } else if (act === "goto-parent") {
+          // focusJournalCard no-ops when the target isn't in the current
+          // DOM (filtered out / deleted / different run). The static
+          // breadcrumb label still tells the user where this came from,
+          // so a silent no-op is acceptable — flash the button so the
+          // click visibly registered.
+          const parentPath = btn.dataset.parentPath || "";
+          if (parentPath) {
+            flashButton(btn, "jump");
+            focusJournalCard(parentPath);
+          }
         } else if (act === "expand") {
           toggleJournalExpand(card, btn);
         }
@@ -1683,8 +1771,24 @@ const LANDING_DICT = {
     "workspace.indexSize": "index size",
 
     "task.h": "New task",
-    "task.lead": "Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.",
+    "task.lead": "Say what you want to do. NeuroFS picks only the files that matter and builds a ready-to-paste prompt — so you don't re-send your whole project every time.",
     "task.mode": "Mode",
+    "resume.tag": "Resuming from",
+    "resume.clear": "Clear",
+    "resume.focusLabel": "Inherited focus paths (edit freely — removed paths won't boost the ranker)",
+    "resume.focusPh": "one rel_path per line",
+    "pack.headline": "Ready to send",
+    "pack.savedBig": "You saved ~{n} tokens",
+    "pack.ready": "Your bundle is ready",
+    "pack.benefit": "Instead of re-sending your whole project, this bundle keeps only what matters.",
+    "pack.fileOne": "file picked",
+    "pack.fileMany": "files picked",
+    "pack.readyToPaste": "ready to paste into Claude / ChatGPT",
+    "pack.savedAs": "saved as",
+    "pack.technical": "Technical detail",
+    "journal.continuesFrom": "continues from:",
+    "journal.gotoParentTitle": "Open parent record",
+    "journal.resumeFromThis": "Resume from this",
     "task.titleLabel": "Title (short label for this run)",
     "task.titlePh": "e.g. 010 human metadata",
     "task.questionLabel": "Question (short, what you ask Claude to focus on)",
@@ -2059,8 +2163,24 @@ const LANDING_DICT = {
     "workspace.indexSize": "tamaño del índice",
 
     "task.h": "Nueva tarea",
-    "task.lead": "Empaqueta un bundle. NeuroFS elige archivos, los comprime y emite un prompt con forma para Claude. Cópialo y llévalo a tu sesión de Claude.",
+    "task.lead": "Di qué quieres hacer. NeuroFS elige solo los archivos que importan y arma un prompt listo para pegar — para que no tengas que reenviar todo tu proyecto cada vez.",
     "task.mode": "Modo",
+    "resume.tag": "Continuando desde",
+    "resume.clear": "Limpiar",
+    "resume.focusLabel": "Rutas de foco heredadas (edítalas — las rutas borradas no impulsarán al ranker)",
+    "resume.focusPh": "una rel_path por línea",
+    "pack.headline": "Listo para enviar",
+    "pack.savedBig": "Te ahorraste ~{n} tokens",
+    "pack.ready": "Tu bundle está listo",
+    "pack.benefit": "En vez de reenviar todo tu proyecto, este bundle conserva solo lo que importa.",
+    "pack.fileOne": "archivo elegido",
+    "pack.fileMany": "archivos elegidos",
+    "pack.readyToPaste": "listo para pegar en Claude / ChatGPT",
+    "pack.savedAs": "guardado como",
+    "pack.technical": "Detalle técnico",
+    "journal.continuesFrom": "continúa de:",
+    "journal.gotoParentTitle": "Abrir registro padre",
+    "journal.resumeFromThis": "Continuar desde este",
     "task.titleLabel": "Título (etiqueta corta para esta ejecución)",
     "task.titlePh": "ej. 010 metadata humana",
     "task.questionLabel": "Pregunta (corta, en qué quieres que Claude se enfoque)",
@@ -2462,6 +2582,89 @@ document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (landingHowtoEl && !landingHowtoEl.hidden) landingCloseHowto();
 });
+
+// ------------------------------ resume (parent-context reuse) ------------------------------
+//
+// Flow: click "Resume from this" on a Journal card → fetch the seed →
+// prefill New task (title/brief/question/mode/focus textarea) → render
+// the breadcrumb banner → switch tabs. The focus paths are editable
+// before pack; whatever sits in the textarea at pack time is what the
+// ranker boosts AND what gets stamped into the child record.
+
+async function resumeFromRecord(path) {
+  if (!requireRepo()) return;
+  try {
+    const seed = await j(
+      "GET",
+      `/api/resume-seed?repo=${encodeURIComponent(state.repo)}&path=${encodeURIComponent(path)}`,
+    );
+    applyResumeSeed(seed);
+    switchTab("task");
+  } catch (e) {
+    alert("Resume failed: " + e.message);
+  }
+}
+
+function applyResumeSeed(seed) {
+  state.resume = {
+    parentPath:  seed.parent_path,
+    parentTitle: seed.title || seed.question || "(untitled)",
+    focusPaths:  (seed.suggested_focus_paths || []).slice(),
+  };
+  // Prefill Title/Brief/Question only when empty so a user who started
+  // typing before clicking Resume doesn't lose their edits. Mode is
+  // always applied — the resume UX implies "continue in the same mode
+  // unless you change it".
+  const tEl = document.getElementById("q-title");
+  const b = document.getElementById("q-brief");
+  const q = document.getElementById("q-input");
+  if (!tEl.value.trim()) tEl.value = seed.title || "";
+  if (!b.value.trim()) b.value = seed.brief || "";
+  if (!q.value.trim()) q.value = seed.question || "";
+  if (seed.mode) applyMode(seed.mode.toLowerCase(), { preserveUserEdits: true });
+  renderResumeBanner();
+}
+
+function clearResume() {
+  state.resume = null;
+  renderResumeBanner();
+}
+
+function renderResumeBanner() {
+  const el = document.getElementById("resume-banner");
+  if (!el) return;
+  if (!state.resume) {
+    el.hidden = true;
+    const focus = document.getElementById("resume-focus");
+    if (focus) focus.value = "";
+    return;
+  }
+  el.hidden = false;
+  document.getElementById("resume-title").textContent = state.resume.parentTitle;
+  const pathEl = document.getElementById("resume-parent-path");
+  pathEl.textContent = state.resume.parentPath;
+  pathEl.title = state.resume.parentPath;
+  document.getElementById("resume-focus").value =
+    (state.resume.focusPaths || []).join("\n");
+}
+
+function readResumeFocusPaths() {
+  const raw = (document.getElementById("resume-focus") || {}).value || "";
+  const out = [];
+  const seen = new Set();
+  for (const line of raw.split(/\r?\n/)) {
+    const tt = line.trim();
+    if (!tt || seen.has(tt)) continue;
+    seen.add(tt);
+    out.push(tt);
+  }
+  return out;
+}
+
+(() => {
+  const btn = document.getElementById("resume-clear");
+  if (btn) btn.addEventListener("click", clearResume);
+})();
 
 // ------------------------------ init ------------------------------
 

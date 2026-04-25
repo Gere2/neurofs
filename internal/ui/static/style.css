@@ -1512,3 +1512,94 @@ table.records td code { font-size: 0.75rem; }
   padding: 0 2px;
   border-radius: 2px;
 }
+
+/* ---------- resume banner (parent-context reuse) ---------- */
+
+.resume-banner {
+  border: 1px solid rgba(224,175,104,0.35);
+  background: rgba(224,175,104,0.06);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.resume-banner .resume-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.resume-banner .resume-tag {
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: rgba(224,175,104,0.9);
+}
+.resume-banner .resume-title { font-weight: 600; }
+.resume-banner .resume-path {
+  font-family: monospace;
+  font-size: 12px;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.resume-banner button#resume-clear { margin-left: auto; }
+.resume-banner textarea#resume-focus {
+  width: 100%;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+/* ---------- parent breadcrumb on journal cards ---------- */
+
+.journal-parent {
+  margin: 0.2rem 0 0.4rem 0;
+}
+.journal-parent button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.journal-parent button:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+/* ---------- pack savings (lead with plain language) ---------- */
+
+.pack-savings {
+  padding: 0.6rem 0 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.6rem;
+}
+.pack-savings-big {
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.25;
+}
+.pack-savings-sub {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin-top: 0.3rem;
+  line-height: 1.45;
+}
+.pack-meta {
+  font-size: 0.85rem;
+  margin: 0.2rem 0 0.5rem 0;
+}
+.pack-details {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+}
+.pack-details summary { cursor: pointer; color: var(--muted); }

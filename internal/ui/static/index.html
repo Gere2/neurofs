@@ -182,7 +182,19 @@
     <!-- ============================ NEW TASK ============================ -->
     <section id="tab-task" class="tab">
       <h2 data-i18n="task.h">New task</h2>
-      <p class="lead" data-i18n="task.lead">Pack a bundle. NeuroFS picks files, compresses, and emits a Claude-shaped prompt. Copy it and take it to your Claude session.</p>
+      <p class="lead" data-i18n="task.lead">Say what you want to do. NeuroFS picks only the files that matter and builds a ready-to-paste prompt — so you don't re-send your whole project every time.</p>
+
+      <div id="resume-banner" class="resume-banner" hidden>
+        <div class="resume-head">
+          <span class="resume-tag" data-i18n="resume.tag">Resuming from</span>
+          <strong id="resume-title" class="resume-title"></strong>
+          <span id="resume-parent-path" class="resume-path muted"></span>
+          <button id="resume-clear" class="muted-btn" data-i18n="resume.clear">Clear</button>
+        </div>
+        <label data-i18n="resume.focusLabel">Inherited focus paths (edit freely — removed paths won't boost the ranker)
+          <textarea id="resume-focus" rows="4" placeholder="one rel_path per line" data-i18n-placeholder="resume.focusPh"></textarea>
+        </label>
+      </div>
 
       <div class="mode-bar">
         <span class="mode-label" data-i18n="task.mode">Mode</span>
