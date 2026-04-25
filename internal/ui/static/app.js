@@ -2635,7 +2635,19 @@ function applyLang(lang) {
   document.querySelectorAll("[data-i18n]").forEach(el => {
     const key = el.getAttribute("data-i18n");
     const value = (LANDING_DICT[normalized] && LANDING_DICT[normalized][key]) || LANDING_DICT.en[key];
-    if (typeof value === "string") el.textContent = value;
+    if (typeof value !== "string") return;
+    // Replace only the first text node, leaving any element children
+    // (notably nested <input>/<textarea> inside <label data-i18n>) intact.
+    // Plain `el.textContent = value` would wipe those children — that is
+    // exactly the bug that hid q-budget, q-title, etc. from the DOM.
+    const firstText = [...el.childNodes].find(n => n.nodeType === Node.TEXT_NODE);
+    if (firstText) {
+      firstText.data = value;
+    } else if (el.children.length === 0) {
+      el.textContent = value;
+    } else {
+      el.insertBefore(document.createTextNode(value), el.firstChild);
+    }
   });
   document.querySelectorAll("[data-i18n-html]").forEach(el => {
     const key = el.getAttribute("data-i18n-html");
