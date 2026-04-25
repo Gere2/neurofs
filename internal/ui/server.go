@@ -54,8 +54,20 @@ func Run(opts Options) error {
 	if err != nil {
 		return fmt.Errorf("ui: embed subfs: %w", err)
 	}
+	// no-cache wrapper: assets are embedded at build time, so the binary
+	// is the source of truth. Without these headers, browsers happily
+	// serve a stale app.js after the user upgrades, and the resulting
+	// HTML/JS skew throws "null is not an object" at every getElementById.
+	noCache := func(h http.Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			h.ServeHTTP(w, r)
+		}
+	}
 	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
+	mux.Handle("/static/", noCache(http.StripPrefix("/static/", fileServer)))
 
 	// Root serves index.html directly so the app opens at `/` without a
 	// trailing /static path. Everything else is delegated by the API.
@@ -70,6 +82,9 @@ func Run(opts Options) error {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
 		_, _ = w.Write(data)
 	})
 
