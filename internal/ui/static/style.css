@@ -1144,6 +1144,138 @@ table.records td code { font-size: 0.75rem; }
   font-size: 12px; color: var(--muted);
 }
 
+/* ---------- v8 filter demo ---------- */
+.v8-filter { margin-top: 64px; }
+.v8-filter-card {
+  margin-top: 24px;
+  border: 1px solid var(--border);
+  background: var(--surface, var(--bg));
+}
+.v8-filter-input-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.v8-filter-prompt {
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 16px; color: var(--accent, #2f6f4f);
+  user-select: none;
+}
+.v8-filter-input {
+  flex: 1; appearance: none; background: transparent; border: none; outline: none;
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 14px; color: var(--fg);
+}
+.v8-filter-input::placeholder { color: var(--muted); }
+.v8-filter-list {
+  list-style: none; margin: 0; padding: 8px 0;
+  display: flex; flex-direction: column;
+}
+.v8-filter-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 100px 56px;
+  align-items: center; gap: 12px;
+  padding: 8px 18px;
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 12.5px;
+  transition: background 0.2s, transform 0.4s, opacity 0.4s;
+}
+.v8-filter-item.is-dim { opacity: 0.45; }
+.v8-filter-rank {
+  color: var(--muted); font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.v8-filter-path { color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.v8-filter-bar {
+  position: relative; height: 4px; border-radius: 2px;
+  background: var(--border); overflow: hidden;
+}
+.v8-filter-bar-fill {
+  position: absolute; inset: 0;
+  background: var(--accent, #2f6f4f);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.4s ease;
+}
+.v8-filter-score {
+  text-align: right; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.v8-filter-item.is-top .v8-filter-rank,
+.v8-filter-item.is-top .v8-filter-score { color: var(--fg); }
+
+/* ---------- v8 journal preview ---------- */
+.v8-journal { margin-top: 64px; }
+.v8-journal-list {
+  list-style: none; margin: 24px 0 0; padding: 0;
+  border: 1px solid var(--border);
+}
+.v8-journal-entry {
+  display: grid; grid-template-columns: 88px 1fr;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+}
+.v8-journal-entry:last-child { border-bottom: none; }
+.v8-journal-date {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 24px 16px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent, #2f6f4f) 4%, transparent);
+}
+.v8-journal-day {
+  font-family: var(--serif, "Instrument Serif", Georgia, serif);
+  font-size: 36px; line-height: 1; color: var(--fg);
+  letter-spacing: -0.02em;
+}
+.v8-journal-mon {
+  margin-top: 4px;
+  font-family: var(--mono, "Geist Mono", ui-monospace, monospace);
+  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--muted);
+}
+.v8-journal-body {
+  padding: 22px 24px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.v8-journal-title {
+  font-size: 16px; font-weight: 500; color: var(--fg);
+  letter-spacing: -0.01em;
+}
+.v8-journal-meta {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted);
+}
+.v8-mono { font-family: var(--mono, "Geist Mono", ui-monospace, monospace); }
+.v8-journal-tag {
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.v8-journal-tag-good {
+  color: var(--accent, #2f6f4f);
+  border-color: color-mix(in srgb, var(--accent, #2f6f4f) 35%, var(--border));
+}
+.v8-journal-note {
+  margin: 0; font-size: 13.5px; line-height: 1.6;
+  color: var(--muted); text-wrap: pretty;
+}
+@media (max-width: 640px) {
+  .v8-journal-entry { grid-template-columns: 1fr; }
+  .v8-journal-date {
+    flex-direction: row; gap: 8px; padding: 12px 16px;
+    border-right: none; border-bottom: 1px solid var(--border);
+    justify-content: flex-start;
+  }
+  .v8-journal-day { font-size: 22px; }
+  .v8-filter-item { grid-template-columns: 20px minmax(0, 1fr) 60px 44px; gap: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v8-filter-item, .v8-filter-bar-fill { transition: none; }
+}
+
 .v8-footer-cta {
   margin-top: 48px; padding: 36px 32px;
   display: flex; align-items: center; justify-content: space-between;
