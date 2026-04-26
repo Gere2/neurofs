@@ -1,8 +1,10 @@
 package packager_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/neuromfs/neuromfs/internal/models"
@@ -158,5 +160,42 @@ func TestPackUpgradeWithSlackRespectsRemainingBudget(t *testing.T) {
 	if b.Fragments[0].Representation == models.RepFullCode {
 		t.Errorf("upgrade must not exceed budget — expected signature, got full_code (%d tokens used of %d)",
 			b.Stats.TokensUsed, b.Stats.TokensBudget)
+	}
+}
+
+func TestPackSignatureCappedForOversizedFiles(t *testing.T) {
+	// A wide-API file: hundreds of exports → the signature alone would
+	// blow past 350 tokens. Build one and confirm the signature gets
+	// truncated with a "+ N more" marker, and that the resulting
+	// fragment fits under the cap.
+	var sb strings.Builder
+	for i := 0; i < 400; i++ {
+		fmt.Fprintf(&sb, "export function exportedFunctionWithALongName_%04d() { return %d; }\n", i, i)
+	}
+	body := sb.String()
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:    writeTempFile(t, "wide.ts", body),
+			RelPath: "src/wide.ts",
+			Lang:    models.LangTypeScript,
+		},
+		Score: 5.0,
+	}}
+	b, _ := packager.Pack(ranked, "q", packager.Options{
+		Budget:           4000,
+		PreferSignatures: true,
+	})
+	if len(b.Fragments) == 0 {
+		t.Fatalf("expected one fragment")
+	}
+	frag := b.Fragments[0]
+	if frag.Representation != models.RepSignature {
+		t.Fatalf("expected signature, got %s", frag.Representation)
+	}
+	if frag.Tokens > 360 {
+		t.Errorf("capped signature still too large: %d tokens (cap 350)", frag.Tokens)
+	}
+	if !strings.Contains(frag.Content, "more lines") {
+		t.Errorf("expected truncation marker, got: %q", frag.Content)
 	}
 }

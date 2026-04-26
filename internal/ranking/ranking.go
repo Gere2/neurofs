@@ -35,10 +35,28 @@ const (
 	weightDependencyMatch = 1.2
 	weightFocus           = 4.0
 	weightChanged         = 2.0
+	// weightRootDoc is a floor for canonical project docs at the repo root
+	// (README, ARCHITECTURE, CONTRIBUTING, CHANGELOG). Without it, queries in
+	// languages other than the doc's language — or any query that does not
+	// happen to lexically match the doc's contents — leave the README at zero
+	// score and out of every bundle, which is exactly the wrong behaviour for
+	// "what is this project" style questions. Sized between weightSymbol and
+	// weightFilename so a strong specific match still beats it, but a weak or
+	// non-matching query still surfaces the README.
+	weightRootDoc = 3.5
 
 	// expansionLimit is the number of top files used as seeds for import expansion.
 	expansionLimit = 12
 )
+
+// rootDocStems is the set of canonical doc filename stems (no extension,
+// lowercase) that earn weightRootDoc when they sit at the repo root.
+var rootDocStems = map[string]bool{
+	"readme":       true,
+	"architecture": true,
+	"contributing": true,
+	"changelog":    true,
+}
 
 // Options tunes the ranker. A zero Options is equivalent to plain Rank.
 type Options struct {
@@ -185,7 +203,30 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 		})
 	}
 
+	// Root-doc floor: README et al. at the repo root are always relevant
+	// enough to earn a slot. Subdirectory READMEs (per-package docs) do
+	// not get the boost — they're scope-local, not project-level.
+	if isRootDoc(f.RelPath) {
+		score += weightRootDoc
+		reasons = append(reasons, models.InclusionReason{
+			Signal: "root_doc",
+			Detail: filepath.Base(f.RelPath),
+			Weight: weightRootDoc,
+		})
+	}
+
 	return score, reasons
+}
+
+// isRootDoc reports whether relPath is a canonical project doc sitting at
+// the repository root.
+func isRootDoc(relPath string) bool {
+	rel := filepath.ToSlash(relPath)
+	if strings.Contains(rel, "/") {
+		return false
+	}
+	stem := strings.ToLower(stripExt(rel))
+	return rootDocStems[stem]
 }
 
 // expandByImports boosts files that are imported by high-scoring seeds.
@@ -502,6 +543,7 @@ func SignalWeights() map[string]float64 {
 		"dependency_match": weightDependencyMatch,
 		"focus":            weightFocus,
 		"changed":          weightChanged,
+		"root_doc":         weightRootDoc,
 	}
 }
 

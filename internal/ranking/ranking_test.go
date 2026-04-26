@@ -91,6 +91,36 @@ func TestRankEntryPointBonus(t *testing.T) {
 	}
 }
 
+func TestRankRootDocFloor(t *testing.T) {
+	// Query in Spanish; README is in English. Without root_doc the README
+	// rankd at zero and never enters the bundle. With it, README beats a
+	// generic source file that also fails to match the query.
+	files := []models.FileRecord{
+		{RelPath: "README.md", Lang: models.LangMarkdown},
+		{RelPath: "src/helper.ts", Lang: models.LangTypeScript},
+	}
+	ranked := ranking.RankWithOptions(files, "sentido del proyecto", ranking.Options{})
+
+	if ranked[0].Record.RelPath != "README.md" {
+		t.Errorf("expected README first via root_doc floor, got %s", ranked[0].Record.RelPath)
+	}
+	if !hasSignal(ranked[0].Reasons, "root_doc") {
+		t.Errorf("expected root_doc reason, got %+v", ranked[0].Reasons)
+	}
+}
+
+func TestRankRootDocOnlyAtRoot(t *testing.T) {
+	// A README inside a subpackage is documentation-of-scope, not the
+	// project README — no floor.
+	files := []models.FileRecord{
+		{RelPath: "internal/foo/README.md", Lang: models.LangMarkdown},
+	}
+	ranked := ranking.RankWithOptions(files, "anything unrelated", ranking.Options{})
+	if hasSignal(ranked[0].Reasons, "root_doc") {
+		t.Errorf("subdirectory README should not earn root_doc, got %+v", ranked[0].Reasons)
+	}
+}
+
 func TestRankDependencyMatch(t *testing.T) {
 	files := []models.FileRecord{
 		{
