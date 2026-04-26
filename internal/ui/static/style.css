@@ -1,29 +1,76 @@
 :root {
-  /* Dusk Ember — warm, grounded, calm focus */
-  --bg:      #131210;
-  --panel:   #1b1916;
-  --panel-2: #232018;
-  --border:  #302c25;
-  --fg:      #ece7e0;
-  --muted:   #9a9088;
-  --accent:  #e8895e;
-  --good:    #7db87a;
-  --bad:     #d96b6b;
-  --warn:    #d4a64c;
-  --mono:    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  --accent-soft:   rgba(232, 137, 94, 0.10);
-  --accent-strong: #f09868;
-  --glow:          rgba(232, 137, 94, 0.12);
+  /* Dusk Ember v8 — layered surfaces and a serif-italic accent.
+     The bg/panel/border/fg/muted/accent/good/bad/warn vars are the
+     ones the rest of this stylesheet reads today; the *-2 / *-3 /
+     hairline / fg-2 / muted-2 / dim / info / accent-deep / *-line /
+     shadow-* / serif / maxw / gutter vars are defined now so the
+     upcoming structural commits can use them without reinventing
+     their own naming. */
+
+  /* Surfaces */
+  --bg:        #0c0b09;
+  --bg-2:      #100e0c;
+  --bg-3:      #08070605;
+  --panel:     #16140f;
+  --panel-2:   #1c1914;
+  --panel-3:   #221e18;
+  --border:    #2a2620;
+  --border-2:  #38332b;
+  --hairline:  #1f1c17;
+
+  /* Text */
+  --fg:        #ede8e0;
+  --fg-2:      #c8c2b8;
+  --muted:     #8a827a;
+  --muted-2:   #5e574f;
+  --dim:       #3a352f;
+
+  /* Accent */
+  --accent:        #e8895e;
+  --accent-strong: #f29a6f;
+  --accent-deep:   #c66f48;
+  --accent-soft:   rgba(232,137,94,0.10);
+  --accent-line:   rgba(232,137,94,0.22);
+
+  /* Status */
+  --good: #82b87a;
+  --bad:  #d96b6b;
+  --warn: #d4a64c;
+  --info: #7a9bb8;
+
+  /* Typography. Each web font has a system fallback so the UI never
+     blocks on a font fetch — neurofs is local-first, the network must
+     never be a hard dependency. */
+  --sans:  'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --serif: 'Instrument Serif', 'Iowan Old Style', Georgia, serif;
+  --mono:  'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Elevation */
+  --shadow-sm:   0 1px 2px rgba(0,0,0,0.3);
+  --shadow-md:   0 1px 3px rgba(0,0,0,0.18), 0 8px 24px rgba(0,0,0,0.25);
+  --shadow-lg:   0 2px 8px rgba(0,0,0,0.25), 0 24px 60px rgba(0,0,0,0.35);
+  --shadow-glow: 0 0 40px rgba(232,137,94,0.08);
+
+  /* Layout rails */
+  --maxw:   1180px;
+  --gutter: 40px;
+
+  /* Legacy alias: a few existing rules still read --glow. */
+  --glow: rgba(232, 137, 94, 0.12);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--sans);
+  font-feature-settings: "ss01", "cv11";
   background: var(--bg);
   color: var(--fg);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 header {
