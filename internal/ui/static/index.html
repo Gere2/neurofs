@@ -202,6 +202,76 @@
           </div>
         </div>
 
+        <!-- ARCHITECTURE DIAGRAM -->
+        <div class="v8-arch">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.arch.eyebrow">Architecture</div>
+            <h3 class="v8-section-title" data-i18n-html="v8.arch.title">A thin layer <span class="serif-italic v8-text-accent">between editor and model.</span></h3>
+            <p class="v8-section-sub" data-i18n="v8.arch.sub">NeuroFS runs locally as a CLI and a small HTTP server. It watches your repo, builds packs on demand, and journals each session for the next one.</p>
+          </div>
+          <div class="v8-arch-diagram" role="img" aria-label="Editor talks to NeuroFS, which builds a pack consumed by the model">
+            <div class="v8-arch-node v8-arch-edge">
+              <div class="v8-arch-node-label" data-i18n="v8.arch.editor.label">Editor / Agent</div>
+              <div class="v8-arch-node-meta" data-i18n="v8.arch.editor.meta">Claude Code · Cursor · CLI</div>
+            </div>
+            <div class="v8-arch-arrow" aria-hidden="true">
+              <span class="v8-arch-arrow-tag" data-i18n="v8.arch.arrow1">intent</span>
+              <svg viewBox="0 0 80 12" preserveAspectRatio="none"><path d="M2 6 L74 6 M68 2 L76 6 L68 10" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="v8-arch-node v8-arch-core">
+              <div class="v8-arch-node-label" data-i18n="v8.arch.core.label">NeuroFS</div>
+              <div class="v8-arch-node-meta" data-i18n="v8.arch.core.meta">scan · rank · pack · journal</div>
+              <ul class="v8-arch-pieces">
+                <li><span class="v8-arch-dot"></span><span data-i18n="v8.arch.piece1">file index</span></li>
+                <li><span class="v8-arch-dot"></span><span data-i18n="v8.arch.piece2">token budget</span></li>
+                <li><span class="v8-arch-dot"></span><span data-i18n="v8.arch.piece3">audit trail</span></li>
+              </ul>
+            </div>
+            <div class="v8-arch-arrow" aria-hidden="true">
+              <span class="v8-arch-arrow-tag" data-i18n="v8.arch.arrow2">pack</span>
+              <svg viewBox="0 0 80 12" preserveAspectRatio="none"><path d="M2 6 L74 6 M68 2 L76 6 L68 10" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <div class="v8-arch-node v8-arch-edge">
+              <div class="v8-arch-node-label" data-i18n="v8.arch.model.label">Any LLM</div>
+              <div class="v8-arch-node-meta" data-i18n="v8.arch.model.meta">Claude · GPT · local</div>
+            </div>
+          </div>
+          <div class="v8-arch-foot">
+            <span class="v8-meta-dot" aria-hidden="true"></span>
+            <span data-i18n="v8.arch.foot">100% on loopback. The model sees the pack, never the repo.</span>
+          </div>
+        </div>
+
+        <!-- INSTALL BLOCK -->
+        <div class="v8-install">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.install.eyebrow">Install</div>
+            <h3 class="v8-section-title" data-i18n-html="v8.install.title">One command. <span class="serif-italic v8-text-accent">Then keep working.</span></h3>
+          </div>
+          <div class="v8-install-card">
+            <div class="v8-install-tabs" role="tablist">
+              <button class="v8-install-tab is-active" role="tab" aria-selected="true" data-install-tab="go">go install</button>
+              <button class="v8-install-tab" role="tab" aria-selected="false" data-install-tab="brew">brew</button>
+              <button class="v8-install-tab" role="tab" aria-selected="false" data-install-tab="src">from source</button>
+            </div>
+            <div class="v8-install-body">
+              <pre class="v8-install-pane is-active" data-install-pane="go"><code><span class="v8-prompt">$</span> go install github.com/neuromfs/neuromfs/cmd/neurofs@latest
+<span class="v8-prompt">$</span> neurofs ui</code></pre>
+              <pre class="v8-install-pane" data-install-pane="brew"><code><span class="v8-prompt">$</span> brew install neuromfs/tap/neurofs
+<span class="v8-prompt">$</span> neurofs ui</code></pre>
+              <pre class="v8-install-pane" data-install-pane="src"><code><span class="v8-prompt">$</span> git clone https://github.com/neuromfs/neuromfs
+<span class="v8-prompt">$</span> cd neuromfs && make build
+<span class="v8-prompt">$</span> ./bin/neurofs ui</code></pre>
+              <button class="v8-install-copy" data-install-copy aria-label="Copy command">
+                <span data-install-copy-label data-i18n="v8.install.copy">Copy</span>
+              </button>
+            </div>
+            <div class="v8-install-foot">
+              <span data-i18n="v8.install.foot">Requires Go 1.22+. Binary is ~18 MB. Runs on macOS and Linux.</span>
+            </div>
+          </div>
+        </div>
+
         <div class="v8-footer-cta">
           <p data-i18n="v8.footer.ready">Ready?</p>
           <button class="v8-btn v8-btn-primary" data-tab-target="task" data-i18n="v8.footer.cta">Create your first task →</button>
