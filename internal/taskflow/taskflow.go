@@ -241,6 +241,7 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	bundle, err := packager.Pack(ranked, query, packager.Options{
 		Budget:           budget,
 		PreferSignatures: true,
+		UpgradeWithSlack: true,
 	})
 	if err != nil {
 		return fmt.Errorf("pack: %w", err)

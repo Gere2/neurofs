@@ -39,11 +39,26 @@ const (
 // PreferSignatures trades fidelity for tokens: small files still go full_code,
 // but anything larger than aggressiveFullCodeMaxTokens collapses to a
 // signature or a structural note even when the budget could fit it verbatim.
+//
+// UpgradeWithSlack enables a second pass that, after the initial pack, walks
+// fragments in score order and promotes signatures to full_code whenever the
+// remaining budget can absorb the delta. Without it, a Strategy-shaped pack
+// can leave 80%+ of the budget unused while every top file shows up as a
+// 30-token signature.
 type Options struct {
 	Budget           int
 	MaxFiles         int
 	MaxFragments     int
 	PreferSignatures bool
+	UpgradeWithSlack bool
+}
+
+// upgradeCandidate holds the per-fragment data we need for the optional
+// second-pass body upgrade. We keep it package-private; callers never see it.
+type upgradeCandidate struct {
+	idx      int    // index into the fragments slice
+	path     string // absolute path on disk
+	rawToks  int    // tokens needed to upgrade to full_code
 }
 
 // Pack takes a ranked list of scored files and assembles an auditable Bundle.
@@ -52,6 +67,7 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 	budget.Consume(headerReserve)
 
 	var fragments []models.ContextFragment
+	var upgrades []upgradeCandidate
 	totalRawTokens := 0
 
 	for _, sf := range ranked {
@@ -83,6 +99,38 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 
 		budget.Consume(frag.Tokens)
 		fragments = append(fragments, *frag)
+
+		if opts.UpgradeWithSlack && frag.Representation == models.RepSignature {
+			upgrades = append(upgrades, upgradeCandidate{
+				idx:     len(fragments) - 1,
+				path:    sf.Record.Path,
+				rawToks: rawTokens,
+			})
+		}
+	}
+
+	// Second pass: promote signatures to full_code while slack remains.
+	// Fragments are already in score order, so iterating upgrades in order
+	// preserves the "best file gets the body first" property. We cap the
+	// upgrade at fullCodeMaxTokens — past that, one monolithic body would
+	// crowd out coverage from all the smaller signatures we still want.
+	for _, u := range upgrades {
+		if u.rawToks > fullCodeMaxTokens {
+			continue
+		}
+		current := fragments[u.idx]
+		delta := u.rawToks - current.Tokens
+		if delta <= 0 || !budget.CanFit(delta) {
+			continue
+		}
+		content, err := os.ReadFile(u.path)
+		if err != nil {
+			continue
+		}
+		fragments[u.idx].Representation = models.RepFullCode
+		fragments[u.idx].Content = string(content)
+		fragments[u.idx].Tokens = u.rawToks
+		budget.Consume(delta)
 	}
 
 	var compressionRatio float64
