@@ -23,6 +23,14 @@ const (
 	// is genuinely tiny.
 	aggressiveFullCodeMaxTokens = 180
 
+	// signatureMaxTokens caps a single fragment's signature. Massive files
+	// (a 2000-line UI bundle, a wide API surface) used to dump 500-700
+	// tokens of bare function names — useful as orientation but enough to
+	// crowd out half the bundle on a tight budget. We truncate the symbol
+	// list to fit and append a "// + N more symbols" line so the model can
+	// still ask for the body if it actually needs them.
+	signatureMaxTokens = 350
+
 	// Minimum score required for a file to enter the bundle at all.
 	minScore = 0.1
 
@@ -179,6 +187,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 
 	// Option 2: signature — compact interface view.
 	sig := buildSignature(sf, content)
+	sig = capSignature(sig, signatureMaxTokens)
 	sigTokens := tokenbudget.EstimateTokens(sig)
 	if sigTokens > 0 && budget.CanFit(sigTokens) {
 		f := *base
@@ -235,4 +244,28 @@ func buildStructuralNote(sf models.ScoredFile) string {
 	}
 
 	return sb.String()
+}
+
+// capSignature truncates an oversized signature line-by-line until it fits
+// maxTokens, keeping the header and as many leading lines as possible.
+// Replaces the dropped tail with a single `// + N more` marker so the model
+// knows the body is richer than what's shown.
+func capSignature(sig string, maxTokens int) string {
+	if maxTokens <= 0 || tokenbudget.EstimateTokens(sig) <= maxTokens {
+		return sig
+	}
+	lines := strings.Split(sig, "\n")
+	// Drop trailing lines one at a time, leaving room for the marker.
+	for len(lines) > 2 {
+		dropped := len(strings.Split(sig, "\n")) - len(lines) + 1
+		marker := fmt.Sprintf("// + %d more lines (signature truncated)", dropped)
+		candidate := strings.Join(append(lines[:len(lines)-1], marker), "\n")
+		if tokenbudget.EstimateTokens(candidate) <= maxTokens {
+			return candidate
+		}
+		lines = lines[:len(lines)-1]
+	}
+	// Pathological case: even header + marker exceed maxTokens. Return the
+	// header alone — better a tiny fragment than nothing.
+	return strings.Join(lines, "\n")
 }
