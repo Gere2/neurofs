@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/quality"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
@@ -26,6 +29,7 @@ func newTaskCmd() *cobra.Command {
 		repoPath string
 		budget   int
 		force    bool
+		rate     bool
 	)
 
 	cmd := &cobra.Command{
@@ -125,6 +129,32 @@ Examples:
 			fmt.Fprintf(os.Stderr, "  bundle    : %s\n", result.BundlePath)
 			fmt.Fprintf(os.Stderr, "  clipboard : %s\n", clipStatus)
 
+			if rate {
+				rating, comment := promptRating(os.Stderr, os.Stdin)
+				topPaths := make([]string, len(result.TopPicks))
+				for i, p := range result.TopPicks {
+					topPaths[i] = p.RelPath
+				}
+				entry := quality.Entry{
+					Query:         query,
+					Repo:          repoPath,
+					TokensUsed:    result.Stats.TokensUsed,
+					TokensBudget:  result.Stats.TokensBudget,
+					FilesIncluded: result.Stats.FilesIncluded,
+					TopPicks:      topPaths,
+					Reused:        result.Reused,
+					Rating:        rating,
+					Comment:       comment,
+				}
+				if err := quality.Append(repoPath, entry); err != nil {
+					// A failed log line is annoying, not fatal — the prompt
+					// itself already went out, so we degrade to a warning.
+					fmt.Fprintf(os.Stderr, "  quality   : warn: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "  quality   : logged to %s\n", quality.Path(repoPath))
+				}
+			}
+
 			return nil
 		},
 	}
@@ -132,6 +162,29 @@ Examples:
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (defaults to current directory)")
 	cmd.Flags().IntVar(&budget, "budget", config.DefaultBudget, "Token budget for the prompt")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore the cache and regenerate")
+	cmd.Flags().BoolVar(&rate, "rate", false, "After generating, ask y/n + comment and append to .neurofs/quality.jsonl")
 
 	return cmd
+}
+
+// promptRating reads a single rating + optional comment from stdin.
+// Output goes to `out` (stderr in production) so that the rating
+// prompt never contaminates the stdout pipe carrying the prompt
+// itself. EOF or a blank rating answer counts as skip — handy when
+// the caller forgets they passed --rate inside a script.
+func promptRating(out io.Writer, in io.Reader) (rating, comment string) {
+	r := bufio.NewReader(in)
+	fmt.Fprint(out, "  rate this prompt? [y/n/skip] (Enter to skip): ")
+	line, _ := r.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		rating = quality.RatingYes
+	case "n", "no":
+		rating = quality.RatingNo
+	default:
+		return quality.RatingSkip, ""
+	}
+	fmt.Fprint(out, "  comment (optional, one line, Enter to skip): ")
+	c, _ := r.ReadString('\n')
+	return rating, strings.TrimSpace(c)
 }
