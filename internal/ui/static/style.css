@@ -55,6 +55,10 @@
   --maxw:   1180px;
   --gutter: 40px;
 
+  /* Vertical rhythm between v8 home sections. One token so adjustments
+     stay coherent across compare/arch/install/filter/journal/etc. */
+  --v8-section-gap: 80px;
+
   /* Legacy alias: a few existing rules still read --glow. */
   --glow: rgba(232, 137, 94, 0.12);
 }
@@ -840,7 +844,7 @@ table.records td code { font-size: 0.75rem; }
 
 /* ---------- v8 stats strip ---------- */
 .v8-stats {
-  margin-top: 48px;
+  margin-top: var(--v8-section-gap);
   display: grid; grid-template-columns: repeat(3, 1fr);
   border: 1px solid var(--border);
   background: var(--surface, var(--bg));
@@ -872,7 +876,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 /* ---------- v8 compare: without vs with ---------- */
-.v8-compare { margin-top: 64px; }
+.v8-compare { margin-top: var(--v8-section-gap); }
 .v8-compare-grid {
   margin-top: 24px;
   display: grid; grid-template-columns: 1fr 1fr;
@@ -926,7 +930,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 /* ---------- v8 token reduction scroll ---------- */
-.v8-token-scroll { margin-top: 96px; }
+.v8-token-scroll { margin-top: calc(var(--v8-section-gap) * 1.2); }
 .v8-token-body {
   margin-top: 32px;
   display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
@@ -1036,7 +1040,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 /* ---------- v8 architecture diagram ---------- */
-.v8-arch { margin-top: 64px; }
+.v8-arch { margin-top: var(--v8-section-gap); }
 .v8-arch-diagram {
   margin-top: 24px;
   display: grid;
@@ -1095,7 +1099,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 /* ---------- v8 install block ---------- */
-.v8-install { margin-top: 64px; }
+.v8-install { margin-top: var(--v8-section-gap); }
 .v8-install-card {
   margin-top: 24px;
   border: 1px solid var(--border);
@@ -1145,7 +1149,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 /* ---------- v8 filter demo ---------- */
-.v8-filter { margin-top: 64px; }
+.v8-filter { margin-top: var(--v8-section-gap); }
 .v8-filter-card {
   margin-top: 24px;
   border: 1px solid var(--border);
@@ -1206,7 +1210,7 @@ table.records td code { font-size: 0.75rem; }
 .v8-filter-item.is-top .v8-filter-score { color: var(--fg); }
 
 /* ---------- v8 journal preview ---------- */
-.v8-journal { margin-top: 64px; }
+.v8-journal { margin-top: var(--v8-section-gap); }
 .v8-journal-list {
   list-style: none; margin: 24px 0 0; padding: 0;
   border: 1px solid var(--border);
@@ -1277,7 +1281,7 @@ table.records td code { font-size: 0.75rem; }
 }
 
 .v8-footer-cta {
-  margin-top: 48px; padding: 36px 32px;
+  margin-top: var(--v8-section-gap); padding: 36px 32px;
   display: flex; align-items: center; justify-content: space-between;
   gap: 24px; flex-wrap: wrap;
   border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -1823,3 +1827,9 @@ table.records td code { font-size: 0.75rem; }
   line-height: 1.55;
 }
 .oneshot-picks li { margin: 0; padding: 0; }
+
+/* Tighter section rhythm on narrow viewports — 80px between sections
+   gets oppressive on a phone where each block is already full-width. */
+@media (max-width: 720px) {
+  :root { --v8-section-gap: 56px; }
+}
