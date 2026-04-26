@@ -1821,42 +1821,33 @@ const LANDING_DICT = {
     "filter.all": "All",
     "filter.unknown": "Unknown",
 
-    "landing.eyebrow": "Local app — works with Claude & ChatGPT",
-    "landing.title":
-      'Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span>',
-    "landing.subtitle":
-      "NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.",
-    "landing.ctaPrimary": "Start a task",
-    "landing.ctaSecondary": "Continue previous work",
-    "landing.howTo": "See how it works",
-    "landing.card1.h": "Start focused",
-    "landing.card1.p": "Describe what you want to do. NeuroFS finds the files that matter.",
-    "landing.card2.h": "Save context",
-    "landing.card2.p": "Send less noise to Claude or ChatGPT and keep your prompts lighter.",
-    "landing.card3.h": "Continue later",
-    "landing.card3.p": "Pick up from previous work without explaining everything again.",
-    "landing.edu.before": "Without NeuroFS",
-    "landing.edu.beforeCaption": "You paste everything. Most of it is noise.",
-    "landing.edu.after": "With NeuroFS",
-    "landing.edu.afterCaption": "Only what matters. Focused and lighter.",
-    "landing.footer.ready": "Ready?",
-    "landing.footer.cta": "Create your first task",
-
-    "modal.eyebrow": "How it works",
-    "modal.title": "Three steps, thirty seconds",
-    "modal.step1.caption": "\"Fix the login button on mobile\"",
-    "modal.step1.title": "Describe your task",
-    "modal.step1.body":
-      "Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.",
-    "modal.step2.title": "NeuroFS picks the right files",
-    "modal.step2.body":
-      "It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.",
-    "modal.step3.title": "Paste into Claude or ChatGPT",
-    "modal.step3.body":
-      "Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.",
-    "modal.back": "← Back",
-    "modal.next": "Next →",
-    "modal.finish": "Start my first task",
+    // ── v8 home ───────────────────────────────────────────────
+    "v8.badge.beta":      "OPEN BETA",
+    "v8.badge.meta":      "local · model-agnostic",
+    "v8.hero.title":
+      'Your AI forgot <span class="v8-strike-wrap"><span class="serif-italic v8-muted">everything</span><svg class="v8-strike" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3"/></svg></span>.<br><span class="v8-accent-wrap">Give it <span class="serif-italic">a memory.</span><span class="v8-accent-underline" aria-hidden="true"></span></span>',
+    "v8.hero.sub":
+      "NeuroFS is a persistent context layer for coding agents. It remembers what you worked on, finds only the files that matter, and builds a focused pack — so you stop wasting tokens explaining yourself.",
+    "v8.cta.primary":     "Start a task →",
+    "v8.cta.secondary":   "Continue previous work",
+    "v8.kbd.hint":        "open command bar",
+    "v8.panel.fig":       "fig. 01 — context pack",
+    "v8.how.eyebrow":     "How it works",
+    "v8.how.title":
+      'Three steps. Then it stays <span class="serif-italic v8-text-accent">out of your way.</span>',
+    "v8.how.sub":
+      "No new chat interface to learn. NeuroFS sits between your editor and your model, building the right context behind the scenes.",
+    "v8.card1.num":       "01 — Describe",
+    "v8.card1.h":         "Tell it what you're doing",
+    "v8.card1.p":         "A sentence is enough. NeuroFS maps your intent to the right files using your repo's structure and your past sessions.",
+    "v8.card2.num":       "02 — Pack",
+    "v8.card2.h":         "A focused context is built",
+    "v8.card2.p":         "Irrelevant files are dropped. What remains is a compact, model-ready pack that fits comfortably in any context window.",
+    "v8.card3.num":       "03 — Resume",
+    "v8.card3.h":         "Pick up where you left off",
+    "v8.card3.p":         "A persistent journal preserves what changed and why. Tomorrow's session starts with yesterday's context — already loaded.",
+    "v8.footer.ready":    "Ready?",
+    "v8.footer.cta":      "Create your first task →",
 
     "workspace.h": "Workspace",
     "workspace.lead": "Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.",
@@ -2231,42 +2222,33 @@ const LANDING_DICT = {
     "filter.all": "Todos",
     "filter.unknown": "Desconocido",
 
-    "landing.eyebrow": "App local — funciona con Claude y ChatGPT",
-    "landing.title":
-      'Deja de <span class="landing-strike">re-explicar</span> tu proyecto.<br><span class="landing-accent-word">Continúa.</span>',
-    "landing.subtitle":
-      "NeuroFS mantiene tu trabajo enfocado, prepara solo el contexto que importa y te ayuda a continuar donde lo dejaste.",
-    "landing.ctaPrimary": "Empezar una tarea",
-    "landing.ctaSecondary": "Retomar trabajo anterior",
-    "landing.howTo": "Ver cómo funciona",
-    "landing.card1.h": "Empieza enfocado",
-    "landing.card1.p": "Describe lo que quieres hacer. NeuroFS encuentra los archivos que importan.",
-    "landing.card2.h": "Ahorra contexto",
-    "landing.card2.p": "Envía menos ruido a Claude o ChatGPT y mantén tus prompts más ligeros.",
-    "landing.card3.h": "Continúa después",
-    "landing.card3.p": "Retoma trabajo anterior sin tener que explicar todo de nuevo.",
-    "landing.edu.before": "Sin NeuroFS",
-    "landing.edu.beforeCaption": "Pegas todo. La mayoría es ruido.",
-    "landing.edu.after": "Con NeuroFS",
-    "landing.edu.afterCaption": "Solo lo que importa. Enfocado y ligero.",
-    "landing.footer.ready": "¿Listo?",
-    "landing.footer.cta": "Crea tu primera tarea",
-
-    "modal.eyebrow": "Cómo funciona",
-    "modal.title": "Tres pasos, treinta segundos",
-    "modal.step1.caption": "\"Arregla el botón de login en mobile\"",
-    "modal.step1.title": "Describe tu tarea",
-    "modal.step1.body":
-      "Escríbela como si hablaras con un compañero. Una frase basta — no hace falta listar archivos ni rutas.",
-    "modal.step2.title": "NeuroFS elige los archivos adecuados",
-    "modal.step2.body":
-      "Escanea tu repo, se queda con lo que importa para la tarea y deja fuera el ruido. Todo local — nada sale de tu máquina.",
-    "modal.step3.title": "Pégalo en Claude o ChatGPT",
-    "modal.step3.body":
-      "Copia el bundle enfocado y pégalo. Tu IA responde más rápido, con menos confusión. Vuelve mañana y continúa.",
-    "modal.back": "← Atrás",
-    "modal.next": "Siguiente →",
-    "modal.finish": "Empezar mi primera tarea",
+    // ── v8 home ───────────────────────────────────────────────
+    "v8.badge.beta":      "BETA ABIERTA",
+    "v8.badge.meta":      "local · cualquier modelo",
+    "v8.hero.title":
+      'Tu IA olvidó <span class="v8-strike-wrap"><span class="serif-italic v8-muted">todo</span><svg class="v8-strike" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3"/></svg></span>.<br><span class="v8-accent-wrap">Dale <span class="serif-italic">memoria.</span><span class="v8-accent-underline" aria-hidden="true"></span></span>',
+    "v8.hero.sub":
+      "NeuroFS es una capa de contexto persistente para agentes de código. Recuerda en qué trabajaste, encuentra solo los archivos que importan y arma un pack enfocado — para que dejes de gastar tokens explicándote.",
+    "v8.cta.primary":     "Empezar una tarea →",
+    "v8.cta.secondary":   "Retomar trabajo anterior",
+    "v8.kbd.hint":        "abrir barra de comandos",
+    "v8.panel.fig":       "fig. 01 — pack de contexto",
+    "v8.how.eyebrow":     "Cómo funciona",
+    "v8.how.title":
+      'Tres pasos. Después se queda <span class="serif-italic v8-text-accent">fuera del medio.</span>',
+    "v8.how.sub":
+      "Sin un nuevo chat que aprender. NeuroFS se sitúa entre tu editor y tu modelo, armando el contexto correcto en segundo plano.",
+    "v8.card1.num":       "01 — Describe",
+    "v8.card1.h":         "Cuéntale qué estás haciendo",
+    "v8.card1.p":         "Una frase basta. NeuroFS mapea tu intención a los archivos correctos usando la estructura de tu repo y tus sesiones anteriores.",
+    "v8.card2.num":       "02 — Empaca",
+    "v8.card2.h":         "Se construye un contexto enfocado",
+    "v8.card2.p":         "Los archivos irrelevantes se descartan. Lo que queda es un pack compacto, listo para el modelo, que entra cómodamente en cualquier ventana de contexto.",
+    "v8.card3.num":       "03 — Retoma",
+    "v8.card3.h":         "Continúa donde lo dejaste",
+    "v8.card3.p":         "Un diario persistente preserva qué cambió y por qué. La sesión de mañana arranca con el contexto de ayer — ya cargado.",
+    "v8.footer.ready":    "¿Listo?",
+    "v8.footer.cta":      "Crea tu primera tarea →",
 
     "workspace.h": "Espacio de trabajo",
     "workspace.lead": "Elige una ruta absoluta a un repositorio. La ruta se guarda en <code>localStorage</code>, nunca se envía a ningún sitio más allá de este servidor local.",
@@ -2672,69 +2654,10 @@ document.querySelectorAll(".lang-toggle button[data-lang]").forEach(btn => {
   btn.addEventListener("click", () => applyLang(btn.dataset.lang));
 });
 
-// ---------- how-it-works modal ----------
-
-const landingHowtoEl = document.getElementById("landing-howto");
-const LANDING_STEPS = 3;
-let landingStep = 1;
-let landingLastFocus = null;
-
-function landingSetStep(n) {
-  landingStep = Math.min(LANDING_STEPS, Math.max(1, n));
-  if (!landingHowtoEl) return;
-  landingHowtoEl.querySelectorAll(".landing-modal-step").forEach(el => {
-    el.classList.toggle("landing-modal-step--active", Number(el.dataset.step) === landingStep);
-  });
-  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
-    dot.classList.toggle("landing-modal-dot--active", Number(dot.dataset.goStep) === landingStep);
-  });
-  const prev = landingHowtoEl.querySelector("[data-modal-prev]");
-  const next = landingHowtoEl.querySelector("[data-modal-next]");
-  const finish = landingHowtoEl.querySelector("[data-modal-finish]");
-  if (prev)   prev.hidden   = landingStep === 1;
-  if (next)   next.hidden   = landingStep === LANDING_STEPS;
-  if (finish) finish.hidden = landingStep !== LANDING_STEPS;
-}
-
-function landingOpenHowto() {
-  if (!landingHowtoEl) return;
-  landingLastFocus = document.activeElement;
-  landingHowtoEl.hidden = false;
-  landingHowtoEl.setAttribute("aria-hidden", "false");
-  landingSetStep(1);
-  const firstBtn = landingHowtoEl.querySelector("[data-modal-next], [data-modal-finish], .landing-modal-close");
-  if (firstBtn) firstBtn.focus();
-}
-
-function landingCloseHowto() {
-  if (!landingHowtoEl) return;
-  landingHowtoEl.hidden = true;
-  landingHowtoEl.setAttribute("aria-hidden", "true");
-  if (landingLastFocus && typeof landingLastFocus.focus === "function") landingLastFocus.focus();
-}
-
-const landingHowtoOpenBtn = document.getElementById("landing-howto-open");
-if (landingHowtoOpenBtn) landingHowtoOpenBtn.addEventListener("click", landingOpenHowto);
-
-if (landingHowtoEl) {
-  landingHowtoEl.querySelectorAll("[data-howto-close]").forEach(el => {
-    el.addEventListener("click", landingCloseHowto);
-  });
-  const prevBtn = landingHowtoEl.querySelector("[data-modal-prev]");
-  const nextBtn = landingHowtoEl.querySelector("[data-modal-next]");
-  if (prevBtn) prevBtn.addEventListener("click", () => landingSetStep(landingStep - 1));
-  if (nextBtn) nextBtn.addEventListener("click", () => landingSetStep(landingStep + 1));
-  landingHowtoEl.querySelectorAll(".landing-modal-dot").forEach(dot => {
-    dot.addEventListener("click", () => landingSetStep(Number(dot.dataset.goStep)));
-  });
-  const finishBtn = landingHowtoEl.querySelector("[data-modal-finish]");
-  if (finishBtn) finishBtn.addEventListener("click", landingCloseHowto);
-}
-
-document.addEventListener("keydown", (e) => {
-  if (e.key !== "Escape") return;
-  if (landingHowtoEl && !landingHowtoEl.hidden) landingCloseHowto();
-});
+// The "How it works" modal was retired with the v8 home redesign —
+// the three step cards in the hero now carry that explanation
+// directly, so the click-through dialog and its keyboard handlers
+// are no longer needed.
 
 // ------------------------------ resume (parent-context reuse) ------------------------------
 //

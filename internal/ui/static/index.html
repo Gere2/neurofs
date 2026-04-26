@@ -37,133 +37,113 @@
   <main>
     <!-- ============================ HOME ============================ -->
     <section id="tab-home" class="tab active">
-      <div class="landing">
-        <div class="landing-hero">
-          <div class="landing-eyebrow"><span class="landing-eyebrow-dot" aria-hidden="true">●</span><span data-i18n="landing.eyebrow">Local app — works with Claude &amp; ChatGPT</span></div>
-          <h2 class="landing-title" data-i18n-html="landing.title">Stop <span class="landing-strike">re-explaining</span> your project.<br><span class="landing-accent-word">Continue.</span></h2>
-          <p class="landing-subtitle" data-i18n="landing.subtitle">NeuroFS keeps your work focused, prepares only the context that matters, and helps you continue where you left off.</p>
-          <div class="landing-cta">
-            <button class="primary" data-tab-target="task" data-i18n="landing.ctaPrimary">Start a task</button>
-            <button class="muted-btn landing-cta-back" data-tab-target="journal" data-i18n="landing.ctaSecondary">Continue previous work</button>
-          </div>
-          <button class="landing-howto-link" type="button" id="landing-howto-open" data-i18n="landing.howTo">See how it works</button>
-        </div>
-
-        <div class="landing-cards">
-          <div class="landing-card">
-            <div class="landing-card-number">01</div>
-            <h3 data-i18n="landing.card1.h">Start focused</h3>
-            <p data-i18n="landing.card1.p">Describe what you want to do. NeuroFS finds the files that matter.</p>
-          </div>
-          <div class="landing-card">
-            <div class="landing-card-number">02</div>
-            <h3 data-i18n="landing.card2.h">Save context</h3>
-            <p data-i18n="landing.card2.p">Send less noise to Claude or ChatGPT and keep your prompts lighter.</p>
-          </div>
-          <div class="landing-card">
-            <div class="landing-card-number">03</div>
-            <h3 data-i18n="landing.card3.h">Continue later</h3>
-            <p data-i18n="landing.card3.p">Pick up from previous work without explaining everything again.</p>
-          </div>
-        </div>
-
-        <div class="landing-edu">
-          <div class="landing-edu-side landing-edu-side--before">
-            <div class="landing-edu-label landing-edu-label--before" data-i18n="landing.edu.before">Without NeuroFS</div>
-            <div class="landing-noise-lines" aria-hidden="true">
-              <div class="landing-noise-line" style="width:100%"></div>
-              <div class="landing-noise-line" style="width:88%"></div>
-              <div class="landing-noise-line" style="width:95%"></div>
-              <div class="landing-noise-line landing-noise-line--dim" style="width:70%"></div>
-              <div class="landing-noise-line" style="width:82%"></div>
-              <div class="landing-noise-line landing-noise-line--dim" style="width:60%"></div>
-              <div class="landing-noise-line" style="width:91%"></div>
-              <div class="landing-noise-line landing-noise-line--dim" style="width:45%"></div>
-              <div class="landing-noise-line" style="width:78%"></div>
-              <div class="landing-noise-line landing-noise-line--dim" style="width:55%"></div>
+      <div class="v8-home">
+        <!-- HERO: two-column on wide, stacks on narrow -->
+        <div class="v8-hero">
+          <div class="v8-hero-left">
+            <div class="v8-badge">
+              <span class="v8-badge-pill">
+                <span class="v8-badge-dot" aria-hidden="true"></span>
+                <span data-i18n="v8.badge.beta">OPEN BETA</span>
+              </span>
+              <span class="v8-badge-meta" data-i18n="v8.badge.meta">local · model-agnostic</span>
             </div>
-            <p class="landing-edu-caption" data-i18n="landing.edu.beforeCaption">You paste everything. Most of it is noise.</p>
-          </div>
-          <div class="landing-edu-side landing-edu-side--after">
-            <div class="landing-edu-label landing-edu-label--after" data-i18n="landing.edu.after">With NeuroFS</div>
-            <div class="landing-clean-lines" aria-hidden="true">
-              <div class="landing-clean-line landing-clean-line--active" style="width:80%"></div>
-              <div class="landing-clean-line landing-clean-line--active" style="width:65%"></div>
-              <div class="landing-clean-line landing-clean-line--active" style="width:72%"></div>
-              <div class="landing-clean-line landing-clean-line--dim" style="width:40%"></div>
+
+            <h2 class="v8-hero-title" data-i18n-html="v8.hero.title">Your AI forgot <span class="v8-strike-wrap"><span class="serif-italic v8-muted">everything</span><svg class="v8-strike" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3"/></svg></span>.<br><span class="v8-accent-wrap">Give it <span class="serif-italic">a memory.</span><span class="v8-accent-underline" aria-hidden="true"></span></span></h2>
+
+            <p class="v8-hero-sub" data-i18n="v8.hero.sub">NeuroFS is a persistent context layer for coding agents. It remembers what you worked on, finds only the files that matter, and builds a focused pack — so you stop wasting tokens explaining yourself.</p>
+
+            <div class="v8-cta">
+              <button class="v8-btn v8-btn-primary" data-tab-target="task" data-i18n="v8.cta.primary">Start a task →</button>
+              <button class="v8-btn v8-btn-ghost" data-tab-target="journal" data-i18n="v8.cta.secondary">Continue previous work</button>
             </div>
-            <p class="landing-edu-caption" data-i18n="landing.edu.afterCaption">Only what matters. Focused and lighter.</p>
+
+            <div class="v8-kbd-hint">
+              <kbd>⌘</kbd><kbd>K</kbd>
+              <span data-i18n="v8.kbd.hint">open command bar</span>
+            </div>
+          </div>
+
+          <!-- Side panel: static fake terminal preview -->
+          <aside class="v8-hero-panel" aria-label="NeuroFS live preview">
+            <div class="v8-panel-head">
+              <div class="v8-panel-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              <span class="v8-panel-title">neurofs · live</span>
+              <span></span>
+            </div>
+            <div class="v8-panel-body">
+              <div class="v8-panel-comment"># task</div>
+              <div><span class="v8-panel-prompt">$</span> neurofs task <span class="v8-panel-str">"fix auth refresh"</span></div>
+              <div class="v8-panel-comment"># scanning ...</div>
+              <div class="v8-panel-fg2">↳ indexed <span class="v8-panel-fg">3,847</span> files</div>
+              <div class="v8-panel-fg2">↳ scored relevance <span class="v8-panel-good">✓</span></div>
+              <div class="v8-panel-fg2">↳ kept <span class="v8-panel-accent">5</span> files</div>
+              <div class="v8-panel-comment"># pack</div>
+              <div><span class="v8-panel-arrow">→</span> src/api/client.ts</div>
+              <div><span class="v8-panel-arrow">→</span> src/services/auth.ts</div>
+              <div><span class="v8-panel-arrow">→</span> src/hooks/useAuth.ts</div>
+              <div class="v8-panel-comment">  +2 more …</div>
+              <div class="v8-panel-foot">
+                <span class="v8-panel-muted">1,325 tokens</span>
+                <span class="v8-panel-good">−78% vs full repo</span>
+              </div>
+            </div>
+            <div class="v8-panel-meta">
+              <span><span class="v8-meta-dot" aria-hidden="true"></span>session · 0x9c4f</span>
+              <span data-i18n="v8.panel.fig">fig. 01 — context pack</span>
+            </div>
+          </aside>
+        </div>
+
+        <!-- HOW IT WORKS: 3 step cards in a single bordered grid -->
+        <div class="v8-how">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.how.eyebrow">How it works</div>
+            <h3 class="v8-section-title" data-i18n-html="v8.how.title">Three steps. Then it stays <span class="serif-italic v8-text-accent">out of your way.</span></h3>
+            <p class="v8-section-sub" data-i18n="v8.how.sub">No new chat interface to learn. NeuroFS sits between your editor and your model, building the right context behind the scenes.</p>
+          </div>
+
+          <div class="v8-cards">
+            <div class="v8-card">
+              <div class="v8-card-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3 5h14M3 10h10M3 15h14"/></svg>
+              </div>
+              <div class="v8-card-num" data-i18n="v8.card1.num">01 — Describe</div>
+              <h4 data-i18n="v8.card1.h">Tell it what you're doing</h4>
+              <p data-i18n="v8.card1.p">A sentence is enough. NeuroFS maps your intent to the right files using your repo's structure and your past sessions.</p>
+            </div>
+            <div class="v8-card">
+              <div class="v8-card-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M8 3v14"/></svg>
+              </div>
+              <div class="v8-card-num" data-i18n="v8.card2.num">02 — Pack</div>
+              <h4 data-i18n="v8.card2.h">A focused context is built</h4>
+              <p data-i18n="v8.card2.p">Irrelevant files are dropped. What remains is a compact, model-ready pack that fits comfortably in any context window.</p>
+            </div>
+            <div class="v8-card">
+              <div class="v8-card-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="M10 6v4l2.5 2"/></svg>
+              </div>
+              <div class="v8-card-num" data-i18n="v8.card3.num">03 — Resume</div>
+              <h4 data-i18n="v8.card3.h">Pick up where you left off</h4>
+              <p data-i18n="v8.card3.p">A persistent journal preserves what changed and why. Tomorrow's session starts with yesterday's context — already loaded.</p>
+            </div>
           </div>
         </div>
 
-        <div class="landing-footer-cta">
-          <p data-i18n="landing.footer.ready">Ready?</p>
-          <button class="primary" data-tab-target="task" data-i18n="landing.footer.cta">Create your first task</button>
+        <div class="v8-footer-cta">
+          <p data-i18n="v8.footer.ready">Ready?</p>
+          <button class="v8-btn v8-btn-primary" data-tab-target="task" data-i18n="v8.footer.cta">Create your first task →</button>
         </div>
 
-        <div id="home-stats" class="landing-status" hidden>
+        <div id="home-stats" class="v8-status" hidden>
           <div id="home-stats-body" class="muted"></div>
         </div>
       </div>
 
-      <!-- HOW-IT-WORKS MODAL -->
-      <div class="landing-modal" id="landing-howto" hidden aria-hidden="true">
-        <div class="landing-modal-backdrop" data-howto-close></div>
-        <div class="landing-modal-panel" role="dialog" aria-modal="true" aria-labelledby="landing-howto-title">
-          <button class="landing-modal-close" type="button" data-howto-close aria-label="Close">✕</button>
-          <div class="landing-modal-header">
-            <div class="landing-modal-eyebrow" data-i18n="modal.eyebrow">How it works</div>
-            <h3 id="landing-howto-title" data-i18n="modal.title">Three steps, thirty seconds</h3>
-          </div>
-          <div class="landing-modal-steps">
-            <div class="landing-modal-step landing-modal-step--active" data-step="1">
-              <div class="landing-modal-step-visual landing-modal-step-visual--1">
-                <div class="lmsv-bubble">
-                  <span class="lmsv-dot"></span><span class="lmsv-dot"></span><span class="lmsv-dot"></span>
-                </div>
-                <div class="lmsv-caption" data-i18n="modal.step1.caption">"Fix the login button on mobile"</div>
-              </div>
-              <h4 data-i18n="modal.step1.title">Describe your task</h4>
-              <p data-i18n="modal.step1.body">Write it like you'd tell a teammate. One sentence is enough — no need to list files or paths.</p>
-            </div>
-            <div class="landing-modal-step" data-step="2">
-              <div class="landing-modal-step-visual landing-modal-step-visual--2">
-                <div class="lmsv-funnel">
-                  <div class="lmsv-funnel-top"></div>
-                  <div class="lmsv-funnel-mid"></div>
-                  <div class="lmsv-funnel-out"></div>
-                </div>
-              </div>
-              <h4 data-i18n="modal.step2.title">NeuroFS picks the right files</h4>
-              <p data-i18n="modal.step2.body">It scans your repo, keeps what matters for your task, and leaves the noise out. All local — nothing leaves your machine.</p>
-            </div>
-            <div class="landing-modal-step" data-step="3">
-              <div class="landing-modal-step-visual landing-modal-step-visual--3">
-                <div class="lmsv-paste">
-                  <div class="lmsv-paste-line" style="width:80%"></div>
-                  <div class="lmsv-paste-line" style="width:65%"></div>
-                  <div class="lmsv-paste-line" style="width:72%"></div>
-                  <div class="lmsv-paste-cursor"></div>
-                </div>
-              </div>
-              <h4 data-i18n="modal.step3.title">Paste into Claude or ChatGPT</h4>
-              <p data-i18n="modal.step3.body">Copy the focused bundle and drop it in. Your AI answers faster, with less confusion. Come back tomorrow and continue.</p>
-            </div>
-          </div>
-          <div class="landing-modal-footer">
-            <div class="landing-modal-dots">
-              <span class="landing-modal-dot landing-modal-dot--active" data-go-step="1"></span>
-              <span class="landing-modal-dot" data-go-step="2"></span>
-              <span class="landing-modal-dot" data-go-step="3"></span>
-            </div>
-            <div class="landing-modal-actions">
-              <button class="muted-btn" type="button" data-modal-prev data-i18n="modal.back" hidden>← Back</button>
-              <button class="primary" type="button" data-modal-next data-i18n="modal.next">Next →</button>
-              <button class="primary" type="button" data-tab-target="task" data-modal-finish data-i18n="modal.finish" hidden>Start my first task</button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <!-- The "How it works" modal was retired in the v8 home — the
+           three step cards above carry that explanation directly, so a
+           click-through dialog is no longer warranted. -->
     </section>
 
     <!-- ============================ WORKSPACE ============================ -->
