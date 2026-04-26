@@ -202,6 +202,56 @@
           </div>
         </div>
 
+        <!-- TOKEN REDUCTION SCROLL -->
+        <section class="v8-token-scroll" data-v8-token-scroll aria-labelledby="v8-token-scroll-title">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.tokens.eyebrow">Token economics</div>
+            <h3 class="v8-section-title" id="v8-token-scroll-title" data-i18n-html="v8.tokens.title">From <span class="v8-strike-wrap"><span class="serif-italic v8-muted">28,400 tokens</span><svg class="v8-strike" viewBox="0 0 200 6" preserveAspectRatio="none" aria-hidden="true"><path d="M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3"/></svg></span> to <span class="serif-italic v8-text-accent">just what you need.</span></h3>
+          </div>
+
+          <div class="v8-token-body">
+            <div class="v8-token-viz-wrap">
+              <div class="v8-token-viz">
+                <div class="v8-token-counter">
+                  <span class="v8-token-counter-value" data-token-counter>28,400</span>
+                  <span class="v8-token-counter-unit">tokens</span>
+                </div>
+                <div class="v8-token-grid" data-token-grid aria-hidden="true"></div>
+                <div class="v8-token-bar" aria-hidden="true">
+                  <div class="v8-token-bar-fill" data-token-bar></div>
+                </div>
+                <div class="v8-token-legend">
+                  <span class="v8-token-legend-item"><span class="v8-token-swatch v8-token-swatch-kept"></span><span data-i18n="v8.tokens.kept">kept</span></span>
+                  <span class="v8-token-legend-item"><span class="v8-token-swatch v8-token-swatch-dropped"></span><span data-i18n="v8.tokens.dropped">dropped</span></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="v8-token-steps">
+              <article class="v8-token-step">
+                <div class="v8-token-step-num">01</div>
+                <h4 data-i18n="v8.tokens.s1.h">Full repo</h4>
+                <p data-i18n="v8.tokens.s1.p">Without filtering, every file flows into the model's context. A medium TypeScript repo runs ~28k tokens — most of it filler the model never reads.</p>
+              </article>
+              <article class="v8-token-step">
+                <div class="v8-token-step-num">02</div>
+                <h4 data-i18n="v8.tokens.s2.h">Scan &amp; rank</h4>
+                <p data-i18n="v8.tokens.s2.p">NeuroFS indexes every file and scores it against your task. Semantic relevance, recent edits, and call-graph proximity all weigh in.</p>
+              </article>
+              <article class="v8-token-step">
+                <div class="v8-token-step-num">03</div>
+                <h4 data-i18n="v8.tokens.s3.h">Pack</h4>
+                <p data-i18n="v8.tokens.s3.p">Only the top-ranked files survive. A token budget keeps the pack model-friendly. The rest stays on disk, ready for the next session.</p>
+              </article>
+              <article class="v8-token-step">
+                <div class="v8-token-step-num">04</div>
+                <h4 data-i18n="v8.tokens.s4.h">Result</h4>
+                <p data-i18n="v8.tokens.s4.p">1,325 tokens. 95% smaller. The model sees exactly what it needs — and nothing it doesn't.</p>
+              </article>
+            </div>
+          </div>
+        </section>
+
         <!-- ARCHITECTURE DIAGRAM -->
         <div class="v8-arch">
           <div class="v8-section-head">

@@ -1869,6 +1869,19 @@ const LANDING_DICT = {
     "v8.compare.good3":   "A persistent journal carries decisions forward",
     "v8.compare.good4":   "Token spend tracks the task, not the chat history",
 
+    "v8.tokens.eyebrow":  "Token economics",
+    "v8.tokens.title":    "From <span class=\"v8-strike-wrap\"><span class=\"serif-italic v8-muted\">28,400 tokens</span><svg class=\"v8-strike\" viewBox=\"0 0 200 6\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path d=\"M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3\"/></svg></span> to <span class=\"serif-italic v8-text-accent\">just what you need.</span>",
+    "v8.tokens.kept":     "kept",
+    "v8.tokens.dropped":  "dropped",
+    "v8.tokens.s1.h":     "Full repo",
+    "v8.tokens.s1.p":     "Without filtering, every file flows into the model's context. A medium TypeScript repo runs ~28k tokens — most of it filler the model never reads.",
+    "v8.tokens.s2.h":     "Scan & rank",
+    "v8.tokens.s2.p":     "NeuroFS indexes every file and scores it against your task. Semantic relevance, recent edits, and call-graph proximity all weigh in.",
+    "v8.tokens.s3.h":     "Pack",
+    "v8.tokens.s3.p":     "Only the top-ranked files survive. A token budget keeps the pack model-friendly. The rest stays on disk, ready for the next session.",
+    "v8.tokens.s4.h":     "Result",
+    "v8.tokens.s4.p":     "1,325 tokens. 95% smaller. The model sees exactly what it needs — and nothing it doesn't.",
+
     "v8.arch.eyebrow":    "Architecture",
     "v8.arch.title":      "A thin layer <span class=\"serif-italic v8-text-accent\">between editor and model.</span>",
     "v8.arch.sub":        "NeuroFS runs locally as a CLI and a small HTTP server. It watches your repo, builds packs on demand, and journals each session for the next one.",
@@ -2311,6 +2324,19 @@ const LANDING_DICT = {
     "v8.compare.good2":   "Packs compactos que entran en cualquier ventana de contexto",
     "v8.compare.good3":   "Un diario persistente arrastra las decisiones hacia adelante",
     "v8.compare.good4":   "El gasto en tokens sigue a la tarea, no al historial de chat",
+
+    "v8.tokens.eyebrow":  "Economía de tokens",
+    "v8.tokens.title":    "De <span class=\"v8-strike-wrap\"><span class=\"serif-italic v8-muted\">28,400 tokens</span><svg class=\"v8-strike\" viewBox=\"0 0 200 6\" preserveAspectRatio=\"none\" aria-hidden=\"true\"><path d=\"M2 4 C30 1, 50 5, 80 2.5 S140 4, 170 2 S195 3.5, 198 3\"/></svg></span> a <span class=\"serif-italic v8-text-accent\">solo lo que necesitas.</span>",
+    "v8.tokens.kept":     "conservados",
+    "v8.tokens.dropped":  "descartados",
+    "v8.tokens.s1.h":     "Repo completo",
+    "v8.tokens.s1.p":     "Sin filtrado, cada archivo entra al contexto del modelo. Un repo TypeScript mediano: ~28k tokens — la mayoría relleno que el modelo nunca lee.",
+    "v8.tokens.s2.h":     "Escanea y rankea",
+    "v8.tokens.s2.p":     "NeuroFS indexa cada archivo y lo puntúa contra tu tarea. Relevancia semántica, ediciones recientes y proximidad en el grafo de llamadas pesan en el ranking.",
+    "v8.tokens.s3.h":     "Empaqueta",
+    "v8.tokens.s3.p":     "Solo sobreviven los archivos mejor rankeados. Un presupuesto de tokens mantiene el pack a la medida del modelo. El resto se queda en disco, listo para la próxima sesión.",
+    "v8.tokens.s4.h":     "Resultado",
+    "v8.tokens.s4.p":     "1.325 tokens. 95% más pequeño. El modelo ve exactamente lo que necesita — y nada de lo que no.",
 
     "v8.arch.eyebrow":    "Arquitectura",
     "v8.arch.title":      "Una capa fina <span class=\"serif-italic v8-text-accent\">entre editor y modelo.</span>",
@@ -3102,4 +3128,107 @@ switchTab("home");
       }, 1400);
     });
   }
+})();
+
+// ---------- v8 token reduction scroll ----------
+// Scroll-linked visualization: as the steps section scrolls past the
+// sticky viz, the token counter eases from 28,400 → 1,325 and the
+// 64-cell grid drops most cells, leaving only the "kept" subset.
+// Single rAF-throttled scroll handler, IntersectionObserver gate so we
+// don't recompute when the section is off-screen.
+(function v8TokenScrollInit() {
+  const root = document.querySelector("[data-v8-token-scroll]");
+  if (!root) return;
+  const counter = root.querySelector("[data-token-counter]");
+  const grid    = root.querySelector("[data-token-grid]");
+  const bar     = root.querySelector("[data-token-bar]");
+  const body    = root.querySelector(".v8-token-body");
+  if (!counter || !grid || !bar || !body) return;
+
+  const TOTAL = 64;
+  const KEPT  = 6;
+  const FROM  = 28400;
+  const TO    = 1325;
+  const reduce = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Mark a scattered subset as "kept" — the rest will drop as progress
+  // increases. The pattern is deterministic so the same cells light up
+  // every time the user scrolls back through.
+  const keptIndices = new Set();
+  // Pick KEPT indices with a fixed stride + offset for visual balance.
+  for (let i = 0; i < KEPT; i++) {
+    keptIndices.add(((i * 11 + 3) * 7) % TOTAL);
+  }
+  const cells = [];
+  for (let i = 0; i < TOTAL; i++) {
+    const c = document.createElement("div");
+    c.className = "v8-token-cell";
+    if (keptIndices.has(i)) c.dataset.kept = "1";
+    grid.appendChild(c);
+    cells.push(c);
+  }
+
+  // Order in which non-kept cells get dropped — pseudo-random but
+  // stable, so adjacent cells don't all vanish in one row.
+  const dropOrder = [];
+  for (let i = 0; i < TOTAL; i++) if (!keptIndices.has(i)) dropOrder.push(i);
+  dropOrder.sort((a, b) => ((a * 31 + 7) % 97) - ((b * 31 + 7) % 97));
+
+  const fmt = (n) => Math.round(n).toLocaleString("en-US");
+
+  const apply = (p) => {
+    // Ease the scalar values; the cell drop is already discrete so it
+    // doesn't need easing.
+    const eased = 1 - Math.pow(1 - p, 2);
+    counter.textContent = fmt(FROM + (TO - FROM) * eased);
+    const widthPct = 100 - eased * 95;
+    bar.style.transform = `scaleX(${widthPct / 100})`;
+    const dropCount = Math.round(p * dropOrder.length);
+    for (let i = 0; i < dropOrder.length; i++) {
+      cells[dropOrder[i]].classList.toggle("is-dropped", i < dropCount);
+    }
+  };
+
+  if (reduce) {
+    apply(1);
+    return;
+  }
+
+  let visible = false;
+  let pending = false;
+  const compute = () => {
+    pending = false;
+    if (!visible) return;
+    const rect = body.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    // Progress ramps from when the section's top reaches mid-viewport
+    // to when its bottom leaves mid-viewport. This lines up the four
+    // step articles with a 0→1 sweep.
+    const start = vh * 0.6;
+    const end   = -rect.height + vh * 0.4;
+    const range = start - end;
+    let p = range > 0 ? (start - rect.top) / range : 0;
+    p = Math.max(0, Math.min(1, p));
+    apply(p);
+  };
+  const onScroll = () => {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(compute);
+  };
+
+  if ("IntersectionObserver" in window) {
+    const io = new IntersectionObserver((entries) => {
+      visible = entries[0].isIntersecting;
+      if (visible) compute();
+    }, { rootMargin: "200px 0px" });
+    io.observe(body);
+  } else {
+    visible = true;
+  }
+
+  apply(0);
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
 })();
