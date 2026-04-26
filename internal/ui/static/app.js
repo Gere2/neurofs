@@ -304,7 +304,10 @@ document.querySelectorAll("#mode-pills button").forEach(b => {
   b.addEventListener("click", () => applyMode(b.dataset.mode));
 });
 document.getElementById("q-slug").addEventListener("input", updateRunPreview);
-document.getElementById("q-input").addEventListener("input", updateRunPreview);
+document.getElementById("q-input").addEventListener("input", () => {
+  updateRunPreview();
+  refreshFullPrompt();
+});
 document.getElementById("q-snapshot").addEventListener("input", (e) => {
   // Flag as user-edited so updateRunPreview stops auto-filling it.
   e.target.dataset.touched = "1";
@@ -652,11 +655,35 @@ function fmtTokens(n) {
   return n.toLocaleString();
 }
 
+// Placeholder lines inside mode templates look like
+//   <put the task description here; the user filled "Question" below with a short label>
+// or
+//   <paste the iteration spec here; ...>
+// We strip them at preview time and substitute the actual question, so the
+// model doesn't see two contradictory "task" sections (the placeholder line
+// AND the bundle's own <task> block).
+const TEMPLATE_PLACEHOLDER_RE = /^[ \t]*<[^>]*the user filled "Question"[^>]*>[ \t]*$/m;
+
+function fillTemplatePlaceholder(tpl, question) {
+  if (!tpl) return tpl;
+  const q = (question || "").trim();
+  if (!TEMPLATE_PLACEHOLDER_RE.test(tpl)) return tpl;
+  if (!q) {
+    // No question yet — drop the placeholder line entirely so the model
+    // never sees the literal "<put the task description here>" string.
+    return tpl.replace(TEMPLATE_PLACEHOLDER_RE, "").replace(/\n{3,}/g, "\n\n");
+  }
+  const indented = q.split("\n").map(l => "  " + l).join("\n");
+  return tpl.replace(TEMPLATE_PLACEHOLDER_RE, indented);
+}
+
 // refreshFullPrompt re-renders the preview pane with the current template
 // concatenated in front of the bundle prompt. Invoked on pack success and
 // on template edits so the preview never gets stale.
 function refreshFullPrompt() {
-  const tpl = document.getElementById("q-template").value;
+  const rawTpl = document.getElementById("q-template").value;
+  const question = (document.getElementById("q-input").value || "").trim();
+  const tpl = fillTemplatePlaceholder(rawTpl, question);
   const bundle = state.lastBundlePrompt || "";
   state.lastPrompt = (tpl ? tpl.trimEnd() + "\n\n" : "") + bundle;
   document.getElementById("pack-prompt").textContent = state.lastPrompt;
