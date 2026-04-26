@@ -1904,6 +1904,24 @@ const LANDING_DICT = {
     "v8.install.copied":  "Copied",
     "v8.install.foot":    "Requires Go 1.22+. Binary is ~18 MB. Runs on macOS and Linux.",
 
+    "v8.filter.eyebrow":  "Live demo",
+    "v8.filter.title":    "Type an intent. <span class=\"serif-italic v8-text-accent\">Watch the ranking.</span>",
+    "v8.filter.sub":      "A simplified version of how NeuroFS scores files against your task. The real ranker also weights call-graph proximity and session recency.",
+    "v8.filter.placeholder": "fix the auth flow on login redirect",
+
+    "v8.journal.eyebrow": "Persistent journal",
+    "v8.journal.title":   "Every session is <span class=\"serif-italic v8-text-accent\">remembered.</span>",
+    "v8.journal.sub":     "A local journal records what changed and why. Tomorrow's session resumes with yesterday's context already loaded.",
+    "v8.journal.e1.t":    "Fix auth redirect on token expiry",
+    "v8.journal.e1.tag":  "resolved",
+    "v8.journal.e1.n":    "Refactored the refresh-token guard, added integration test. Pack focused on src/auth/* and src/api/client.ts.",
+    "v8.journal.e2.t":    "Investigate slow journal flush",
+    "v8.journal.e2.tag":  "paused",
+    "v8.journal.e2.n":    "Traced fsync stalls on macOS. Suspected APFS coalescing — picking up tomorrow with profiler attached.",
+    "v8.journal.e3.t":    "Add --rate flag to neurofs task",
+    "v8.journal.e3.tag":  "resolved",
+    "v8.journal.e3.n":    "Wired quality.jsonl logging behind a CLI flag. Compared three weighting strategies before settling on log-decay.",
+
     "workspace.h": "Workspace",
     "workspace.lead": "Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.",
     "workspace.repoPath": "Repo path",
@@ -2359,6 +2377,24 @@ const LANDING_DICT = {
     "v8.install.copy":    "Copiar",
     "v8.install.copied":  "Copiado",
     "v8.install.foot":    "Requiere Go 1.22+. Binario de ~18 MB. Corre en macOS y Linux.",
+
+    "v8.filter.eyebrow":  "Demo en vivo",
+    "v8.filter.title":    "Escribe una intención. <span class=\"serif-italic v8-text-accent\">Mira el ranking.</span>",
+    "v8.filter.sub":      "Una versión simplificada de cómo NeuroFS puntúa archivos contra tu tarea. El ranker real también pesa la proximidad en el grafo de llamadas y la frescura de la sesión.",
+    "v8.filter.placeholder": "arregla el flujo de login con redirect",
+
+    "v8.journal.eyebrow": "Diario persistente",
+    "v8.journal.title":   "Cada sesión <span class=\"serif-italic v8-text-accent\">se recuerda.</span>",
+    "v8.journal.sub":     "Un diario local registra qué cambió y por qué. La sesión de mañana retoma con el contexto de ayer ya cargado.",
+    "v8.journal.e1.t":    "Arregla el redirect de auth al expirar el token",
+    "v8.journal.e1.tag":  "resuelto",
+    "v8.journal.e1.n":    "Refactor del guard de refresh-token, añadido test de integración. Pack enfocado en src/auth/* y src/api/client.ts.",
+    "v8.journal.e2.t":    "Investiga el flush lento del diario",
+    "v8.journal.e2.tag":  "pausado",
+    "v8.journal.e2.n":    "Trazadas pausas de fsync en macOS. Sospecha: coalescencia de APFS — retomo mañana con el profiler enganchado.",
+    "v8.journal.e3.t":    "Añade flag --rate a neurofs task",
+    "v8.journal.e3.tag":  "resuelto",
+    "v8.journal.e3.n":    "Cableado el logging de quality.jsonl detrás de una flag de CLI. Comparé tres estrategias de ponderación antes de quedarme con log-decay.",
 
     "workspace.h": "Espacio de trabajo",
     "workspace.lead": "Elige una ruta absoluta a un repositorio. La ruta se guarda en <code>localStorage</code>, nunca se envía a ningún sitio más allá de este servidor local.",
@@ -3231,4 +3267,116 @@ switchTab("home");
   apply(0);
   window.addEventListener("scroll", onScroll, { passive: true });
   window.addEventListener("resize", onScroll);
+})();
+
+// ---------- v8 filter demo: live ranking ----------
+// Tiny stand-in for the real ranker — every file has a base weight
+// plus a set of tags. Score = base + Σ(tag matches against the query).
+// Top three get their bars filled; the rest dim. The list re-orders
+// in place using the FLIP technique so positional changes animate.
+(function v8FilterInit() {
+  const root  = document.querySelector(".v8-filter-card");
+  if (!root) return;
+  const input = root.querySelector("[data-filter-input]");
+  const list  = root.querySelector("[data-filter-list]");
+  if (!input || !list) return;
+
+  const FILES = [
+    { path: "src/auth/refresh.ts",        base: 0.18, tags: ["auth", "token", "refresh", "login", "redirect"] },
+    { path: "src/auth/session.ts",        base: 0.16, tags: ["auth", "session", "login", "token"] },
+    { path: "src/api/client.ts",          base: 0.22, tags: ["api", "client", "request", "auth"] },
+    { path: "src/hooks/useAuth.ts",       base: 0.14, tags: ["auth", "hook", "react", "login"] },
+    { path: "src/routes/login.tsx",       base: 0.12, tags: ["login", "redirect", "route", "auth"] },
+    { path: "src/utils/storage.ts",       base: 0.20, tags: ["storage", "token", "cache"] },
+    { path: "src/components/Header.tsx",  base: 0.10, tags: ["ui", "header", "nav"] },
+    { path: "src/db/migrations/0042.sql", base: 0.08, tags: ["db", "migration", "schema"] },
+    { path: "tests/auth.test.ts",         base: 0.13, tags: ["auth", "test", "token"] },
+    { path: "src/utils/format.ts",        base: 0.09, tags: ["util", "format"] },
+    { path: "README.md",                  base: 0.07, tags: ["docs"] },
+    { path: "src/state/store.ts",         base: 0.11, tags: ["state", "store", "redux"] },
+  ];
+
+  const reduce = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // Render once with stable per-file <li> nodes so we can FLIP-animate
+  // their positions when the order changes.
+  const nodes = new Map();
+  FILES.forEach((f) => {
+    const li = document.createElement("li");
+    li.className = "v8-filter-item";
+    li.innerHTML = `
+      <div class="v8-filter-rank"></div>
+      <div class="v8-filter-path"></div>
+      <div class="v8-filter-bar"><div class="v8-filter-bar-fill"></div></div>
+      <div class="v8-filter-score"></div>`;
+    li.querySelector(".v8-filter-path").textContent = f.path;
+    list.appendChild(li);
+    nodes.set(f.path, li);
+  });
+
+  const score = (file, query) => {
+    if (!query) return file.base;
+    const q = query.toLowerCase();
+    const terms = q.split(/[^a-z0-9]+/).filter(Boolean);
+    if (!terms.length) return file.base;
+    let s = file.base;
+    terms.forEach((t) => {
+      // Path substring is the strongest signal, matched tags add more.
+      if (file.path.toLowerCase().includes(t)) s += 0.32;
+      file.tags.forEach((tag) => {
+        if (tag === t) s += 0.22;
+        else if (tag.includes(t) || t.includes(tag)) s += 0.10;
+      });
+    });
+    return Math.min(1, s);
+  };
+
+  const rerank = () => {
+    const query = input.value;
+    const scored = FILES
+      .map((f) => ({ f, s: score(f, query) }))
+      .sort((a, b) => b.s - a.s);
+
+    // FLIP: capture current positions before reorder.
+    const first = new Map();
+    if (!reduce) {
+      nodes.forEach((li, path) => { first.set(path, li.getBoundingClientRect().top); });
+    }
+
+    scored.forEach(({ f, s }, idx) => {
+      const li = nodes.get(f.path);
+      list.appendChild(li); // moves li to end → produces sorted order
+      li.querySelector(".v8-filter-rank").textContent = String(idx + 1).padStart(2, "0");
+      li.querySelector(".v8-filter-score").textContent = s.toFixed(2);
+      li.querySelector(".v8-filter-bar-fill").style.transform = `scaleX(${s})`;
+      li.classList.toggle("is-top", idx < 3);
+      li.classList.toggle("is-dim", idx >= 6 && !!query);
+    });
+
+    if (reduce) return;
+    // Invert + Play: animate from old position to new.
+    nodes.forEach((li, path) => {
+      const oldTop = first.get(path);
+      if (oldTop == null) return;
+      const newTop = li.getBoundingClientRect().top;
+      const dy = oldTop - newTop;
+      if (Math.abs(dy) < 0.5) return;
+      li.style.transition = "none";
+      li.style.transform = `translateY(${dy}px)`;
+      // Force reflow, then play forward.
+      // eslint-disable-next-line no-unused-expressions
+      li.offsetHeight;
+      li.style.transition = "transform 320ms ease";
+      li.style.transform = "";
+    });
+  };
+
+  let raf = 0;
+  input.addEventListener("input", () => {
+    if (raf) cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(rerank);
+  });
+
+  rerank();
 })();

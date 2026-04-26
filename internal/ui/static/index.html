@@ -322,6 +322,85 @@
           </div>
         </div>
 
+        <!-- FILTER DEMO -->
+        <div class="v8-filter">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.filter.eyebrow">Live demo</div>
+            <h3 class="v8-section-title" data-i18n-html="v8.filter.title">Type an intent. <span class="serif-italic v8-text-accent">Watch the ranking.</span></h3>
+            <p class="v8-section-sub" data-i18n="v8.filter.sub">A simplified version of how NeuroFS scores files against your task. The real ranker also weights call-graph proximity and session recency.</p>
+          </div>
+          <div class="v8-filter-card">
+            <div class="v8-filter-input-row">
+              <span class="v8-filter-prompt" aria-hidden="true">›</span>
+              <input
+                type="text"
+                class="v8-filter-input"
+                data-filter-input
+                spellcheck="false"
+                autocomplete="off"
+                data-i18n-placeholder="v8.filter.placeholder"
+                placeholder="fix the auth flow on login redirect" />
+            </div>
+            <ol class="v8-filter-list" data-filter-list></ol>
+          </div>
+        </div>
+
+        <!-- JOURNAL PREVIEW -->
+        <div class="v8-journal">
+          <div class="v8-section-head">
+            <div class="v8-eyebrow" data-i18n="v8.journal.eyebrow">Persistent journal</div>
+            <h3 class="v8-section-title" data-i18n-html="v8.journal.title">Every session is <span class="serif-italic v8-text-accent">remembered.</span></h3>
+            <p class="v8-section-sub" data-i18n="v8.journal.sub">A local journal records what changed and why. Tomorrow's session resumes with yesterday's context already loaded.</p>
+          </div>
+          <ol class="v8-journal-list">
+            <li class="v8-journal-entry">
+              <div class="v8-journal-date">
+                <span class="v8-journal-day">26</span>
+                <span class="v8-journal-mon">Apr</span>
+              </div>
+              <div class="v8-journal-body">
+                <div class="v8-journal-title" data-i18n="v8.journal.e1.t">Fix auth redirect on token expiry</div>
+                <div class="v8-journal-meta">
+                  <span><span class="v8-meta-dot" aria-hidden="true"></span>session · 0x9c4f</span>
+                  <span class="v8-mono">5 files · 1,325 tokens</span>
+                  <span class="v8-journal-tag v8-journal-tag-good" data-i18n="v8.journal.e1.tag">resolved</span>
+                </div>
+                <p class="v8-journal-note" data-i18n="v8.journal.e1.n">Refactored the refresh-token guard, added integration test. Pack focused on src/auth/* and src/api/client.ts.</p>
+              </div>
+            </li>
+            <li class="v8-journal-entry">
+              <div class="v8-journal-date">
+                <span class="v8-journal-day">25</span>
+                <span class="v8-journal-mon">Apr</span>
+              </div>
+              <div class="v8-journal-body">
+                <div class="v8-journal-title" data-i18n="v8.journal.e2.t">Investigate slow journal flush</div>
+                <div class="v8-journal-meta">
+                  <span><span class="v8-meta-dot" aria-hidden="true"></span>session · 0x8a12</span>
+                  <span class="v8-mono">3 files · 842 tokens</span>
+                  <span class="v8-journal-tag" data-i18n="v8.journal.e2.tag">paused</span>
+                </div>
+                <p class="v8-journal-note" data-i18n="v8.journal.e2.n">Traced fsync stalls on macOS. Suspected APFS coalescing — picking up tomorrow with profiler attached.</p>
+              </div>
+            </li>
+            <li class="v8-journal-entry">
+              <div class="v8-journal-date">
+                <span class="v8-journal-day">23</span>
+                <span class="v8-journal-mon">Apr</span>
+              </div>
+              <div class="v8-journal-body">
+                <div class="v8-journal-title" data-i18n="v8.journal.e3.t">Add --rate flag to neurofs task</div>
+                <div class="v8-journal-meta">
+                  <span><span class="v8-meta-dot" aria-hidden="true"></span>session · 0x7d51</span>
+                  <span class="v8-mono">7 files · 2,108 tokens</span>
+                  <span class="v8-journal-tag v8-journal-tag-good" data-i18n="v8.journal.e3.tag">resolved</span>
+                </div>
+                <p class="v8-journal-note" data-i18n="v8.journal.e3.n">Wired quality.jsonl logging behind a CLI flag. Compared three weighting strategies before settling on log-decay.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+
         <div class="v8-footer-cta">
           <p data-i18n="v8.footer.ready">Ready?</p>
           <button class="v8-btn v8-btn-primary" data-tab-target="task" data-i18n="v8.footer.cta">Create your first task →</button>
