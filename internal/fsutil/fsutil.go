@@ -16,6 +16,8 @@ var ignoredDirs = map[string]bool{
 	".claude":      true, // Claude Code metadata + ephemeral worktrees under .claude/worktrees/**
 	"audit":        true, // NeuroFS's own audit/{bundles,records,responses,notes} — re-ingesting our outputs poisons ranking
 	".audit":       true,
+	"testdata":     true, // Go convention: testdata/ is fixtures, not the project's own code — ignored by `go build` and should be by ranking too
+	"fixtures":     true,
 	"node_modules": true,
 	"vendor":       true,
 	"dist":         true,
