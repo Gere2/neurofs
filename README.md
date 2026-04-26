@@ -49,14 +49,19 @@ make build
 
 # Or open the local UI (loopback only — nothing leaves your machine)
 ./bin/neurofs ui
+
+# Or expose neurofs as MCP tools to Claude Desktop / Cursor / any MCP host
+./bin/neurofs mcp     # stdio JSON-RPC — wire it as an MCP server
 ```
 
 `neurofs task` writes a paste-ready prompt to stdout and the summary
 (tokens, files, top picks, cache status) to stderr — composes as a Unix
 filter. The UI wraps the same flow plus `scan`, `pack`, `replay`, the
 journal, and global search in one page; it opens at
-<http://127.0.0.1:7777> automatically. The lower-level `neurofs ask` /
-`neurofs pack` commands stay available — see [Commands](#commands).
+<http://127.0.0.1:7777> automatically. `neurofs mcp` exposes the same
+flow as MCP tools so a host LLM can call `neurofs_task` / `neurofs_scan`
+directly. The lower-level `neurofs ask` / `neurofs pack` commands stay
+available — see [Commands](#commands).
 
 ---
 
@@ -160,6 +165,60 @@ neurofs pack "database schema" --out schema.prompt --format json
 | `--changed` | Boost files in `git status`. No-op with a friendly message when the repo is not a git worktree. |
 | `--max-files N` | Cap on files included regardless of budget slack. |
 | `--max-fragments N` | Cap on fragments included regardless of budget slack. |
+
+### `neurofs mcp`
+
+Runs a Model Context Protocol server over stdio (newline-delimited
+JSON-RPC 2.0). Stdout carries protocol traffic; stderr carries logs.
+The server exposes two tools that any MCP host can call:
+
+- **`neurofs_task`** — pack a Claude-ready prompt for a query.
+  Args: `query` (required), `repo` (default: cwd), `budget` (default: 3000).
+- **`neurofs_scan`** — index a repo and return a read-only summary
+  (file count, total size, top extensions). Args: `repo` (default: cwd).
+
+#### Wire it into Claude Desktop
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
+(macOS) and add:
+
+```json
+{
+  "mcpServers": {
+    "neurofs": {
+      "command": "/absolute/path/to/neurofs",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The two tools appear under the 🔌 menu.
+
+#### Wire it into Cursor / any stdio MCP client
+
+Same shape, using the host's MCP server config:
+
+```json
+{
+  "neurofs": {
+    "command": "/absolute/path/to/neurofs",
+    "args": ["mcp"]
+  }
+}
+```
+
+#### Smoke-test the server by hand
+
+```
+printf '%s\n%s\n' \
+  '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' \
+  | neurofs mcp
+```
+
+You should see two JSON-RPC responses: one with `protocolVersion`
+and `serverInfo`, one listing the two tools with their input schemas.
 
 ---
 
