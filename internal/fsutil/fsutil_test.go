@@ -37,7 +37,7 @@ func TestLangForPath(t *testing.T) {
 }
 
 func TestShouldSkipDir(t *testing.T) {
-	skip := []string{"node_modules", ".git", ".neurofs", ".claude", "vendor", "dist", "__pycache__"}
+	skip := []string{"node_modules", ".git", ".neurofs", ".claude", "audit", ".audit", "vendor", "dist", "__pycache__"}
 	keep := []string{"src", "internal", "docs", "tests"}
 
 	for _, d := range skip {
