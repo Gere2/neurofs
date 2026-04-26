@@ -90,3 +90,73 @@ func TestPackPreferSignaturesForLargeFile(t *testing.T) {
 		t.Errorf("PreferSignatures should avoid full_code here, got %s", b.Fragments[0].Representation)
 	}
 }
+
+func TestPackUpgradeWithSlackPromotesSignatureToFullCode(t *testing.T) {
+	// A file sized between aggressiveFullCodeMaxTokens (180) and the upgrade
+	// cap fullCodeMaxTokens (600). PreferSignatures keeps it as a signature
+	// in the first pass; UpgradeWithSlack should promote it to full_code in
+	// the second pass.
+	body := ""
+	for i := 0; i < 50; i++ {
+		body += "// pad pad pad pad pad pad pad\n"
+	}
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:    writeTempFile(t, "biggish.ts", body),
+			RelPath: "src/biggish.ts",
+			Lang:    models.LangTypeScript,
+		},
+		Score: 5.0,
+	}}
+
+	plain, _ := packager.Pack(ranked, "q", packager.Options{
+		Budget:           4000,
+		PreferSignatures: true,
+	})
+	if plain.Fragments[0].Representation == models.RepFullCode {
+		t.Fatalf("baseline: PreferSignatures alone should yield signature, got full_code")
+	}
+
+	upgraded, _ := packager.Pack(ranked, "q", packager.Options{
+		Budget:           4000,
+		PreferSignatures: true,
+		UpgradeWithSlack: true,
+	})
+	if upgraded.Fragments[0].Representation != models.RepFullCode {
+		t.Fatalf("UpgradeWithSlack should promote to full_code when budget allows, got %s",
+			upgraded.Fragments[0].Representation)
+	}
+	if upgraded.Stats.TokensUsed <= plain.Stats.TokensUsed {
+		t.Fatalf("upgraded bundle should consume more budget (%d) than plain (%d)",
+			upgraded.Stats.TokensUsed, plain.Stats.TokensUsed)
+	}
+}
+
+func TestPackUpgradeWithSlackRespectsRemainingBudget(t *testing.T) {
+	// Budget large enough for one signature but NOT for the body upgrade.
+	// The fragment must stay as a signature.
+	body := ""
+	for i := 0; i < 400; i++ {
+		body += "// big body line\n"
+	}
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:    writeTempFile(t, "huge.ts", body),
+			RelPath: "src/huge.ts",
+			Lang:    models.LangTypeScript,
+		},
+		Score: 5.0,
+	}}
+	b, _ := packager.Pack(ranked, "q", packager.Options{
+		Budget:           300,
+		PreferSignatures: true,
+		UpgradeWithSlack: true,
+	})
+	if len(b.Fragments) == 0 {
+		t.Fatalf("expected at least one fragment")
+	}
+	if b.Fragments[0].Representation == models.RepFullCode {
+		t.Errorf("upgrade must not exceed budget — expected signature, got full_code (%d tokens used of %d)",
+			b.Stats.TokensUsed, b.Stats.TokensBudget)
+	}
+}
