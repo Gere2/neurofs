@@ -2770,3 +2770,150 @@ switchTab("home");
     // Silent: the user can still paste a path manually.
   }
 })();
+
+// ────────────────────────── v8 hero animations ──────────────────────────
+//
+// Two pieces, both vanilla, both no-ops if their target element is missing:
+//
+//  1. Canvas background of floating filenames (a subset highlighted in
+//     accent to evoke the "relevant set" the ranker picks).
+//  2. Typewriter chip that prints "task: …" character by character.
+//
+// Both bail out cleanly under prefers-reduced-motion: the canvas does
+// nothing (the hero just shows the static gradient), and the typewriter
+// shows the full text immediately with a steady caret.
+
+(function v8HeroAnimations() {
+  const reduceMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ── HeroBg canvas ────────────────────────────────────────────────────
+  const canvas = document.getElementById("v8-hero-bg");
+  if (canvas && !reduceMotion) {
+    const FILE_NAMES = [
+      "src/index.ts", "package.json", "README.md", "src/utils/helpers.ts",
+      "src/components/App.tsx", ".env.local", "tsconfig.json", "node_modules/",
+      "src/api/client.ts", "tests/unit/auth.test.ts", "src/hooks/useAuth.ts",
+      ".gitignore", "src/styles/global.css", "dist/", "webpack.config.js",
+      "src/types/index.d.ts", "src/pages/Dashboard.tsx", "yarn.lock",
+      "src/services/auth.ts", "src/components/Sidebar.tsx", "public/favicon.ico",
+      "src/context/ThemeProvider.tsx", "docker-compose.yml", "Dockerfile",
+      "src/utils/format.ts", ".eslintrc.js", "src/api/endpoints.ts",
+      "src/components/Modal.tsx", "jest.config.ts", "src/lib/db.ts",
+    ];
+    const RELEVANT = new Set([
+      "src/api/client.ts", "src/hooks/useAuth.ts", "src/services/auth.ts",
+      "src/api/endpoints.ts", "src/types/index.d.ts",
+    ]);
+    // Deterministic positions via a low-discrepancy-ish sprinkle so the
+    // names look scattered but never bunch up.
+    const items = FILE_NAMES.map((name, i) => ({
+      name,
+      x: ((i * 137.5 + 42) % 100) / 100,
+      y: ((i * 91.3  + 84) % 100) / 100,
+      relevant: RELEVANT.has(name),
+      phase: i * 0.12,
+      speed: 0.22 + (i % 5) * 0.06,
+    }));
+
+    const ctx = canvas.getContext("2d");
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let raf = 0;
+
+    const resize = () => {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      // A zero-size hero (e.g. when tab-home is hidden) means there is
+      // nothing to draw — bail without resetting the buffer.
+      if (rect.width <= 0 || rect.height <= 0) return;
+      canvas.width  = rect.width  * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width  = rect.width  + "px";
+      canvas.style.height = rect.height + "px";
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    const start = performance.now();
+    const draw = (now) => {
+      const t = (now - start) / 1000;
+      const w = canvas.width  / dpr;
+      const h = canvas.height / dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.font = '11px "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
+      ctx.textBaseline = "top";
+
+      for (const item of items) {
+        const yOff = Math.sin(t * item.speed + item.phase) * 5;
+        // Relevant items pulse stronger and brighter; the rest stay
+        // close to noise.
+        const pulse = item.relevant
+          ? 0.20 + Math.sin(t * 0.5 + item.phase * 8) * 0.06
+          : 0.04 + Math.sin(t * 0.3 + item.phase * 8) * 0.012;
+        // Vertical fade so the bottom half thins out and the hero text
+        // never has to compete with dense names.
+        const yNorm = (item.y * h + yOff) / h;
+        const vFade = yNorm < 0.5 ? 1 : Math.max(0, 1 - (yNorm - 0.5) / 0.4);
+        ctx.globalAlpha = pulse * vFade;
+        ctx.fillStyle = item.relevant ? "#e8895e" : "#ede8e0";
+        ctx.fillText(item.name, item.x * w, item.y * h + yOff);
+      }
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+
+    // Pause when the home tab is no longer visible — keeps the loop
+    // from burning CPU while the user is in another tab. We re-arm by
+    // observing class changes on tab-home.
+    const homeTab = document.getElementById("tab-home");
+    if (homeTab && "MutationObserver" in window) {
+      let running = true;
+      const obs = new MutationObserver(() => {
+        const visible = homeTab.classList.contains("active");
+        if (visible && !running) {
+          running = true;
+          resize();
+          raf = requestAnimationFrame(draw);
+        } else if (!visible && running) {
+          running = false;
+          cancelAnimationFrame(raf);
+        }
+      });
+      obs.observe(homeTab, { attributes: true, attributeFilter: ["class"] });
+    }
+  }
+
+  // ── Typewriter chip ──────────────────────────────────────────────────
+  const chip = document.getElementById("v8-typing-task");
+  const out  = chip && chip.querySelector("[data-typing-out]");
+  if (chip && out) {
+    const text = chip.dataset.text || out.textContent || "";
+    if (reduceMotion || !text) {
+      out.textContent = text; // already there from server-render fallback
+      return;
+    }
+    out.textContent = "";
+    chip.classList.add("is-typing");
+    let i = 0;
+    let to = 0;
+    const tick = () => {
+      i += 1;
+      out.textContent = text.slice(0, i);
+      if (i >= text.length) {
+        chip.classList.remove("is-typing");
+        return;
+      }
+      // Variable cadence makes the typing feel human instead of a
+      // metronome: spaces and the occasional pause stretch a little.
+      const ch = text[i];
+      const next = ch === " "
+        ? 90 + Math.random() * 50
+        : Math.random() < 0.15
+          ? 130 + Math.random() * 50
+          : 42 + Math.random() * 30;
+      to = window.setTimeout(tick, next);
+    };
+    // Small lead-in so the page settles before typing starts.
+    window.setTimeout(() => { to = window.setTimeout(tick, 80); }, 1500);
+  }
+})();

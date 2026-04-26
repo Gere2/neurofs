@@ -40,6 +40,12 @@
       <div class="v8-home">
         <!-- HERO: two-column on wide, stacks on narrow -->
         <div class="v8-hero">
+          <!-- Animated background: floating filenames, a subset rendered
+               in accent colour to suggest the "relevant" set the ranker
+               picks. Sits behind everything via z-index 0; content lives
+               at z-index 1. JS init lives at the bottom of app.js and is
+               a no-op if the canvas is missing. -->
+          <canvas id="v8-hero-bg" class="v8-hero-bg" aria-hidden="true"></canvas>
           <div class="v8-hero-left">
             <div class="v8-badge">
               <span class="v8-badge-pill">
@@ -61,6 +67,20 @@
             <div class="v8-kbd-hint">
               <kbd>⌘</kbd><kbd>K</kbd>
               <span data-i18n="v8.kbd.hint">open command bar</span>
+            </div>
+
+            <!-- Typewriter chip: the "task" label + a string typed out
+                 character by character. Static fallback text lives in
+                 the data-text attribute so the chip is meaningful even
+                 when JS is disabled or prefers-reduced-motion is on. -->
+            <div id="v8-typing-task" class="v8-typing"
+                 data-text="Fix the auth token refresh logic"
+                 aria-live="polite">
+              <span class="v8-typing-tag" aria-hidden="true">
+                <span class="v8-typing-dot"></span>task
+              </span>
+              <span class="v8-typing-text" data-typing-out>Fix the auth token refresh logic</span>
+              <span class="v8-typing-cursor" aria-hidden="true"></span>
             </div>
           </div>
 
