@@ -455,10 +455,16 @@ the new audit so the causal chain survives on disk. EN/ES i18n.
 single command, with a `(query, budget)` cache. The shared
 `internal/taskflow` package keeps CLI and UI behaviour identical.
 
+**Phase 4 — MCP** *(shipped)*  
+`neurofs mcp` runs a Model Context Protocol server over stdio,
+exposing `neurofs_task` and `neurofs_scan` as tools any MCP host
+(Claude Desktop, Cursor, etc.) can call. JSON-RPC 2.0, no extra
+dependencies, stdout reserved for protocol traffic.
+
 **Next**  
-IDE extension hooks, MCP server, optional semantic indexing via
-embeddings. Hierarchical bundles, progressive expansion, attention
-routing for large context windows.
+IDE extension hooks, optional semantic indexing via embeddings.
+Hierarchical bundles, progressive expansion, attention routing for
+large context windows.
 
 ---
 
