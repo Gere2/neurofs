@@ -1849,6 +1849,26 @@ const LANDING_DICT = {
     "v8.footer.ready":    "Ready?",
     "v8.footer.cta":      "Create your first task →",
 
+    "v8.stat1.label":     "fewer tokens per task",
+    "v8.stat1.sub":       "vs. dumping the full repo",
+    "v8.stat2.label":     "faster context assembly",
+    "v8.stat2.sub":       "scan + pack runs locally in ms",
+    "v8.stat3.label":     "local & model-agnostic",
+    "v8.stat3.sub":       "no data leaves your machine",
+
+    "v8.compare.eyebrow": "Why it matters",
+    "v8.compare.title":   "A coding agent without memory <span class=\"serif-italic v8-text-accent\">re-learns your repo every morning.</span>",
+    "v8.compare.without": "Without NeuroFS",
+    "v8.compare.with":    "With NeuroFS",
+    "v8.compare.bad1":    "You paste the same files into every session",
+    "v8.compare.bad2":    "Half the context window is filler the model never reads",
+    "v8.compare.bad3":    "Yesterday's decisions evaporate at the next chat",
+    "v8.compare.bad4":    "Token bills scale with conversation length, not work done",
+    "v8.compare.good1":   "A sentence of intent → only the files that matter",
+    "v8.compare.good2":   "Compact packs that fit any model's context window",
+    "v8.compare.good3":   "A persistent journal carries decisions forward",
+    "v8.compare.good4":   "Token spend tracks the task, not the chat history",
+
     "workspace.h": "Workspace",
     "workspace.lead": "Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.",
     "workspace.repoPath": "Repo path",
@@ -2249,6 +2269,26 @@ const LANDING_DICT = {
     "v8.card3.p":         "Un diario persistente preserva qué cambió y por qué. La sesión de mañana arranca con el contexto de ayer — ya cargado.",
     "v8.footer.ready":    "¿Listo?",
     "v8.footer.cta":      "Crea tu primera tarea →",
+
+    "v8.stat1.label":     "menos tokens por tarea",
+    "v8.stat1.sub":       "vs. enviar el repo completo",
+    "v8.stat2.label":     "más rápido al armar contexto",
+    "v8.stat2.sub":       "scan + pack se ejecutan local en ms",
+    "v8.stat3.label":     "local y agnóstico al modelo",
+    "v8.stat3.sub":       "ningún dato sale de tu máquina",
+
+    "v8.compare.eyebrow": "Por qué importa",
+    "v8.compare.title":   "Un agente de código sin memoria <span class=\"serif-italic v8-text-accent\">re-aprende tu repo cada mañana.</span>",
+    "v8.compare.without": "Sin NeuroFS",
+    "v8.compare.with":    "Con NeuroFS",
+    "v8.compare.bad1":    "Pegas los mismos archivos en cada sesión",
+    "v8.compare.bad2":    "Media ventana de contexto es relleno que el modelo no lee",
+    "v8.compare.bad3":    "Las decisiones de ayer se evaporan en el próximo chat",
+    "v8.compare.bad4":    "El gasto en tokens crece con la conversación, no con el trabajo",
+    "v8.compare.good1":   "Una frase de intención → solo los archivos que importan",
+    "v8.compare.good2":   "Packs compactos que entran en cualquier ventana de contexto",
+    "v8.compare.good3":   "Un diario persistente arrastra las decisiones hacia adelante",
+    "v8.compare.good4":   "El gasto en tokens sigue a la tarea, no al historial de chat",
 
     "workspace.h": "Espacio de trabajo",
     "workspace.lead": "Elige una ruta absoluta a un repositorio. La ruta se guarda en <code>localStorage</code>, nunca se envía a ningún sitio más allá de este servidor local.",
@@ -2916,4 +2956,58 @@ switchTab("home");
     // Small lead-in so the page settles before typing starts.
     window.setTimeout(() => { to = window.setTimeout(tick, 80); }, 1500);
   }
+})();
+
+// ---------- v8 stats: animated counters ----------
+// Eased count-up triggered when the stats strip first scrolls into view.
+// Respects prefers-reduced-motion: jumps straight to the target value.
+(function v8StatsInit() {
+  const strip = document.querySelector("[data-v8-stats]");
+  if (!strip) return;
+  const items = Array.from(strip.querySelectorAll(".v8-stat-num"));
+  if (!items.length) return;
+
+  const reduce = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const render = (el, value) => {
+    const prefix = el.getAttribute("data-stat-prefix") || "";
+    const suffix = el.getAttribute("data-stat-suffix") || "";
+    el.textContent = prefix + Math.round(value) + suffix;
+  };
+
+  const animate = (el) => {
+    const target = parseFloat(el.getAttribute("data-stat-target") || "0");
+    if (reduce || !Number.isFinite(target)) {
+      render(el, target);
+      return;
+    }
+    const dur = 1100;
+    const t0 = performance.now();
+    const step = (now) => {
+      const t = Math.min(1, (now - t0) / dur);
+      // easeOutCubic — fast start, gentle settle.
+      const eased = 1 - Math.pow(1 - t, 3);
+      render(el, target * eased);
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+
+  if (!("IntersectionObserver" in window)) {
+    items.forEach(animate);
+    return;
+  }
+  const seen = new WeakSet();
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((entry) => {
+      if (!entry.isIntersecting) return;
+      const el = entry.target;
+      if (seen.has(el)) return;
+      seen.add(el);
+      animate(el);
+      io.unobserve(el);
+    });
+  }, { threshold: 0.4 });
+  items.forEach((el) => io.observe(el));
 })();
