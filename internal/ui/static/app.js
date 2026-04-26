@@ -1869,6 +1869,28 @@ const LANDING_DICT = {
     "v8.compare.good3":   "A persistent journal carries decisions forward",
     "v8.compare.good4":   "Token spend tracks the task, not the chat history",
 
+    "v8.arch.eyebrow":    "Architecture",
+    "v8.arch.title":      "A thin layer <span class=\"serif-italic v8-text-accent\">between editor and model.</span>",
+    "v8.arch.sub":        "NeuroFS runs locally as a CLI and a small HTTP server. It watches your repo, builds packs on demand, and journals each session for the next one.",
+    "v8.arch.editor.label": "Editor / Agent",
+    "v8.arch.editor.meta":  "Claude Code · Cursor · CLI",
+    "v8.arch.core.label":   "NeuroFS",
+    "v8.arch.core.meta":    "scan · rank · pack · journal",
+    "v8.arch.model.label":  "Any LLM",
+    "v8.arch.model.meta":   "Claude · GPT · local",
+    "v8.arch.piece1":       "file index",
+    "v8.arch.piece2":       "token budget",
+    "v8.arch.piece3":       "audit trail",
+    "v8.arch.arrow1":       "intent",
+    "v8.arch.arrow2":       "pack",
+    "v8.arch.foot":         "100% on loopback. The model sees the pack, never the repo.",
+
+    "v8.install.eyebrow": "Install",
+    "v8.install.title":   "One command. <span class=\"serif-italic v8-text-accent\">Then keep working.</span>",
+    "v8.install.copy":    "Copy",
+    "v8.install.copied":  "Copied",
+    "v8.install.foot":    "Requires Go 1.22+. Binary is ~18 MB. Runs on macOS and Linux.",
+
     "workspace.h": "Workspace",
     "workspace.lead": "Pick an absolute path to a repo. The path is stored in <code>localStorage</code>, never sent anywhere besides this local server.",
     "workspace.repoPath": "Repo path",
@@ -2289,6 +2311,28 @@ const LANDING_DICT = {
     "v8.compare.good2":   "Packs compactos que entran en cualquier ventana de contexto",
     "v8.compare.good3":   "Un diario persistente arrastra las decisiones hacia adelante",
     "v8.compare.good4":   "El gasto en tokens sigue a la tarea, no al historial de chat",
+
+    "v8.arch.eyebrow":    "Arquitectura",
+    "v8.arch.title":      "Una capa fina <span class=\"serif-italic v8-text-accent\">entre editor y modelo.</span>",
+    "v8.arch.sub":        "NeuroFS corre local como CLI y un pequeño servidor HTTP. Observa tu repo, construye packs bajo demanda y registra cada sesión para la siguiente.",
+    "v8.arch.editor.label": "Editor / Agente",
+    "v8.arch.editor.meta":  "Claude Code · Cursor · CLI",
+    "v8.arch.core.label":   "NeuroFS",
+    "v8.arch.core.meta":    "scan · rank · pack · journal",
+    "v8.arch.model.label":  "Cualquier LLM",
+    "v8.arch.model.meta":   "Claude · GPT · local",
+    "v8.arch.piece1":       "índice de archivos",
+    "v8.arch.piece2":       "presupuesto de tokens",
+    "v8.arch.piece3":       "registro de auditoría",
+    "v8.arch.arrow1":       "intención",
+    "v8.arch.arrow2":       "pack",
+    "v8.arch.foot":         "100% en loopback. El modelo ve el pack, nunca el repo.",
+
+    "v8.install.eyebrow": "Instalación",
+    "v8.install.title":   "Un comando. <span class=\"serif-italic v8-text-accent\">Y a seguir trabajando.</span>",
+    "v8.install.copy":    "Copiar",
+    "v8.install.copied":  "Copiado",
+    "v8.install.foot":    "Requiere Go 1.22+. Binario de ~18 MB. Corre en macOS y Linux.",
 
     "workspace.h": "Espacio de trabajo",
     "workspace.lead": "Elige una ruta absoluta a un repositorio. La ruta se guarda en <code>localStorage</code>, nunca se envía a ningún sitio más allá de este servidor local.",
@@ -3010,4 +3054,52 @@ switchTab("home");
     });
   }, { threshold: 0.4 });
   items.forEach((el) => io.observe(el));
+})();
+
+// ---------- v8 install: tabs + copy-to-clipboard ----------
+(function v8InstallInit() {
+  const card = document.querySelector(".v8-install-card");
+  if (!card) return;
+  const tabs  = Array.from(card.querySelectorAll("[data-install-tab]"));
+  const panes = Array.from(card.querySelectorAll("[data-install-pane]"));
+  const copy  = card.querySelector("[data-install-copy]");
+  if (!tabs.length || !panes.length) return;
+
+  const activate = (key) => {
+    tabs.forEach((t) => {
+      const on = t.getAttribute("data-install-tab") === key;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    panes.forEach((p) => {
+      p.classList.toggle("is-active", p.getAttribute("data-install-pane") === key);
+    });
+  };
+  tabs.forEach((t) => {
+    t.addEventListener("click", () => activate(t.getAttribute("data-install-tab")));
+  });
+
+  if (copy) {
+    const label = copy.querySelector("[data-install-copy-label]") || copy;
+    const original = label.textContent;
+    copy.addEventListener("click", async () => {
+      const pane = card.querySelector(".v8-install-pane.is-active code");
+      if (!pane) return;
+      // The visible $ prompts are decorative — strip them so the user
+      // can paste a runnable command into their shell.
+      const text = pane.textContent.replace(/^\s*\$\s?/gm, "").trim();
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        return;
+      }
+      copy.classList.add("is-copied");
+      const copiedKey = (window.NEUROFS_I18N && window.NEUROFS_I18N["v8.install.copied"]) || "Copied";
+      label.textContent = copiedKey;
+      window.setTimeout(() => {
+        copy.classList.remove("is-copied");
+        label.textContent = original;
+      }, 1400);
+    });
+  }
 })();
