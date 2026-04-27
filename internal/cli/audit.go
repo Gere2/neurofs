@@ -333,6 +333,8 @@ func rebuildBundle(cfg *config.Config, query string, budget int, focus string, c
 		MaxFiles:         maxFiles,
 		MaxFragments:     maxFragments,
 		PreferSignatures: true, // replay always treats bundles as Claude-shaped
+		UpgradeWithSlack: true, // match taskflow.Run so replay reflects what task would emit today
+		QueryTerms:       ranking.Tokenise(query),
 	})
 }
 

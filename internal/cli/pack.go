@@ -98,6 +98,14 @@ Examples:
 				MaxFiles:         maxFiles,
 				MaxFragments:     maxFragments,
 				PreferSignatures: preferSig,
+				// Slack-fill is always desirable: without it, --for claude
+				// regularly produced bundles that used <30 % of the budget
+				// (top files clipped to signatures, no second pass to
+				// promote them back). See packager.Pack second-pass loop.
+				UpgradeWithSlack: true,
+				// Query terms unlock sub-file excerpts on the top-ranked
+				// TS/JS/Python files (see packager/excerpt.go).
+				QueryTerms: ranking.Tokenise(query),
 			})
 			if err != nil {
 				return fmt.Errorf("pack: %w", err)
