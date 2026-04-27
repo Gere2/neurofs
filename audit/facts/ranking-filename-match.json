@@ -1,0 +1,8 @@
+{
+  "question": "How does the ranker score filename matches and how is that weight defined?",
+  "expects_facts": [
+    "weightFilename",
+    "filename_match",
+    "scoreFile"
+  ]
+}

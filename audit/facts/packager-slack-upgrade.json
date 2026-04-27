@@ -1,0 +1,8 @@
+{
+  "question": "What does UpgradeWithSlack do in the packager and what is the upgrade cap?",
+  "expects_facts": [
+    "UpgradeWithSlack",
+    "upgradeCandidate",
+    "fullCodeMaxTokens"
+  ]
+}
