@@ -97,7 +97,12 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 			// guard so first-run users get an actionable message
 			// instead of a wrapped storage error), and the empty
 			// fixture set (handled inside EvaluateG3 as SKIP).
+			//
+			// g3Details carries per-fixture results out of the switch
+			// so the human render can show which fixture failed and
+			// what facts it missed; the JSON path also includes them.
 			var g3 gate.Criterion
+			var g3Details []gate.FactResult
 			switch {
 			case skipFixtures:
 				g3 = gate.Criterion{
@@ -120,8 +125,8 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 				if maxFixtures > 0 && len(fixtures) > maxFixtures {
 					fixtures = fixtures[:maxFixtures]
 				}
-				results := runFixtures(cfg.RepoRoot, fixtures, fixtureBudg)
-				g3 = gate.EvaluateG3(results, gate.DefaultG3Thresholds())
+				g3Details = runFixtures(cfg.RepoRoot, fixtures, fixtureBudg)
+				g3 = gate.EvaluateG3(g3Details, gate.DefaultG3Thresholds())
 			}
 
 			// G2 post-processing depends on G3 outcome.
@@ -142,7 +147,8 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 			}
 
 			report := gate.Report{
-				Criteria: []gate.Criterion{g1, g2, g3, g4, g5},
+				Criteria:  []gate.Criterion{g1, g2, g3, g4, g5},
+				G3Details: g3Details,
 			}
 			report.Overall = gate.Aggregate(report.Criteria)
 

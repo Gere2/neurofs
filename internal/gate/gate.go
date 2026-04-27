@@ -67,9 +67,18 @@ type Criterion struct {
 // Report bundles the per-criterion verdicts and the overall verdict. It
 // is JSON-serialisable so callers can pipe `neurofs gate --json` into
 // other tooling without re-implementing the schema here.
+//
+// G3Details, when populated by the CLI, carries the per-fixture
+// FactResults so the human render can show which fixture is dragging
+// the aggregate down (and which facts went missing). The aggregate
+// Criterion alone is too coarse for diagnosis: "mean recall 67%" tells
+// you something is wrong but not what to fix. JSON consumers always
+// see the full slice; the human render filters to imperfect/errored
+// fixtures only.
 type Report struct {
-	Criteria []Criterion `json:"criteria"`
-	Overall  Verdict     `json:"overall"`
+	Criteria  []Criterion  `json:"criteria"`
+	Overall   Verdict      `json:"overall"`
+	G3Details []FactResult `json:"g3_details,omitempty"`
 }
 
 // G1Thresholds parameterises the real-use signal. Defaults: 10 rated
@@ -348,18 +357,83 @@ func Aggregate(crits []Criterion) Verdict {
 	}
 }
 
+// renderMaxMissing caps how many missing facts we print per fixture.
+// Three is enough to give the operator a concrete starting point for
+// investigation; more than that crowds the terminal and the JSON path
+// already has the full list for anyone who wants to see all of them.
+const renderMaxMissing = 3
+
 // Render writes the report as a human-readable table. JSON output is
 // the caller's job (just json.Marshal the Report). Two columns: ID/Name
-// and Verdict; one detail line per criterion; one Overall line at the
-// bottom. Designed for terminals; no colours or unicode beyond ASCII.
+// and Verdict; one detail line per criterion; an optional per-fixture
+// breakdown for G3 when any fixture is imperfect or errored; one
+// Overall line at the bottom. Designed for terminals; no colours or
+// unicode beyond ASCII.
 func Render(w io.Writer, r Report) {
 	fmt.Fprintln(w, "NeuroFS — pivot-readiness gate")
 	fmt.Fprintln(w)
 	for _, c := range r.Criteria {
 		fmt.Fprintf(w, "  %-2s  %-22s %-4s  %s\n", c.ID, c.Name, string(c.Verdict), c.Detail)
 	}
+	renderG3FixtureDetail(w, r.G3Details)
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  Overall: %s\n", string(r.Overall))
+}
+
+// renderG3FixtureDetail prints one line per imperfect or errored
+// fixture so the operator can see which fixture is dragging the
+// aggregate. Perfect fixtures (recall >= 0.999) are skipped — when
+// every fixture is perfect there is nothing actionable to show, and
+// listing them anyway would just add noise.
+//
+// Format:
+//
+//	G3 imperfect fixtures:
+//	  [ 67%] "How does the ranker score filename matches and ..." — missing: filename_match
+//	  [error] "broken question" — taskflow: open index: foo
+func renderG3FixtureDetail(w io.Writer, results []FactResult) {
+	if len(results) == 0 {
+		return
+	}
+	imperfect := make([]FactResult, 0, len(results))
+	for _, r := range results {
+		if r.Error != "" || r.Recall < 0.999 {
+			imperfect = append(imperfect, r)
+		}
+	}
+	if len(imperfect) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  G3 imperfect fixtures:")
+	for _, r := range imperfect {
+		q := truncate(r.Fixture.Question, 60)
+		if r.Error != "" {
+			fmt.Fprintf(w, "    [error] %q — %s\n", q, r.Error)
+			continue
+		}
+		fmt.Fprintf(w, "    [%3.0f%%] %q%s\n",
+			r.Recall*100, q, formatMisses(r.Misses))
+	}
+}
+
+// formatMisses returns " — missing: a, b, c" or " — missing: a, b, c (+N more)",
+// or "" when there is nothing to show. The cap mirrors renderMaxMissing.
+func formatMisses(misses []string) string {
+	if len(misses) == 0 {
+		return ""
+	}
+	shown := misses
+	extra := 0
+	if len(shown) > renderMaxMissing {
+		extra = len(shown) - renderMaxMissing
+		shown = shown[:renderMaxMissing]
+	}
+	out := " — missing: " + strings.Join(shown, ", ")
+	if extra > 0 {
+		out += fmt.Sprintf(" (+%d more)", extra)
+	}
+	return out
 }
 
 // percentile returns the p-percentile of a sorted ascending slice using

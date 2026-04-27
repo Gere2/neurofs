@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -335,6 +336,136 @@ func TestLoadBundleSnapshots_ParsesStatsAndIgnoresJunk(t *testing.T) {
 	}
 	if got[0].Used != 800 || got[0].Budget != 4000 {
 		t.Errorf("snapshot fields wrong: %+v", got[0])
+	}
+}
+
+// ─── Render: per-fixture G3 detail ────────────────────────────────────
+
+func TestRender_PerFixtureDetailShownForImperfect(t *testing.T) {
+	r := Report{
+		Criteria: []Criterion{
+			{ID: "G3", Name: "Fact recovery", Verdict: Fail, Detail: "mean recall 67%"},
+		},
+		Overall: Fail,
+		G3Details: []FactResult{
+			{
+				Fixture: Fixture{Question: "Why does the ranker pick utils.py?"},
+				Recall:  0.6666,
+				Hits:    []string{"weightFilename"},
+				Misses:  []string{"filename_match", "scoreFile"},
+			},
+			{
+				Fixture: Fixture{Question: "perfect query"},
+				Recall:  1.0,
+				Hits:    []string{"a", "b"},
+				Misses:  nil,
+			},
+		},
+	}
+	var buf bytes.Buffer
+	Render(&buf, r)
+	out := buf.String()
+
+	// Imperfect fixture must appear with recall and missing facts.
+	if !strings.Contains(out, "G3 imperfect fixtures:") {
+		t.Errorf("missing detail header:\n%s", out)
+	}
+	if !strings.Contains(out, "[ 67%]") {
+		t.Errorf("missing recall percentage:\n%s", out)
+	}
+	if !strings.Contains(out, "Why does the ranker pick utils.py?") {
+		t.Errorf("missing fixture question:\n%s", out)
+	}
+	if !strings.Contains(out, "missing: filename_match, scoreFile") {
+		t.Errorf("missing facts not listed:\n%s", out)
+	}
+	// Perfect fixture must NOT appear in the imperfect section.
+	if strings.Contains(out, "perfect query") {
+		t.Errorf("perfect fixture should be hidden from the imperfect section:\n%s", out)
+	}
+}
+
+func TestRender_PerFixtureDetailCapsMissingAtThree(t *testing.T) {
+	r := Report{
+		Criteria: []Criterion{{ID: "G3", Verdict: Fail}},
+		Overall:  Fail,
+		G3Details: []FactResult{{
+			Fixture: Fixture{Question: "many misses"},
+			Recall:  0.2,
+			Misses:  []string{"a", "b", "c", "d", "e"},
+		}},
+	}
+	var buf bytes.Buffer
+	Render(&buf, r)
+	out := buf.String()
+
+	if !strings.Contains(out, "missing: a, b, c") {
+		t.Errorf("expected first 3 misses, got:\n%s", out)
+	}
+	if !strings.Contains(out, "(+2 more)") {
+		t.Errorf("expected overflow marker for extra misses:\n%s", out)
+	}
+	for _, leak := range []string{", d", ", e"} {
+		if strings.Contains(out, leak) {
+			t.Errorf("expected NOT to print fact %q (over the cap):\n%s", leak, out)
+		}
+	}
+}
+
+func TestRender_PerFixtureDetailShowsErrors(t *testing.T) {
+	r := Report{
+		Criteria: []Criterion{{ID: "G3", Verdict: Fail}},
+		Overall:  Fail,
+		G3Details: []FactResult{{
+			Fixture: Fixture{Question: "broken fixture"},
+			Recall:  0.0,
+			Error:   "taskflow: open index: file not found",
+		}},
+	}
+	var buf bytes.Buffer
+	Render(&buf, r)
+	out := buf.String()
+
+	if !strings.Contains(out, "[error]") {
+		t.Errorf("expected [error] tag for errored fixture:\n%s", out)
+	}
+	if !strings.Contains(out, "broken fixture") {
+		t.Errorf("expected fixture question:\n%s", out)
+	}
+	if !strings.Contains(out, "taskflow: open index: file not found") {
+		t.Errorf("expected error message inline:\n%s", out)
+	}
+}
+
+func TestRender_NoG3DetailSectionWhenAllPerfect(t *testing.T) {
+	r := Report{
+		Criteria: []Criterion{{ID: "G3", Verdict: Pass}},
+		Overall:  Pass,
+		G3Details: []FactResult{
+			{Fixture: Fixture{Question: "q1"}, Recall: 1.0},
+			{Fixture: Fixture{Question: "q2"}, Recall: 1.0},
+		},
+	}
+	var buf bytes.Buffer
+	Render(&buf, r)
+	out := buf.String()
+
+	if strings.Contains(out, "G3 imperfect fixtures:") {
+		t.Errorf("perfect run should not print the imperfect section:\n%s", out)
+	}
+}
+
+func TestRender_NoG3DetailSectionWhenSkipped(t *testing.T) {
+	// G3 SKIP via --skip-fixtures or missing index → CLI does not
+	// populate G3Details. Render must not emit a stray empty section.
+	r := Report{
+		Criteria: []Criterion{{ID: "G3", Verdict: Skip}},
+		Overall:  Skip,
+	}
+	var buf bytes.Buffer
+	Render(&buf, r)
+	if strings.Contains(buf.String(), "G3 imperfect fixtures:") {
+		t.Errorf("skipped G3 must not print the imperfect section")
 	}
 }
 
