@@ -1,0 +1,9 @@
+{
+  "question": "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?",
+  "expects_facts": [
+    "RepExcerpt",
+    "selectFragment",
+    "excerptTopN",
+    "PreferSignatures"
+  ]
+}

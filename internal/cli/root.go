@@ -26,6 +26,7 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newStatsCmd())
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newAuditCmd())
+	root.AddCommand(newGateCmd())
 	root.AddCommand(newUICmd())
 	root.AddCommand(newMcpCmd())
 

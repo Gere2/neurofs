@@ -49,16 +49,25 @@ const (
 // signature or a structural note even when the budget could fit it verbatim.
 //
 // UpgradeWithSlack enables a second pass that, after the initial pack, walks
-// fragments in score order and promotes signatures to full_code whenever the
-// remaining budget can absorb the delta. Without it, a Strategy-shaped pack
-// can leave 80%+ of the budget unused while every top file shows up as a
-// 30-token signature.
+// fragments in score order and promotes signatures (or excerpts) to full_code
+// whenever the remaining budget can absorb the delta. Without it, a
+// Strategy-shaped pack can leave 80%+ of the budget unused while every top
+// file shows up as a 30-token signature.
+//
+// QueryTerms enables sub-file extraction for the top excerptTopN ranked
+// files. When non-nil and non-empty, oversized TS/JS/Python files at the
+// top of the rank can be represented as RepExcerpt — just the symbol bodies
+// the query is asking about, with the rest elided. Pass
+// ranking.Tokenise(query) here so the packager sees the same terms the
+// ranker scored against. Leaving it empty disables excerpts entirely (older
+// callers stay on the previous full ↔ signature ↔ structural_note chain).
 type Options struct {
 	Budget           int
 	MaxFiles         int
 	MaxFragments     int
 	PreferSignatures bool
 	UpgradeWithSlack bool
+	QueryTerms       []string
 }
 
 // upgradeCandidate holds the per-fragment data we need for the optional
@@ -77,6 +86,7 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 	var fragments []models.ContextFragment
 	var upgrades []upgradeCandidate
 	totalRawTokens := 0
+	rankPos := 0 // position among files that pass the score gate, used to gate excerpts
 
 	for _, sf := range ranked {
 		if sf.Score < minScore {
@@ -94,13 +104,17 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 
 		content, err := os.ReadFile(sf.Record.Path)
 		if err != nil {
+			rankPos++ // count the slot — a top-3 file that fails to read should not move the gate down
 			continue
 		}
 
 		rawTokens := tokenbudget.EstimateTokens(string(content))
 		totalRawTokens += rawTokens
 
-		frag := selectFragment(sf, string(content), rawTokens, budget, opts)
+		tryExcerpt := rankPos < excerptTopN && len(opts.QueryTerms) > 0
+		rankPos++
+
+		frag := selectFragment(sf, string(content), rawTokens, budget, opts, tryExcerpt)
 		if frag == nil {
 			continue // nothing fits even as a structural note
 		}
@@ -108,7 +122,8 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 		budget.Consume(frag.Tokens)
 		fragments = append(fragments, *frag)
 
-		if opts.UpgradeWithSlack && frag.Representation == models.RepSignature {
+		if opts.UpgradeWithSlack &&
+			(frag.Representation == models.RepSignature || frag.Representation == models.RepExcerpt) {
 			upgrades = append(upgrades, upgradeCandidate{
 				idx:     len(fragments) - 1,
 				path:    sf.Record.Path,
@@ -163,7 +178,12 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 
 // selectFragment decides the best representation for a scored file given the
 // remaining budget, trying from most informative to least.
-func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget *tokenbudget.Manager, opts Options) *models.ContextFragment {
+//
+// tryExcerpt is set by Pack only for the top excerptTopN ranked files when
+// the caller supplied query terms. The excerpt option slots BETWEEN
+// full_code and signature: we prefer a full body when small, and never
+// substitute an excerpt for a file that would have fit fully anyway.
+func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget *tokenbudget.Manager, opts Options, tryExcerpt bool) *models.ContextFragment {
 	base := &models.ContextFragment{
 		RelPath: sf.Record.RelPath,
 		Lang:    sf.Record.Lang,
@@ -185,7 +205,27 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 		return &f
 	}
 
-	// Option 2: signature — compact interface view.
+	// Option 2: excerpt — top-ranked TS/JS/Python files where the query
+	// names symbols that actually exist in the file. This is the
+	// granular middle ground between "full body" and "names only".
+	if tryExcerpt && isExcerptLang(sf.Record.Lang) {
+		if exc, ok := extractExcerpt(sf.Record, content, opts.QueryTerms); ok {
+			excTokens := tokenbudget.EstimateTokens(exc)
+			// Skip when (a) the excerpt is too small to be useful, (b) it
+			// blew past the per-fragment cap (better to fall to signature
+			// + slack-fill upgrades elsewhere), or (c) it would not fit
+			// the remaining budget right now.
+			if excTokens > 0 && excTokens <= excerptMaxTokens && budget.CanFit(excTokens) {
+				f := *base
+				f.Representation = models.RepExcerpt
+				f.Content = exc
+				f.Tokens = excTokens
+				return &f
+			}
+		}
+	}
+
+	// Option 3: signature — compact interface view.
 	sig := buildSignature(sf, content)
 	sig = capSignature(sig, signatureMaxTokens)
 	sigTokens := tokenbudget.EstimateTokens(sig)
@@ -197,7 +237,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 		return &f
 	}
 
-	// Option 3: structural note — absolute minimum, just metadata.
+	// Option 4: structural note — absolute minimum, just metadata.
 	note := buildStructuralNote(sf)
 	noteTokens := tokenbudget.EstimateTokens(note)
 	if noteTokens > 0 && budget.CanFit(noteTokens) {

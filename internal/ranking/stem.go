@@ -91,3 +91,20 @@ func anyContainsReverse(haystacks []string, needle string) bool {
 	}
 	return false
 }
+
+// Stem and TermVariants are exported wrappers so other packages (notably
+// internal/packager when extracting sub-file excerpts) can reuse the exact
+// normalisation the ranker applies to query terms. Keeping the rule set
+// behind a single implementation prevents the two layers from drifting:
+// if the ranker considers "rendering" → "render" the same identifier,
+// excerpt extraction must too, otherwise a top-ranked file would produce
+// a signature instead of an excerpt for a query the ranker matched.
+//
+// We expose wrappers (rather than renaming the package-private originals)
+// to keep all existing intra-package call sites untouched. The wrappers
+// have no logic of their own — they exist solely as a stable public API.
+func Stem(w string) string { return stemWord(w) }
+
+// TermVariants is the public form of the package-internal termVariants. See
+// Stem for the rationale.
+func TermVariants(term string) []string { return termVariants(term) }

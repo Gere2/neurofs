@@ -75,7 +75,16 @@ Run 'neurofs scan' first to build the index.`,
 				Project: loadProjectInfo(db),
 			})
 
-			bundle, err := packager.Pack(ranked, query, packager.Options{Budget: budget})
+			bundle, err := packager.Pack(ranked, query, packager.Options{
+				Budget: budget,
+				// ask is the inspection surface — slack-fill never hurts
+				// readability and prevents the "10 % budget used" surprise.
+				UpgradeWithSlack: true,
+				// Excerpts on top-ranked TS/JS/Python files when the query
+				// names symbols. ask shows representations explicitly so
+				// the new "excerpt" rep is visible in the breakdown.
+				QueryTerms: ranking.Tokenise(query),
+			})
 			if err != nil {
 				return fmt.Errorf("ask: pack: %w", err)
 			}

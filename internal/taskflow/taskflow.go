@@ -242,6 +242,10 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 		Budget:           budget,
 		PreferSignatures: true,
 		UpgradeWithSlack: true,
+		// Same terms the ranker used; lets the packager extract just the
+		// symbol bodies the query is actually asking about for the top
+		// few files instead of forcing all-or-nothing per file.
+		QueryTerms: ranking.Tokenise(query),
 	})
 	if err != nil {
 		return fmt.Errorf("pack: %w", err)

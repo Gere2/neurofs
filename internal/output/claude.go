@@ -93,7 +93,15 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 	p("<instructions>\n")
 	p("- Treat the files above as the only source of truth.\n")
 	p("- When you make a claim about the code, cite it as `path:line`.\n")
-	p("- If a fragment is shown as a `signature` or `structural_note`, do not assume the body — ask for it.\n")
+	// Excerpt-aware guidance. The order is intentional: the strongest
+	// "do not hallucinate" instruction comes first (excerpt is a partial
+	// view), then the generic "ask if you need more" instruction folds
+	// excerpt in with the older partial-representation kinds. Without
+	// this, models receiving rep="excerpt" routinely treat the visible
+	// blocks as the entire file and over-confidently assert what the
+	// elided lines do or do not contain.
+	p("- If a fragment is shown as `excerpt`, it is a partial view of that file; do not assume unseen code.\n")
+	p("- If a fragment is shown as `signature`, `structural_note`, or `excerpt` and you need more detail, ask for the full file or a wider excerpt.\n")
 	p("- If anything you need is missing, say which path you want expanded instead of guessing.\n")
 	p("</instructions>\n")
 

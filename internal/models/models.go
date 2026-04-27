@@ -44,6 +44,12 @@ type Representation string
 const (
 	// RepFullCode includes the complete file content.
 	RepFullCode Representation = "full_code"
+	// RepExcerpt includes a subset of a file — the symbol blocks (functions,
+	// classes, methods) whose names lexically match the query, with the rest
+	// elided behind `// ... N lines omitted ...` markers. Used for top-ranked
+	// files that are too large for full_code but where a signature would
+	// throw away the very bodies the query is asking about.
+	RepExcerpt Representation = "excerpt"
 	// RepSignature includes only symbol signatures.
 	RepSignature Representation = "signature"
 	// RepStructuralNote includes path, size, symbols, and imports as metadata.
