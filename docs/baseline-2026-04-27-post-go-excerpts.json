@@ -1,0 +1,49 @@
+{
+  "criteria": [
+    {
+      "id": "G1",
+      "name": "Real-use signal",
+      "verdict": "SKIP",
+      "detail": "no rated entries yet — run `neurofs task --rate` to produce them"
+    },
+    {
+      "id": "G2",
+      "name": "Budget discipline",
+      "verdict": "PASS",
+      "detail": "4 bundles, no overshoot; median utilisation 31%, p95 81%",
+      "numbers": {
+        "bundles": 4,
+        "median_util": 0.30833333333333335,
+        "overshoots": 0,
+        "p95_util": 0.8077272727272727
+      }
+    },
+    {
+      "id": "G3",
+      "name": "Fact recovery",
+      "verdict": "PASS",
+      "detail": "mean recall 81% over 3 fixtures (threshold 80%); 1 perfect",
+      "numbers": {
+        "failed": 0,
+        "fixtures": 3,
+        "mean_recall": 0.8055555555555555,
+        "min_recall": 0.8,
+        "perfect": 1,
+        "worst_recall": 0.6666666666666666
+      }
+    },
+    {
+      "id": "G4",
+      "name": "Replay drift",
+      "verdict": "SKIP",
+      "detail": "manual: `audit replay --bundle X --response Y`; automation deferred to a later iteration"
+    },
+    {
+      "id": "G5",
+      "name": "Cross-shape sanity",
+      "verdict": "SKIP",
+      "detail": "manual: re-run gate on a Go service, a TS frontend, and a Python lib"
+    }
+  ],
+  "overall": "PASS"
+}

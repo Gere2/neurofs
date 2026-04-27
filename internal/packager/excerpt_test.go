@@ -158,14 +158,15 @@ func TestExtractExcerpt_NoMatchReturnsFalse(t *testing.T) {
 }
 
 func TestExtractExcerpt_UnsupportedLangReturnsFalse(t *testing.T) {
-	content := "func Foo() {}\n"
-	r := rec("src/foo.go", models.LangGo,
-		models.Symbol{Name: "Foo", Kind: "func", Line: 1},
+	// JSON / YAML / Markdown / unknown have no scope walker — the
+	// extractor must reject cleanly so the caller falls back to
+	// signature, not to broken code.
+	content := "{ \"foo\": 1 }\n"
+	r := rec("src/data.json", models.LangJSON,
+		models.Symbol{Name: "foo", Kind: "key", Line: 1},
 	)
-	// Go is intentionally out of scope for v1 — would need go/ast to do
-	// it well. extractExcerpt must not silently misbehave.
 	if _, ok := extractExcerpt(r, content, []string{"foo"}); ok {
-		t.Errorf("Go is not yet supported for excerpts; expected ok=false")
+		t.Errorf("JSON is not supported for excerpts; expected ok=false")
 	}
 }
 

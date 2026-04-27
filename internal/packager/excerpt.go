@@ -47,11 +47,12 @@ type block struct {
 }
 
 // isExcerptLang reports whether sub-file extraction is supported for lang.
-// Kept narrow on purpose; widening it should be paired with a block walker
-// that respects the language's actual scoping rules.
+// Each supported language has its own walker matched to its actual scoping
+// rules — no language gets a generic fallback because broken excerpts
+// would be worse than the signature representation we already have.
 func isExcerptLang(lang models.Lang) bool {
 	switch lang {
-	case models.LangTypeScript, models.LangJavaScript, models.LangPython:
+	case models.LangTypeScript, models.LangJavaScript, models.LangPython, models.LangGo:
 		return true
 	}
 	return false
@@ -67,13 +68,25 @@ func isExcerptLang(lang models.Lang) bool {
 // reading the prompt always knows which lines it has and which it does
 // not.
 func extractExcerpt(rec models.FileRecord, content string, terms []string) (string, bool) {
-	if len(terms) == 0 || len(rec.Symbols) == 0 || strings.TrimSpace(content) == "" {
+	if len(terms) == 0 || strings.TrimSpace(content) == "" {
 		return "", false
 	}
 	if !isExcerptLang(rec.Lang) {
 		return "", false
 	}
 
+	// Go has its own AST-based path because go/parser gives us exact line
+	// ranges AND lets us discover struct field names that the regex
+	// parser does not expose as symbols. Without this branch, queries
+	// like "UpgradeWithSlack" or "PreferSignatures" miss every Go file
+	// because rec.Symbols never contains struct field names.
+	if rec.Lang == models.LangGo {
+		return extractGoExcerpt(rec, content, terms)
+	}
+
+	if len(rec.Symbols) == 0 {
+		return "", false
+	}
 	matched := matchingSymbols(rec.Symbols, terms)
 	if len(matched) == 0 {
 		return "", false
