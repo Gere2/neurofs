@@ -165,6 +165,95 @@ var ErrNotFound = fmt.Errorf("not found")
 	assertContainsImport(t, result.Imports, "fmt")
 }
 
+// TestParseGoExtractsParenthesisedConstAndVarBlocks pins the recovery
+// of grouped const/var specs that the single-line regex misses. This
+// is the regression test for G3 facts RepExcerpt and fullCodeMaxTokens
+// — both lived in `const ( ... )` blocks and were therefore invisible
+// to the index, which made them invisible in signatures and to the
+// ranker's symbol_match signal.
+func TestParseGoExtractsParenthesisedConstAndVarBlocks(t *testing.T) {
+	content := `
+package models
+
+const (
+	// RepFullCode includes the complete file content.
+	RepFullCode Representation = "full_code"
+	RepExcerpt   Representation = "excerpt"
+	RepSignature Representation = "signature"
+)
+
+const (
+	fullCodeMaxTokens           = 600
+	aggressiveFullCodeMaxTokens = 180
+)
+
+var (
+	defaultBudget = 8000
+	knownPaths, knownAPIs []string
+)
+
+const SoloConst = 1
+var SoloVar = 2
+`
+	result := parser.Parse(models.LangGo, content)
+
+	consts := []string{
+		"RepFullCode", "RepExcerpt", "RepSignature",
+		"fullCodeMaxTokens", "aggressiveFullCodeMaxTokens",
+		"SoloConst", // single-line const still works
+	}
+	vars := []string{
+		"defaultBudget", "knownPaths", "knownAPIs",
+		"SoloVar", // single-line var still works
+	}
+	for _, want := range consts {
+		assertContainsSymbol(t, result.Symbols, want, "const")
+	}
+	for _, want := range vars {
+		assertContainsSymbol(t, result.Symbols, want, "var")
+	}
+
+	// Signature must surface the const names so files with grouped consts
+	// stop disappearing from the index. Spot-check a few.
+	for _, want := range []string{
+		"const RepExcerpt = ...",
+		"const fullCodeMaxTokens = ...",
+		"var defaultBudget ...",
+	} {
+		if !strings.Contains(result.Signature, want) {
+			t.Errorf("signature missing %q\n---\n%s", want, result.Signature)
+		}
+	}
+}
+
+// TestParseGoBlockSpecsSkipNoise confirms blank lines, comment-only
+// lines, and the `_` blank identifier do not appear as symbols.
+func TestParseGoBlockSpecsSkipNoise(t *testing.T) {
+	content := `
+package x
+
+const (
+	// section header
+
+	A = 1
+
+	/* inline comment */
+	B = 2
+	_ = "ignored"
+)
+`
+	result := parser.Parse(models.LangGo, content)
+	assertContainsSymbol(t, result.Symbols, "A", "const")
+	assertContainsSymbol(t, result.Symbols, "B", "const")
+	for _, name := range []string{"_", "section", "header", "inline", "comment"} {
+		for _, s := range result.Symbols {
+			if s.Name == name {
+				t.Errorf("noise leaked into symbols: %q", name)
+			}
+		}
+	}
+}
+
 func TestParseMarkdown(t *testing.T) {
 	content := `
 # Architecture Overview

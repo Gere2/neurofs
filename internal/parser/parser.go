@@ -390,6 +390,24 @@ var (
 	reGoType         = regexp.MustCompile(`(?m)^type\s+(\w+)\s+`)
 	reGoConst        = regexp.MustCompile(`(?m)^const\s+(\w+)\s`)
 	reGoVar          = regexp.MustCompile(`(?m)^var\s+(\w+)\s`)
+
+	// Parenthesised const/var blocks. These were the blind spot that
+	// hid every grouped const from the index — models.go's RepFullCode /
+	// RepExcerpt / RepSignature, packager.go's fullCodeMaxTokens etc.
+	// The single-line regexes above don't fire on `const Foo = ...`
+	// when Foo lives inside a `const ( ... )` block (the `^const` at
+	// the spec's indentation is missing). The block regexes match the
+	// outer wrapper and then per-line extraction inside the body
+	// recovers each spec name. The body capture is non-greedy and
+	// terminates at a `)` at start of line — bodies cannot contain a
+	// `)` at column 0 in well-formed Go.
+	reGoConstBlock = regexp.MustCompile(`(?ms)^const\s*\(\s*\n(.*?)^\)`)
+	reGoVarBlock   = regexp.MustCompile(`(?ms)^var\s*\(\s*\n(.*?)^\)`)
+	// reGoBlockSpecName captures the leading identifier (or comma-
+	// separated list of identifiers) on a spec line. Comments, blank
+	// lines, and continuation lines that do not start with an
+	// identifier all fail to match and are skipped.
+	reGoBlockSpecName = regexp.MustCompile(`^\s*(\w+(?:\s*,\s*\w+)*)`)
 )
 
 func parseGo(content string) Result {
@@ -422,6 +440,13 @@ func parseGo(content string) Result {
 	addSym(reGoConst, "const")
 	addSym(reGoVar, "var")
 
+	// Recover specs hidden inside parenthesised const/var blocks. The
+	// single-line addSym calls above naturally skip these because the
+	// inner specs do not start with the `const`/`var` keyword.
+	r.Symbols = append(r.Symbols, extractGoBlockSpecs(content, lines, "const", reGoConstBlock)...)
+	r.Symbols = append(r.Symbols, extractGoBlockSpecs(content, lines, "var", reGoVarBlock)...)
+	r.Symbols = deduplicateSymbols(r.Symbols)
+
 	var sb strings.Builder
 	for _, imp := range r.Imports {
 		fmt.Fprintf(&sb, "// import: %s\n", imp)
@@ -440,6 +465,45 @@ func parseGo(content string) Result {
 	}
 	r.Signature = sb.String()
 	return r
+}
+
+// extractGoBlockSpecs scans content for parenthesised const/var blocks
+// matched by blockRe and returns one Symbol per declared name. Spec
+// lines like `Foo Lang = "go"` yield Symbol{Name: "Foo"}; lines like
+// `a, b = 1, 2` yield two Symbols. Lines that begin with `/`, `*`, a
+// digit, or whitespace-then-a-non-identifier are skipped, which
+// handles comments and blank lines without an explicit branch.
+//
+// Line numbers are computed from the global lineStarts so reported
+// positions match the source file, not an offset within the body.
+func extractGoBlockSpecs(content string, lineStarts []int, kind string, blockRe *regexp.Regexp) []models.Symbol {
+	var syms []models.Symbol
+	for _, m := range blockRe.FindAllStringSubmatchIndex(content, -1) {
+		// m[2:4] is the body capture group (inside the parens, exclusive
+		// of the closing `)` line).
+		bodyStart, bodyEnd := m[2], m[3]
+		if bodyStart < 0 {
+			continue
+		}
+		offset := bodyStart
+		for _, line := range strings.SplitAfter(content[bodyStart:bodyEnd], "\n") {
+			match := reGoBlockSpecName.FindStringSubmatch(line)
+			if match != nil {
+				lineNum := lineForOffset(lineStarts, offset)
+				for _, n := range strings.Split(match[1], ",") {
+					n = strings.TrimSpace(n)
+					if n == "" || n == "_" {
+						continue
+					}
+					syms = append(syms, models.Symbol{
+						Name: n, Kind: kind, Line: lineNum,
+					})
+				}
+			}
+			offset += len(line)
+		}
+	}
+	return syms
 }
 
 // ─── Markdown ────────────────────────────────────────────────────────────────
