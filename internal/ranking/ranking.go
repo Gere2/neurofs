@@ -549,8 +549,13 @@ func SignalWeights() map[string]float64 {
 	}
 }
 
-// tokenise lowercases the query and splits it into meaningful terms,
-// filtering out stop-words and short tokens.
+// tokenise splits a query into meaningful terms, filtering out stop-words
+// and short tokens. Identifiers in camelCase or PascalCase are also broken
+// into their constituent parts so a query mentioning `UpgradeWithSlack`
+// produces the tokens `upgrade` and `slack` (in addition to the raw
+// `upgradewithslack`), letting the ranker match symbols whose names are
+// only sub-strings of the user's term. The original lowercased token is
+// kept too so existing whole-word matches keep firing.
 func tokenise(query string) []string {
 	stopWords := map[string]bool{
 		"the": true, "a": true, "an": true, "is": true, "are": true,
@@ -561,22 +566,117 @@ func tokenise(query string) []string {
 		"where": true, "which": true, "can": true, "i": true, "my": true,
 	}
 
-	lower := strings.ToLower(query)
-	// Split on non-alphanumeric characters.
-	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') && r != '_'
+	// Split on non-alphanumeric characters, preserving case — splitIdentifier
+	// needs the original casing to detect camelCase boundaries.
+	rawWords := strings.FieldsFunc(query, func(r rune) bool {
+		return !isWordRune(r)
 	})
 
 	var terms []string
 	seen := make(map[string]bool)
-	for _, w := range words {
-		if len(w) < 3 || stopWords[w] || seen[w] {
-			continue
+	add := func(t string) {
+		t = strings.ToLower(t)
+		if len(t) < 3 || stopWords[t] || seen[t] {
+			return
 		}
-		seen[w] = true
-		terms = append(terms, w)
+		seen[t] = true
+		terms = append(terms, t)
+	}
+	for _, raw := range rawWords {
+		add(raw)
+		for _, part := range splitIdentifier(raw) {
+			add(part)
+		}
 	}
 	return terms
+}
+
+// isWordRune mirrors the FieldsFunc predicate used by tokenise: ASCII
+// letters, digits, and underscore form a contiguous word.
+func isWordRune(r rune) bool {
+	return ('a' <= r && r <= 'z') ||
+		('A' <= r && r <= 'Z') ||
+		('0' <= r && r <= '9') ||
+		r == '_'
+}
+
+// splitIdentifier breaks a camelCase, PascalCase, or mixed-case identifier
+// into its constituent words. Returns nil for inputs that have no
+// boundary (already-flat words like "auth" or "MCPSERVER" with no
+// trailing camel tail) so tokenise can decide whether to keep just the
+// original. The rules are:
+//
+//	lower→upper: split before the upper            (fooBar → foo|Bar)
+//	upper→upper followed by lower: split before    (MCPServer → MCP|Server)
+//	digit→letter: split before the letter          (G2Budget → G2|Budget)
+//	underscore: split on either side               (foo_bar → foo|bar)
+//
+// Numbers stay attached to a leading letter run (G2 stays as G2, version2
+// stays as version2) so short identifiers with a number suffix survive
+// the min-token-length filter.
+func splitIdentifier(s string) []string {
+	if len(s) == 0 {
+		return nil
+	}
+	type cls int
+	const (
+		cOther cls = iota
+		cLower
+		cUpper
+		cDigit
+		cUnderscore
+	)
+	classify := func(r rune) cls {
+		switch {
+		case 'a' <= r && r <= 'z':
+			return cLower
+		case 'A' <= r && r <= 'Z':
+			return cUpper
+		case '0' <= r && r <= '9':
+			return cDigit
+		case r == '_':
+			return cUnderscore
+		}
+		return cOther
+	}
+	runes := []rune(s)
+	n := len(runes)
+	if n <= 1 {
+		return nil
+	}
+
+	var splits []int
+	for i := 1; i < n; i++ {
+		prev, cur := classify(runes[i-1]), classify(runes[i])
+		switch {
+		case prev == cLower && cur == cUpper:
+			splits = append(splits, i)
+		case prev == cUpper && cur == cUpper && i+1 < n && classify(runes[i+1]) == cLower:
+			splits = append(splits, i)
+		case prev == cDigit && (cur == cLower || cur == cUpper):
+			splits = append(splits, i)
+		case prev == cUnderscore || cur == cUnderscore:
+			splits = append(splits, i)
+		}
+	}
+
+	if len(splits) == 0 {
+		return nil
+	}
+
+	parts := make([]string, 0, len(splits)+1)
+	start := 0
+	for _, sp := range splits {
+		seg := strings.Trim(string(runes[start:sp]), "_")
+		if seg != "" {
+			parts = append(parts, seg)
+		}
+		start = sp
+	}
+	if seg := strings.Trim(string(runes[start:]), "_"); seg != "" {
+		parts = append(parts, seg)
+	}
+	return parts
 }
 
 // stripExt removes the file extension from a base name.
