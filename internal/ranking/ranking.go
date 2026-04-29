@@ -123,6 +123,8 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	expandByImports(scored, terms, opts.Project)
 	enrichWithContent(scored, terms)
 
+	applyTestPenalty(scored, query)
+
 	sort.Slice(scored, func(i, j int) bool {
 		return scored[i].Score > scored[j].Score
 	})
