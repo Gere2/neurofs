@@ -38,6 +38,27 @@ const excerptTopN = 3
 // falling back to a signature (if it does not).
 const excerptMaxTokens = 800
 
+// excerptBlockMaxLines caps a single rendered block at this many source
+// lines. Bigger blocks are truncated to {excerptBlockHeadLines} + an
+// elision marker + {excerptBlockTailLines} so that one oversized
+// function (e.g. a 150-line audit-replay handler) does not push the
+// whole excerpt past excerptMaxTokens and force a fallback to signature.
+// 40 is the empirical landing zone: it preserves the function signature,
+// the first lines of logic, and the closing return/braces, while
+// shrinking 100+ line bodies enough to fit alongside neighbour blocks.
+const excerptBlockMaxLines = 40
+
+// excerptBlockHeadLines and excerptBlockTailLines control how many
+// lines are kept on each side of an elision in a truncated block. The
+// head needs enough room for the function signature, doc comment, and
+// the first one or two statements of the body; the tail captures the
+// final return and closing brace. Their sum sits well below
+// excerptBlockMaxLines so truncation always shrinks.
+const (
+	excerptBlockHeadLines = 8
+	excerptBlockTailLines = 4
+)
+
 // block is a closed line range [startLine, endLine] inside a file, tagged
 // with the symbol name(s) that motivated its inclusion.
 type block struct {
@@ -336,7 +357,28 @@ func leadingWidth(line string) int {
 // into a single block, joining their symbol labels. This avoids printing
 // two `// ──` markers separated by a one-line `// ... 1 lines omitted ...`,
 // which costs tokens and reads worse than a continuous run.
+//
+// Used by the heuristic TS/JS/Python path. The Go path uses
+// mergeOverlappingStrict instead so contiguous top-level decls (a const
+// group then an unrelated func one line apart) are not silently fused
+// into one giant block — go/ast already gives us exact ranges, no need
+// to bridge the gap.
 func mergeOverlapping(blocks []block) []block {
+	return mergeBlocks(blocks, 2)
+}
+
+// mergeOverlappingStrict only coalesces blocks that genuinely overlap.
+// Two adjacent-but-disjoint AST nodes (e.g. `type Options` ending at
+// line 71 and `func Pack` starting at line 81) stay separate, so each
+// one can be truncated by renderExcerpt independently and the rendered
+// excerpt does not balloon to 130+ lines.
+func mergeOverlappingStrict(blocks []block) []block {
+	return mergeBlocks(blocks, 0)
+}
+
+// mergeBlocks is the shared engine. gapTolerance is the maximum number
+// of empty lines allowed between two blocks before they get fused.
+func mergeBlocks(blocks []block, gapTolerance int) []block {
 	if len(blocks) <= 1 {
 		return blocks
 	}
@@ -344,7 +386,7 @@ func mergeOverlapping(blocks []block) []block {
 	out := make([]block, 0, len(blocks))
 	cur := blocks[0]
 	for _, b := range blocks[1:] {
-		if b.startLine <= cur.endLine+2 {
+		if b.startLine <= cur.endLine+gapTolerance {
 			if b.endLine > cur.endLine {
 				cur.endLine = b.endLine
 			}
@@ -360,10 +402,30 @@ func mergeOverlapping(blocks []block) []block {
 	return out
 }
 
-// renderExcerpt assembles the final excerpt string. The header mirrors
-// buildSignature/buildStructuralNote so a model parsing prompts sees a
-// consistent shape across representations.
+// renderOptions controls per-language tweaks to the excerpt rendering
+// pipeline. The zero value matches the historical behaviour used by the
+// heuristic TS/JS/Python path.
+type renderOptions struct {
+	// truncateBlocksOver, when > 0, replaces the body of any block
+	// whose line span exceeds the threshold with
+	// {excerptBlockHeadLines} + an elision marker + {excerptBlockTailLines}.
+	// 0 disables truncation entirely (default).
+	truncateBlocksOver int
+}
+
+// renderExcerpt assembles the final excerpt string with default options
+// (no per-block truncation). Existing TS/JS/Python callers see no
+// change in behaviour.
 func renderExcerpt(rec models.FileRecord, lines []string, blocks []block) string {
+	return renderExcerptWithOptions(rec, lines, blocks, renderOptions{})
+}
+
+// renderExcerptWithOptions is the configurable rendering entry point.
+// The Go path calls it with truncateBlocksOver set, so an oversized
+// function body is replaced with a head + elision + tail summary
+// instead of forcing the whole excerpt past excerptMaxTokens and
+// triggering a fallback to signature.
+func renderExcerptWithOptions(rec models.FileRecord, lines []string, blocks []block, opts renderOptions) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "// file: %s\n", rec.RelPath)
 	fmt.Fprintf(&sb, "// lang: %s\n", rec.Lang)
@@ -381,14 +443,46 @@ func renderExcerpt(rec models.FileRecord, lines []string, blocks []block) string
 			}
 		}
 		fmt.Fprintf(&sb, "// ── %s:%d-%d (%s) ──\n", rec.RelPath, b.startLine, b.endLine, b.symbol)
-		for li := b.startLine; li <= b.endLine && li-1 < totalLines; li++ {
-			sb.WriteString(lines[li-1])
-			sb.WriteByte('\n')
-		}
+		writeBlockBody(&sb, lines, b, opts.truncateBlocksOver)
 		prevEnd = b.endLine
 	}
 	if prevEnd < totalLines {
 		fmt.Fprintf(&sb, "\n// ... %d lines omitted to end ...\n", totalLines-prevEnd)
 	}
 	return sb.String()
+}
+
+// writeBlockBody emits the source lines for a block, optionally
+// truncating the middle when the block is wider than truncateOver.
+// truncateOver == 0 disables truncation (intact body).
+func writeBlockBody(sb *strings.Builder, lines []string, b block, truncateOver int) {
+	totalLines := len(lines)
+	span := b.endLine - b.startLine + 1
+	keepIntact := truncateOver <= 0 ||
+		span <= truncateOver ||
+		// Refuse to truncate when the head + tail would itself meet or
+		// exceed the block — the elision marker would only add tokens.
+		span <= excerptBlockHeadLines+excerptBlockTailLines+1
+	if keepIntact {
+		for li := b.startLine; li <= b.endLine && li-1 < totalLines; li++ {
+			sb.WriteString(lines[li-1])
+			sb.WriteByte('\n')
+		}
+		return
+	}
+
+	// Head: first excerptBlockHeadLines lines from the block.
+	headEnd := b.startLine + excerptBlockHeadLines - 1
+	for li := b.startLine; li <= headEnd && li-1 < totalLines; li++ {
+		sb.WriteString(lines[li-1])
+		sb.WriteByte('\n')
+	}
+	elided := span - excerptBlockHeadLines - excerptBlockTailLines
+	fmt.Fprintf(sb, "// ... %d lines elided in extracted excerpt ...\n", elided)
+	// Tail: last excerptBlockTailLines lines.
+	tailStart := b.endLine - excerptBlockTailLines + 1
+	for li := tailStart; li <= b.endLine && li-1 < totalLines; li++ {
+		sb.WriteString(lines[li-1])
+		sb.WriteByte('\n')
+	}
 }

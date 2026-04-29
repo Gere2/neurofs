@@ -73,9 +73,16 @@ func extractGoExcerpt(rec models.FileRecord, content string, terms []string) (st
 	if len(blocks) == 0 {
 		return "", false
 	}
-	blocks = mergeOverlapping(blocks)
+	// Use the strict variant: go/ast already gives precise line ranges,
+	// so two adjacent-but-disjoint top-level decls (e.g. `type Options`
+	// ending at L71 and `func Pack` starting at L81) must NOT collapse
+	// into a single 130-line block. mergeOverlapping's gap-tolerance
+	// behaviour is reserved for the heuristic TS/JS/Python path.
+	blocks = mergeOverlappingStrict(blocks)
 	lines := strings.Split(content, "\n")
-	return renderExcerpt(rec, lines, blocks), true
+	return renderExcerptWithOptions(rec, lines, blocks, renderOptions{
+		truncateBlocksOver: excerptBlockMaxLines,
+	}), true
 }
 
 // goFuncBlock returns a block for a FuncDecl whose name matches any
