@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
@@ -256,7 +257,7 @@ func runViewFileTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	}
 
 	// Safely confine file access to the repository root to prevent path traversal
-	absPath, err := confineToRepo(repo, args.Path)
+	absPath, err := fsutil.ConfineToRepoStrict(repo, args.Path)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -269,37 +270,3 @@ func runViewFileTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	return textResult(string(content))
 }
 
-// confineToRepo resolves and guarantees that absPath lives inside repo root.
-// Missing files are not allowed for read. Symlinks are followed to prevent tunnels.
-func confineToRepo(root, path string) (string, error) {
-	abs := path
-	if !filepath.IsAbs(path) {
-		abs = filepath.Join(root, path)
-	}
-	abs = filepath.Clean(abs)
-
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve repo root: %w", err)
-	}
-
-	rootResolved, err := filepath.EvalSymlinks(rootAbs)
-	if err != nil {
-		rootResolved = rootAbs
-	}
-
-	// We evaluate symlinks on the target path.
-	absResolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return "", fmt.Errorf("path does not exist or invalid: %w", err)
-	}
-
-	rel, err := filepath.Rel(rootResolved, absResolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path must live inside the repo: %s", path)
-	}
-	return absResolved, nil
-}

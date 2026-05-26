@@ -19,6 +19,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
@@ -129,60 +130,6 @@ func decode(r *http.Request, v any) error {
 		return fmt.Errorf("body must contain a single JSON object")
 	}
 	return nil
-}
-
-// confineToRepo resolves raw against root (joining if relative, otherwise
-// using raw as-is) and guarantees the result lives inside root. Symlinks
-// are followed before the containment check so an attacker cannot tunnel
-// out via `audit/records/evil.json -> /etc/passwd`. The returned absolute
-// path is safe to pass to os.Open / os.ReadFile / os.WriteFile.
-//
-// Both paths are canonicalised by resolving their deepest-existing
-// ancestor — this matters on macOS where /var is a symlink to /private/var
-// and asymmetric resolution would make perfectly valid paths fail the
-// containment check. Missing leaves are acceptable (we may be writing).
-func confineToRepo(root, raw string, _ bool) (string, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", fmt.Errorf("path is required")
-	}
-	abs := raw
-	if !filepath.IsAbs(raw) {
-		abs = filepath.Join(root, raw)
-	}
-	abs = filepath.Clean(abs)
-
-	rootAbs, err := filepath.Abs(root)
-	if err != nil {
-		return "", fmt.Errorf("resolve repo root: %w", err)
-	}
-	rootResolved := resolveExistingPrefix(rootAbs)
-	absResolved := resolveExistingPrefix(abs)
-
-	rel, err := filepath.Rel(rootResolved, absResolved)
-	if err != nil {
-		return "", fmt.Errorf("resolve path: %w", err)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path must live inside the repo: %s", raw)
-	}
-	return absResolved, nil
-}
-
-// resolveExistingPrefix canonicalises the deepest existing prefix of p
-// (following symlinks) and re-attaches the remaining non-existent tail
-// verbatim. Never returns an error: if nothing resolves, the input is
-// returned unchanged. This keeps confineToRepo usable for paths that
-// are about to be created.
-func resolveExistingPrefix(p string) string {
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		return resolved
-	}
-	parent := filepath.Dir(p)
-	if parent == p {
-		return p
-	}
-	return filepath.Join(resolveExistingPrefix(parent), filepath.Base(p))
 }
 
 // --------------------- /api/scan ---------------------
@@ -352,7 +299,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshotPath := defaultPath
 	if name := strings.TrimSpace(req.SnapshotName); name != "" {
-		target, err := confineToRepo(cfg.RepoRoot, name, true)
+		target, err := fsutil.ConfineToRepo(cfg.RepoRoot, name)
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, "snapshot_name: "+err.Error())
 			return
@@ -433,7 +380,7 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundlePath, err := confineToRepo(cfg.RepoRoot, req.BundlePath, false)
+	bundlePath, err := fsutil.ConfineToRepo(cfg.RepoRoot, req.BundlePath)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bundle_path: "+err.Error())
 		return
@@ -961,12 +908,12 @@ func handleDiff(w http.ResponseWriter, r *http.Request) {
 	// reader (a: /etc/passwd, b: /etc/hostname would read system files
 	// the user never asked this tool to touch).
 	recordsRoot := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
-	aPath, err := confineToRepo(recordsRoot, req.A, false)
+	aPath, err := fsutil.ConfineToRepo(recordsRoot, req.A)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "a: "+err.Error())
 		return
 	}
-	bPath, err := confineToRepo(recordsRoot, req.B, false)
+	bPath, err := fsutil.ConfineToRepo(recordsRoot, req.B)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "b: "+err.Error())
 		return

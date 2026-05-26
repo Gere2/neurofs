@@ -7,18 +7,29 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/neuromfs/neuromfs/internal/fsutil"
 )
+
+// canonicalRoot canonicalises an existing repo root through symlinks
+// (matters on macOS: /var is a symlink to /private/var) so test assertions
+// can compare against what ConfineToRepo would return.
+func canonicalRoot(t *testing.T, root string) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", root, err)
+	}
+	return resolved
+}
 
 func TestConfineToRepo_AcceptsRelativeInsideRepo(t *testing.T) {
 	root := t.TempDir()
-	got, err := confineToRepo(root, "audit/records/x.json", false)
+	got, err := fsutil.ConfineToRepo(root, "audit/records/x.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// confineToRepo canonicalises through symlinks (e.g. /var → /private/var
-	// on macOS); compare against the canonicalised join so the assertion
-	// is symlink-agnostic.
-	want := filepath.Join(resolveExistingPrefix(root), "audit/records/x.json")
+	want := filepath.Join(canonicalRoot(t, root), "audit/records/x.json")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -27,11 +38,11 @@ func TestConfineToRepo_AcceptsRelativeInsideRepo(t *testing.T) {
 func TestConfineToRepo_AcceptsAbsoluteInsideRepo(t *testing.T) {
 	root := t.TempDir()
 	abs := filepath.Join(root, "audit/records/x.json")
-	got, err := confineToRepo(root, abs, false)
+	got, err := fsutil.ConfineToRepo(root, abs)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(resolveExistingPrefix(root), "audit/records/x.json")
+	want := filepath.Join(canonicalRoot(t, root), "audit/records/x.json")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -39,7 +50,7 @@ func TestConfineToRepo_AcceptsAbsoluteInsideRepo(t *testing.T) {
 
 func TestConfineToRepo_RejectsParentEscape(t *testing.T) {
 	root := t.TempDir()
-	_, err := confineToRepo(root, "../../etc/passwd", false)
+	_, err := fsutil.ConfineToRepo(root, "../../etc/passwd")
 	if err == nil {
 		t.Fatalf("expected error for ../../etc/passwd")
 	}
@@ -50,7 +61,7 @@ func TestConfineToRepo_RejectsParentEscape(t *testing.T) {
 
 func TestConfineToRepo_RejectsAbsoluteOutsideRepo(t *testing.T) {
 	root := t.TempDir()
-	_, err := confineToRepo(root, "/etc/passwd", false)
+	_, err := fsutil.ConfineToRepo(root, "/etc/passwd")
 	if err == nil {
 		t.Fatalf("expected error for absolute escape")
 	}
@@ -70,22 +81,22 @@ func TestConfineToRepo_RejectsSymlinkEscape(t *testing.T) {
 	if err := os.Symlink(outside, linkPath); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	_, err := confineToRepo(root, "audit/records/evil.json", false)
+	_, err := fsutil.ConfineToRepo(root, "audit/records/evil.json")
 	if err == nil {
 		t.Fatalf("expected symlink containment failure")
 	}
 }
 
-func TestConfineToRepo_ForWriteAllowsMissingLeaf(t *testing.T) {
+func TestConfineToRepo_AllowsMissingLeaf(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "audit/bundles"), 0o755); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
-	got, err := confineToRepo(root, "audit/bundles/new.json", true)
+	got, err := fsutil.ConfineToRepo(root, "audit/bundles/new.json")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := filepath.Join(resolveExistingPrefix(root), "audit/bundles/new.json")
+	want := filepath.Join(canonicalRoot(t, root), "audit/bundles/new.json")
 	if got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -93,7 +104,7 @@ func TestConfineToRepo_ForWriteAllowsMissingLeaf(t *testing.T) {
 
 func TestConfineToRepo_EmptyRejected(t *testing.T) {
 	root := t.TempDir()
-	_, err := confineToRepo(root, "  ", false)
+	_, err := fsutil.ConfineToRepo(root, "  ")
 	if err == nil {
 		t.Fatalf("expected error for empty path")
 	}
