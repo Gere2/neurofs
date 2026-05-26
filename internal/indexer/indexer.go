@@ -77,6 +77,8 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		cachedFiles[f.Path] = f
 	}
 
+	embClient := embeddings.NewClient()
+
 	var stats Stats
 
 	walkErr := fsutil.Walk(cfg.RepoRoot, func(path string, info os.FileInfo) error {
@@ -141,7 +143,6 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		}
 
 		// Generate and save embedding
-		embClient := embeddings.NewClient()
 		embedText := string(content)
 		if len(embedText) > 8000 {
 			embedText = embedText[:8000]
