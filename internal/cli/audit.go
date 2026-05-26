@@ -10,6 +10,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/ranking"
@@ -154,8 +155,8 @@ func shortHash(h string) string {
 // already-packaged bundle JSON (useful when the index has moved on since
 // the bundle was generated).
 //
-//   neurofs audit replay "<question>" --response answer.txt --repo .
-//   neurofs audit replay --bundle bundle.json --response answer.txt
+//	neurofs audit replay "<question>" --response answer.txt --repo .
+//	neurofs audit replay --bundle bundle.json --response answer.txt
 func newAuditReplayCmd() *cobra.Command {
 	var (
 		responsePath string
@@ -322,7 +323,16 @@ func rebuildBundle(cfg *config.Config, query string, budget int, focus string, c
 		return models.Bundle{}, err
 	}
 
-	rankOpts := ranking.Options{Project: loadProjectInfo(db), Focus: focus}
+	embClient := embeddings.NewClient()
+	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
+	fileEmbs, _ := db.AllEmbeddings()
+
+	rankOpts := ranking.Options{
+		Project:        loadProjectInfo(db),
+		Focus:          focus,
+		QueryEmbedding: queryEmb,
+		Embeddings:     fileEmbs,
+	}
 	if changedFlag {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
 	}
@@ -456,4 +466,3 @@ func minInt(a, b int) int {
 	}
 	return b
 }
-
