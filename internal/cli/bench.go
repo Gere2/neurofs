@@ -8,6 +8,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/benchmark"
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/spf13/cobra"
 )
@@ -77,12 +78,17 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 				return fmt.Errorf("bench: %w", err)
 			}
 
+			embClient := embeddings.NewClient()
+			fileEmbs, _ := db.AllEmbeddings()
+
 			results, summary := benchmark.Run(files, questions, benchmark.RunOptions{
 				TopK:             topK,
 				Project:          loadProjectInfo(db),
 				ComputeBundle:    bundle || maxMeanBundleTokens > 0,
 				PackBudget:       packBudget,
 				PreferSignatures: preferSignatures,
+				Embeddings:       fileEmbs,
+				EmbClient:        embClient,
 			})
 
 			fmt.Fprintf(os.Stderr, "NeuroFS — benchmark on %s\n", cfg.RepoRoot)

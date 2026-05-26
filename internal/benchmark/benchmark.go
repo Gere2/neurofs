@@ -4,12 +4,14 @@
 package benchmark
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
 
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/project"
@@ -89,6 +91,10 @@ type RunOptions struct {
 	// PreferSignatures mirrors `pack --for claude` — the knob lets CI bench
 	// the same compression policy users actually run with.
 	PreferSignatures bool
+	// Embeddings maps file absolute paths to their embedding vectors.
+	Embeddings map[string][]float32
+	// EmbClient is used to generate query embeddings for the benchmark queries.
+	EmbClient *embeddings.Client
 }
 
 // Summary rolls up the per-question Results into headline metrics.
@@ -130,7 +136,15 @@ func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Re
 	}
 
 	for _, q := range questions {
-		ranked := ranking.RankWithOptions(files, q.Question, ranking.Options{Project: opts.Project})
+		var queryEmb []float32
+		if opts.EmbClient != nil {
+			queryEmb, _ = opts.EmbClient.GetEmbedding(context.Background(), q.Question)
+		}
+		ranked := ranking.RankWithOptions(files, q.Question, ranking.Options{
+			Project:        opts.Project,
+			QueryEmbedding: queryEmb,
+			Embeddings:     opts.Embeddings,
+		})
 
 		keep := opts.KeepTop
 		if keep > len(ranked) {

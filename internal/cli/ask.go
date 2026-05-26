@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
 	"github.com/neuromfs/neuromfs/internal/packager"
@@ -71,8 +72,15 @@ Run 'neurofs scan' first to build the index.`,
 			fmt.Fprintf(os.Stderr, "  budget : %d tokens | index: %d files\n\n",
 				budget, len(files))
 
+			// Load embeddings if they exist.
+			embClient := embeddings.NewClient()
+			queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
+			fileEmbs, _ := db.AllEmbeddings()
+
 			ranked := ranking.RankWithOptions(files, query, ranking.Options{
-				Project: loadProjectInfo(db),
+				Project:        loadProjectInfo(db),
+				QueryEmbedding: queryEmb,
+				Embeddings:     fileEmbs,
 			})
 
 			bundle, err := packager.Pack(ranked, query, packager.Options{
