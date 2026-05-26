@@ -239,11 +239,11 @@ func TestDetectDriftEmptyResponseIsZero(t *testing.T) {
 func TestDetectDriftRatePrecision(t *testing.T) {
 	b := driftBundle()
 	resp := strings.Join([]string{
-		"See src/auth.ts.",                   // path known
-		"Call verifyToken in that file.",     // symbol known
-		"Under the hood it uses jwt.sign.",   // api known
-		"There is also a fake GhostService.", // symbol unknown
-		"And a fake path src/ghost.ts.",      // path unknown
+		"See src/auth.ts.",                    // path known
+		"Call verifyToken in that file.",      // symbol known
+		"Under the hood it uses jwt.sign.",    // api known
+		"There is also a fake GhostService.",  // symbol unknown
+		"And a fake path src/ghost.ts.",       // path unknown
 		"Plus the dotted call redis.flushDB.", // api unknown
 	}, " ")
 	d := DetectDrift(resp, b)

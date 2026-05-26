@@ -60,6 +60,9 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			fmt.Fprintf(os.Stderr, "\n")
 			fmt.Fprintf(os.Stderr, "  discovered : %d files\n", stats.Discovered)
 			fmt.Fprintf(os.Stderr, "  indexed    : %d files\n", stats.Indexed)
+			if stats.Cached > 0 {
+				fmt.Fprintf(os.Stderr, "  cached     : %d files\n", stats.Cached)
+			}
 			fmt.Fprintf(os.Stderr, "  skipped    : %d files\n", stats.Skipped)
 			if stats.Removed > 0 {
 				fmt.Fprintf(os.Stderr, "  removed    : %d stale records\n", stats.Removed)

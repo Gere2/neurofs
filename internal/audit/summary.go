@@ -66,13 +66,13 @@ func AggregateFrom(records []AuditRecord) Aggregate {
 		// is populated, so legacy records (Stats==nil) don't pretend to
 		// have cost zero and pull the averages down. Names mirror the
 		// Aggregate field names so the rollup math stays readable.
-		costN                   int
-		bundleTokensUsed        int
-		selectedContextTokens   int // estimate of "uncompressed selected fragments"
-		selectedContextReduced  int // bundleTokensUsed minus selectedContextTokens
-		filesIncluded           int
-		filesConsidered         int
-		compressionRatioSum     float64
+		costN                  int
+		bundleTokensUsed       int
+		selectedContextTokens  int // estimate of "uncompressed selected fragments"
+		selectedContextReduced int // bundleTokensUsed minus selectedContextTokens
+		filesIncluded          int
+		filesConsidered        int
+		compressionRatioSum    float64
 	)
 	for _, r := range records {
 		grounded += r.GroundedRatio

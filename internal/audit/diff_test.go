@@ -45,7 +45,7 @@ func TestDiffRecordsSetDeltas(t *testing.T) {
 	}
 	b := AuditRecord{
 		Drift: DriftReport{
-			UnknownPaths:   []string{"src/missing.ts"},            // utils.py removed
+			UnknownPaths:   []string{"src/missing.ts"},             // utils.py removed
 			UnknownAPIs:    []string{"redis.flushDB"},              // swapped
 			UnknownSymbols: []string{"GhostService", "NewService"}, // OldController -> NewService
 		},

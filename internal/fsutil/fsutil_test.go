@@ -59,8 +59,8 @@ func TestCountLines(t *testing.T) {
 	}{
 		{[]byte(""), 0},
 		{[]byte("one line"), 1},              // no trailing newline → 1
-		{[]byte("line1\nline2"), 2},           // no trailing newline → 2
-		{[]byte("line1\nline2\nline3\n"), 3},  // trailing newline → 3, not 4
+		{[]byte("line1\nline2"), 2},          // no trailing newline → 2
+		{[]byte("line1\nline2\nline3\n"), 3}, // trailing newline → 3, not 4
 		{[]byte("line1\n"), 1},               // single line with newline
 	}
 

@@ -64,7 +64,7 @@ type AuditFragment struct {
 // cleanly with Mode == "" — no migration needed.
 type AuditRecord struct {
 	Question   string          `json:"question"`
-	Model      string          `json:"model"`      // free-form id, e.g. "stub", "claude-sonnet-4-6"
+	Model      string          `json:"model"`          // free-form id, e.g. "stub", "claude-sonnet-4-6"
 	Mode       string          `json:"mode,omitempty"` // strategy | build | review | ""
 	Timestamp  time.Time       `json:"timestamp"`
 	BundleHash string          `json:"bundle_hash"`

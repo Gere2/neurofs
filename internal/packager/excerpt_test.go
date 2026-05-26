@@ -25,14 +25,14 @@ func TestExtractExcerpt_TS_PicksMatchingFunctionBody(t *testing.T) {
 		"export function unrelatedHelper(): void {", // line 2
 		"  console.log('noise');",
 		"}",
-		"",                                              // 5
+		"", // 5
 		"export function runSearch(q: string): string { // line 6",
 		"  if (!q) return 'empty';",
 		"  const result = doStuff(q);",
 		"  return result;",
-		"}",                                  // 10
-		"",                                   // 11
-		"function doStuff(q: string) {",      // 12
+		"}",                             // 10
+		"",                              // 11
+		"function doStuff(q: string) {", // 12
 		"  return q.toUpperCase();",
 		"}",
 	}, "\n")
@@ -255,15 +255,15 @@ func TestBraceBlock_StringsAndCommentsDoNotTripBraceCounter(t *testing.T) {
 	// Mock the kind of lines that broke a naive counter: braces hidden
 	// inside strings and comments must not count toward depth.
 	content := strings.Join([]string{
-		"function tricky() {",                                   // 1
-		"  const a = '} not a real close';",                     //
-		"  /* } also not real */",                               //
-		"  const b = \"another } string\";",                     //
-		"  // } in line comment",                                //
-		"  if (true) { console.log('nested'); }",                //
-		"  return 1;",                                           //
-		"}",                                                     // 8
-		"function next() { return 2; }",                         // 9
+		"function tricky() {",                    // 1
+		"  const a = '} not a real close';",      //
+		"  /* } also not real */",                //
+		"  const b = \"another } string\";",      //
+		"  // } in line comment",                 //
+		"  if (true) { console.log('nested'); }", //
+		"  return 1;",                            //
+		"}",                                      // 8
+		"function next() { return 2; }",          // 9
 	}, "\n")
 	b := braceBlock(models.Symbol{Name: "tricky", Line: 1}, strings.Split(content, "\n"))
 	if b.startLine != 1 || b.endLine != 8 {

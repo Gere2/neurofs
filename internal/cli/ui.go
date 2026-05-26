@@ -10,8 +10,8 @@ import (
 // simple dispatcher.
 func newUICmd() *cobra.Command {
 	var (
-		addr    string
-		noOpen  bool
+		addr   string
+		noOpen bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ui",
