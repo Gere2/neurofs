@@ -32,6 +32,15 @@ const scanInputSchema = `{
   }
 }`
 
+const viewFileInputSchema = `{
+  "type": "object",
+  "properties": {
+    "path": { "type": "string", "description": "Relative path to the file from the repository root." },
+    "repo": { "type": "string", "description": "Absolute path to the repository root. Default: cwd." }
+  },
+  "required": ["path"]
+}`
+
 func toolsList() []Tool {
 	return []Tool{
 		{
@@ -44,6 +53,11 @@ func toolsList() []Tool {
 			Description: "Index a repo and return a read-only summary (file count, total size, top extensions).",
 			InputSchema: json.RawMessage(scanInputSchema),
 		},
+		{
+			Name:        "neurofs_view_file",
+			Description: "Read the full contents of a specific file inside the repository safely.",
+			InputSchema: json.RawMessage(viewFileInputSchema),
+		},
 	}
 }
 
@@ -53,6 +67,8 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runTaskTool(ctx, p.Arguments)
 	case "neurofs_scan":
 		return runScanTool(ctx, p.Arguments)
+	case "neurofs_view_file":
+		return runViewFileTool(ctx, p.Arguments)
 	default:
 		return errResult(fmt.Sprintf("unknown tool: %q", p.Name))
 	}
@@ -216,4 +232,74 @@ func humanBytes(n int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}
+
+type viewFileArgs struct {
+	Path string `json:"path"`
+	Repo string `json:"repo"`
+}
+
+func runViewFileTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+	var args viewFileArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	args.Path = strings.TrimSpace(args.Path)
+	if args.Path == "" {
+		return errResult("path must not be empty")
+	}
+	repo, err := resolveRepo(args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	// Safely confine file access to the repository root to prevent path traversal
+	absPath, err := confineToRepo(repo, args.Path)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		return errResult(fmt.Sprintf("read file: %v", err))
+	}
+
+	return textResult(string(content))
+}
+
+// confineToRepo resolves and guarantees that absPath lives inside repo root.
+// Missing files are not allowed for read. Symlinks are followed to prevent tunnels.
+func confineToRepo(root, path string) (string, error) {
+	abs := path
+	if !filepath.IsAbs(path) {
+		abs = filepath.Join(root, path)
+	}
+	abs = filepath.Clean(abs)
+
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w", err)
+	}
+
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		rootResolved = rootAbs
+	}
+
+	// We evaluate symlinks on the target path.
+	absResolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("path does not exist or invalid: %w", err)
+	}
+
+	rel, err := filepath.Rel(rootResolved, absResolved)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must live inside the repo: %s", path)
+	}
+	return absResolved, nil
 }

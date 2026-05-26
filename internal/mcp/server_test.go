@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -76,11 +78,11 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 2 {
-		t.Fatalf("tools: got %d want 2", len(listResult.Tools))
+	if len(listResult.Tools) != 3 {
+		t.Fatalf("tools: got %d want 3", len(listResult.Tools))
 	}
-	names := []string{listResult.Tools[0].Name, listResult.Tools[1].Name}
-	wantNames := map[string]bool{"neurofs_task": true, "neurofs_scan": true}
+	names := []string{listResult.Tools[0].Name, listResult.Tools[1].Name, listResult.Tools[2].Name}
+	wantNames := map[string]bool{"neurofs_task": true, "neurofs_scan": true, "neurofs_view_file": true}
 	for _, n := range names {
 		if !wantNames[n] {
 			t.Fatalf("unexpected tool name %q in %v", n, names)
@@ -131,5 +133,57 @@ func mustReencode(t *testing.T, src any, dst any) {
 	}
 	if err := json.Unmarshal(b, dst); err != nil {
 		t.Fatalf("re-unmarshal: %v", err)
+	}
+}
+
+func TestViewFileTool(t *testing.T) {
+	ctx := context.Background()
+
+	tmpDir := t.TempDir()
+	filePath := "hello.txt"
+	absPath := filepath.Join(tmpDir, filePath)
+	content := "Hello from NeuroFS!"
+	if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write temp file: %v", err)
+	}
+
+	// 1) Test reading file successfully
+	args := map[string]any{
+		"path": filePath,
+		"repo": tmpDir,
+	}
+	rawArgs, _ := json.Marshal(args)
+	res := runViewFileTool(ctx, rawArgs)
+	if res.IsError {
+		t.Fatalf("expected view file to succeed, got error: %s", res.Content[0].Text)
+	}
+	if res.Content[0].Text != content {
+		t.Errorf("expected content %q, got %q", content, res.Content[0].Text)
+	}
+
+	// 2) Test reading non-existent file
+	argsNonExistent := map[string]any{
+		"path": "missing.txt",
+		"repo": tmpDir,
+	}
+	rawArgsNonExistent, _ := json.Marshal(argsNonExistent)
+	resNonExistent := runViewFileTool(ctx, rawArgsNonExistent)
+	if !resNonExistent.IsError {
+		t.Fatalf("expected error reading missing file")
+	}
+
+	// 3) Test path traversal containment
+	argsEscape := map[string]any{
+		"path": "../secret.txt",
+		"repo": tmpDir,
+	}
+	rawArgsEscape, _ := json.Marshal(argsEscape)
+	resEscape := runViewFileTool(ctx, rawArgsEscape)
+	if !resEscape.IsError {
+		t.Fatalf("expected path traversal to be blocked")
+	}
+	if !strings.Contains(resEscape.Content[0].Text, "path must live inside the repo") &&
+		!strings.Contains(resEscape.Content[0].Text, "does not exist") {
+		t.Errorf("expected path containment or existence error, got: %q", resEscape.Content[0].Text)
 	}
 }
