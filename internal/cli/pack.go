@@ -185,7 +185,7 @@ func writeBundleJSON(path string, b models.Bundle) error {
 func writeBundle(repoRoot string, dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info) error {
 	eff := effectiveFormat(format, forTarget)
 	if eff == string(output.FormatClaude) {
-		return output.WriteClaude(dest, b, buildRepoSummary(repoRoot, files, info))
+		return output.WriteClaude(dest, b, taskflow.BuildRepoSummary(repoRoot, files, info))
 	}
 	return output.Write(dest, b, output.Format(eff))
 }
@@ -203,28 +203,3 @@ func effectiveFormat(format, forTarget string) string {
 	return format
 }
 
-// buildRepoSummary produces a compact orientation block from the in-memory
-// file list. We intentionally keep it cheap — no new DB queries — so
-// failures here never break pack.
-func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
-	langs := make(map[string]int, 8)
-	symbols := 0
-	for _, f := range files {
-		langs[string(f.Lang)]++
-		symbols += len(f.Symbols)
-	}
-	s := output.RepoSummary{
-		Files:     len(files),
-		Symbols:   symbols,
-		Languages: langs,
-		GitDiff:   taskflow.GitDiff(repoRoot),
-		GitStatus: taskflow.GitStatus(repoRoot),
-	}
-	if info != nil {
-		s.Name = info.Label()
-		if entries := info.EntryPoints(); len(entries) > 0 {
-			s.Entry = filepath.ToSlash(entries[0])
-		}
-	}
-	return s
-}

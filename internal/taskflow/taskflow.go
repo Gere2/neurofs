@@ -267,7 +267,7 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	if err != nil {
 		return fmt.Errorf("create prompt: %w", err)
 	}
-	if err := output.WriteClaude(pf, bundle, buildRepoSummary(cfg.RepoRoot, files, info)); err != nil {
+	if err := output.WriteClaude(pf, bundle, BuildRepoSummary(cfg.RepoRoot, files, info)); err != nil {
 		pf.Close()
 		return fmt.Errorf("write prompt: %w", err)
 	}
@@ -336,10 +336,11 @@ func GitStatus(repoRoot string) string {
 	return res
 }
 
-// buildRepoSummary mirrors internal/cli/pack.go for the same
-// reason as loadProjectInfo — avoiding a cli→taskflow import cycle.
-// A few lines of dupe beats a shared "miscellany" package.
-func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
+// BuildRepoSummary assembles the repo orientation block carried in every
+// Claude prompt. Exported so cli/ and ui/ share one canonical implementation;
+// callers that already depend on taskflow (cli/pack, ui/api, ui/proxy) use
+// this directly instead of duplicating it.
+func BuildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
 	langs := make(map[string]int, 8)
 	symbols := 0
 	for _, f := range files {

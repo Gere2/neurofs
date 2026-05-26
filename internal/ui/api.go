@@ -338,7 +338,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	// verbatim. Using the same output.WriteClaude path means what the UI
 	// shows is exactly what the CLI would emit.
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
 		writeErr(w, http.StatusInternalServerError, "render prompt: "+err.Error())
 		return
 	}
@@ -1058,10 +1058,9 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 // --------------------- inlined CLI helpers ---------------------
 //
 // The CLI package has equivalent copies of these (loadProjectInfo,
-// gitChangedFiles, writeBundleJSON, buildRepoSummary). We inline them here
-// rather than extracting a shared package to keep this iteration small: the
-// UI is additive and shouldn't force a cross-package refactor. If a third
-// caller appears, move these to internal/ctxutil.
+// gitChangedFiles, writeBundleJSON). We inline them here rather than
+// extracting a shared package; if a third caller appears, move them to a
+// shared package. BuildRepoSummary already lives in taskflow.
 
 func loadProjectInfo(db *storage.DB) *project.Info {
 	raw, ok, err := db.GetMeta(indexer.ProjectMetaKey)
@@ -1124,29 +1123,6 @@ func loadBundleJSON(path string) (models.Bundle, error) {
 		return b, fmt.Errorf("bundle at %s has no fragments", path)
 	}
 	return b, nil
-}
-
-func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
-	langs := make(map[string]int, 8)
-	symbols := 0
-	for _, f := range files {
-		langs[string(f.Lang)]++
-		symbols += len(f.Symbols)
-	}
-	s := output.RepoSummary{
-		Files:     len(files),
-		Symbols:   symbols,
-		Languages: langs,
-		GitDiff:   taskflow.GitDiff(repoRoot),
-		GitStatus: taskflow.GitStatus(repoRoot),
-	}
-	if info != nil {
-		s.Name = info.Label()
-		if entries := info.EntryPoints(); len(entries) > 0 {
-			s.Entry = filepath.ToSlash(entries[0])
-		}
-	}
-	return s
 }
 
 // normaliseMode trims + lowercases the mode string so records stay

@@ -20,6 +20,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/neuromfs/neuromfs/internal/taskflow"
 )
 
 type anthropicMessage struct {
@@ -174,7 +175,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: render prompt error: %v\n", err)
 		forwardRawRequest(w, r, bodyBytes)
 		return
@@ -311,7 +312,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: render prompt error: %v\n", err)
 		forwardOpenAIRequest(w, r, bodyBytes)
 		return
@@ -761,7 +762,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to build context XML: "+err.Error())
 		return
 	}
