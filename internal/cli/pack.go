@@ -1,10 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
@@ -130,7 +128,7 @@ Examples:
 			}
 
 			if saveBundle != "" {
-				if err := writeBundleJSON(saveBundle, bundle); err != nil {
+				if err := taskflow.WriteBundleJSON(saveBundle, bundle); err != nil {
 					return fmt.Errorf("pack: --save-bundle: %w", err)
 				}
 				fmt.Fprintf(os.Stderr, "  snapshot: %s\n", saveBundle)
@@ -163,20 +161,6 @@ Examples:
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
-}
-
-// writeBundleJSON serialises the Bundle struct for later replay. Kept
-// separate from the --format=json writer so callers can mix a
-// human-readable --for claude output with a machine snapshot in one run.
-func writeBundleJSON(path string, b models.Bundle) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
 }
 
 // writeBundle dispatches to the correct serialiser. The Claude path takes a

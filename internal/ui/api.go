@@ -23,7 +23,6 @@ import (
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
 	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
@@ -313,7 +312,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	fileEmbs, _ := db.AllEmbeddings()
 
 	rankOpts := ranking.Options{
-		Project:        loadProjectInfo(db),
+		Project:        taskflow.LoadProjectInfo(db),
 		Focus:          mergeFocus(req.Focus, req.InheritedFocus),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
@@ -338,7 +337,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	// verbatim. Using the same output.WriteClaude path means what the UI
 	// shows is exactly what the CLI would emit.
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, taskflow.LoadProjectInfo(db))); err != nil {
 		writeErr(w, http.StatusInternalServerError, "render prompt: "+err.Error())
 		return
 	}
@@ -347,7 +346,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	// even across page reloads. If the user supplied a name, we also copy
 	// the snapshot there for long-term record-keeping.
 	defaultPath := filepath.Join(cfg.DBDir(), "ui", "last.bundle.json")
-	if err := writeBundleJSON(defaultPath, bundle); err != nil {
+	if err := taskflow.WriteBundleJSON(defaultPath, bundle); err != nil {
 		writeErr(w, http.StatusInternalServerError, "save default bundle: "+err.Error())
 		return
 	}
@@ -358,7 +357,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "snapshot_name: "+err.Error())
 			return
 		}
-		if err := writeBundleJSON(target, bundle); err != nil {
+		if err := taskflow.WriteBundleJSON(target, bundle); err != nil {
 			writeErr(w, http.StatusInternalServerError, "save snapshot: "+err.Error())
 			return
 		}
@@ -1055,20 +1054,11 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// --------------------- inlined CLI helpers ---------------------
+// --------------------- inlined UI-local helpers ---------------------
 //
-// The CLI package has equivalent copies of these (loadProjectInfo,
-// gitChangedFiles, writeBundleJSON). We inline them here rather than
-// extracting a shared package; if a third caller appears, move them to a
-// shared package. BuildRepoSummary already lives in taskflow.
-
-func loadProjectInfo(db *storage.DB) *project.Info {
-	raw, ok, err := db.GetMeta(indexer.ProjectMetaKey)
-	if err != nil || !ok {
-		return nil
-	}
-	return project.Decode(raw)
-}
+// loadProjectInfo, BuildRepoSummary, and WriteBundleJSON now live in
+// taskflow and are called through that package. gitChangedFiles and
+// loadBundleJSON remain here because they are only used by the UI.
 
 func gitChangedFiles(repoRoot string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -1097,17 +1087,6 @@ func gitChangedFiles(repoRoot string) []string {
 		files = append(files, path)
 	}
 	return files
-}
-
-func writeBundleJSON(path string, b models.Bundle) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(b, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, data, 0o644)
 }
 
 func loadBundleJSON(path string) (models.Bundle, error) {

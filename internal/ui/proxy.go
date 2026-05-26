@@ -155,7 +155,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Rank and package the context bundle
 	rankOpts := ranking.Options{
-		Project:        loadProjectInfo(db),
+		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
@@ -175,7 +175,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, taskflow.LoadProjectInfo(db))); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: render prompt error: %v\n", err)
 		forwardRawRequest(w, r, bodyBytes)
 		return
@@ -292,7 +292,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Rank and package the context bundle
 	rankOpts := ranking.Options{
-		Project:        loadProjectInfo(db),
+		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
@@ -312,7 +312,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, taskflow.LoadProjectInfo(db))); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy: render prompt error: %v\n", err)
 		forwardOpenAIRequest(w, r, bodyBytes)
 		return
@@ -735,7 +735,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// 5. Rank and package
 	rankOpts := ranking.Options{
-		Project:        loadProjectInfo(db),
+		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		Focus:          req.Focus,
 		QueryEmbedding: queryEmb,
@@ -762,7 +762,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, taskflow.LoadProjectInfo(db))); err != nil {
 		writeErr(w, http.StatusInternalServerError, "failed to build context XML: "+err.Error())
 		return
 	}

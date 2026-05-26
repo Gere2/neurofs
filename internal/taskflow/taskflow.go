@@ -239,7 +239,7 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	if err != nil {
 		return fmt.Errorf("load index: %w", err)
 	}
-	info := loadProjectInfo(db)
+	info := LoadProjectInfo(db)
 
 	embClient := embeddings.NewClient()
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
@@ -275,16 +275,16 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 		return fmt.Errorf("close prompt: %w", err)
 	}
 
-	if err := writeBundleJSON(bundlePath, bundle); err != nil {
+	if err := WriteBundleJSON(bundlePath, bundle); err != nil {
 		return fmt.Errorf("save bundle: %w", err)
 	}
 	return nil
 }
 
-// loadProjectInfo mirrors internal/cli/projectload.go — we duplicate
-// this 4-line helper instead of exposing it from cli, because cli
-// depends on taskflow and the other direction would create a cycle.
-func loadProjectInfo(db *storage.DB) *project.Info {
+// LoadProjectInfo reads project.Info from the metadata table populated by
+// `scan`. Returns nil when absent or invalid — callers treat nil as "no
+// project metadata available". Exported so cli/ and ui/ share one copy.
+func LoadProjectInfo(db *storage.DB) *project.Info {
 	raw, ok, err := db.GetMeta(indexer.ProjectMetaKey)
 	if err != nil || !ok {
 		return nil
@@ -363,10 +363,9 @@ func BuildRepoSummary(repoRoot string, files []models.FileRecord, info *project.
 	return s
 }
 
-// writeBundleJSON mirrors internal/cli/pack.go writeBundleJSON for
-// the same avoid-cycle reason; keeping it here means taskflow.Run
-// has no external dependencies on the cli package.
-func writeBundleJSON(path string, b models.Bundle) error {
+// WriteBundleJSON serialises a bundle to disk as indented JSON. Exported so
+// cli/ and ui/ share one copy.
+func WriteBundleJSON(path string, b models.Bundle) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
