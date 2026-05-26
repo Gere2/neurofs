@@ -4,5 +4,10 @@ bin/
 *.prompt
 *.env
 
-.claude/worktrees/
+.claude/
+.DS_Store
+
+audit/records/
+audit/bundles/
+
 /neurofs
