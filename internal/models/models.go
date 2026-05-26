@@ -14,6 +14,10 @@ const (
 	LangMarkdown   Lang = "markdown"
 	LangJSON       Lang = "json"
 	LangYAML       Lang = "yaml"
+	LangRust       Lang = "rust"
+	LangCpp        Lang = "cpp"
+	LangJava       Lang = "java"
+	LangRuby       Lang = "ruby"
 	LangUnknown    Lang = "unknown"
 )
 

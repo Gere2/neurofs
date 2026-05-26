@@ -32,6 +32,14 @@ func Parse(lang models.Lang, content string) Result {
 		return parseMarkdown(content)
 	case models.LangJSON, models.LangYAML:
 		return parseStructured(lang, content)
+	case models.LangRust:
+		return parseRust(content)
+	case models.LangCpp:
+		return parseCpp(content)
+	case models.LangJava:
+		return parseJava(content)
+	case models.LangRuby:
+		return parseRuby(content)
 	default:
 		return Result{}
 	}
@@ -599,4 +607,212 @@ func deduplicateSymbols(syms []models.Symbol) []models.Symbol {
 		}
 	}
 	return out
+}
+
+// ─── Rust ────────────────────────────────────────────────────────────────────
+
+var (
+	reRustUse    = regexp.MustCompile(`(?m)^use\s+([^;{]+)`)
+	reRustMod    = regexp.MustCompile(`(?m)^mod\s+(\w+);`)
+	reRustFn     = regexp.MustCompile(`(?m)^(?:pub\s+)?(?:async\s+)?fn\s+(\w+)`)
+	reRustStruct = regexp.MustCompile(`(?m)^(?:pub\s+)?struct\s+(\w+)`)
+	reRustEnum   = regexp.MustCompile(`(?m)^(?:pub\s+)?enum\s+(\w+)`)
+	reRustTrait  = regexp.MustCompile(`(?m)^(?:pub\s+)?trait\s+(\w+)`)
+	reRustImpl   = regexp.MustCompile(`(?m)^impl(?:\s+<[^>]*>)?\s+(\w+)`)
+)
+
+func parseRust(content string) Result {
+	var r Result
+
+	for _, m := range reRustUse.FindAllStringSubmatch(content, -1) {
+		r.Imports = append(r.Imports, strings.TrimSpace(m[1]))
+	}
+	for _, m := range reRustMod.FindAllStringSubmatch(content, -1) {
+		r.Imports = append(r.Imports, m[1])
+	}
+	r.Imports = unique(r.Imports)
+
+	lines := lineIndex(content)
+
+	addSym := func(re *regexp.Regexp, kind string) {
+		for _, m := range re.FindAllStringSubmatchIndex(content, -1) {
+			r.Symbols = append(r.Symbols, models.Symbol{
+				Name: content[m[2]:m[3]],
+				Kind: kind,
+				Line: lineForOffset(lines, m[0]),
+			})
+		}
+	}
+
+	addSym(reRustFn, "func")
+	addSym(reRustStruct, "struct")
+	addSym(reRustEnum, "enum")
+	addSym(reRustTrait, "trait")
+	addSym(reRustImpl, "impl")
+	r.Symbols = deduplicateSymbols(r.Symbols)
+
+	var sb strings.Builder
+	for _, imp := range r.Imports {
+		fmt.Fprintf(&sb, "// import: %s\n", imp)
+	}
+	for _, s := range r.Symbols {
+		switch s.Kind {
+		case "func":
+			fmt.Fprintf(&sb, "fn %s(...) { ... }\n", s.Name)
+		case "struct":
+			fmt.Fprintf(&sb, "struct %s { ... }\n", s.Name)
+		case "enum":
+			fmt.Fprintf(&sb, "enum %s { ... }\n", s.Name)
+		case "trait":
+			fmt.Fprintf(&sb, "trait %s { ... }\n", s.Name)
+		case "impl":
+			fmt.Fprintf(&sb, "impl %s { ... }\n", s.Name)
+		}
+	}
+	r.Signature = sb.String()
+	return r
+}
+
+// ─── C++ ─────────────────────────────────────────────────────────────────────
+
+var (
+	reCppInclude     = regexp.MustCompile(`(?m)^#include\s+["<]([^">]+)[">]`)
+	reCppClassStruct = regexp.MustCompile(`(?m)^(?:class|struct)\s+(\w+)`)
+	reCppFn          = regexp.MustCompile(`(?m)^\s*(?:\w+(?:<[^>]*>)?\s+)+(\w+)\s*\([^)]*\)\s*(?:const\s*)?[\{;]`)
+)
+
+func parseCpp(content string) Result {
+	var r Result
+
+	for _, m := range reCppInclude.FindAllStringSubmatch(content, -1) {
+		r.Imports = append(r.Imports, m[1])
+	}
+	r.Imports = unique(r.Imports)
+
+	lines := lineIndex(content)
+
+	addSym := func(re *regexp.Regexp, kind string) {
+		for _, m := range re.FindAllStringSubmatchIndex(content, -1) {
+			r.Symbols = append(r.Symbols, models.Symbol{
+				Name: content[m[2]:m[3]],
+				Kind: kind,
+				Line: lineForOffset(lines, m[0]),
+			})
+		}
+	}
+
+	addSym(reCppClassStruct, "class")
+	addSym(reCppFn, "func")
+	r.Symbols = deduplicateSymbols(r.Symbols)
+
+	var sb strings.Builder
+	for _, imp := range r.Imports {
+		fmt.Fprintf(&sb, "#include <%s>\n", imp)
+	}
+	for _, s := range r.Symbols {
+		switch s.Kind {
+		case "class":
+			fmt.Fprintf(&sb, "class/struct %s { ... }\n", s.Name)
+		case "func":
+			fmt.Fprintf(&sb, "%s(...)\n", s.Name)
+		}
+	}
+	r.Signature = sb.String()
+	return r
+}
+
+// ─── Java ────────────────────────────────────────────────────────────────────
+
+var (
+	reJavaImport = regexp.MustCompile(`(?m)^import\s+([^;]+);`)
+	reJavaClass  = regexp.MustCompile(`(?m)^\s*(?:(?:public|protected|private|static|abstract|final)\s+)*(?:class|interface|enum)\s+(\w+)`)
+	reJavaMethod = regexp.MustCompile(`(?m)^\s*(?:(?:public|protected|private|static|final|abstract|synchronized)\s+)+(?:[\w<>\[\]]+\s+)+(\w+)\s*\([^)]*\)`)
+)
+
+func parseJava(content string) Result {
+	var r Result
+
+	for _, m := range reJavaImport.FindAllStringSubmatch(content, -1) {
+		r.Imports = append(r.Imports, strings.TrimSpace(m[1]))
+	}
+	r.Imports = unique(r.Imports)
+
+	lines := lineIndex(content)
+
+	addSym := func(re *regexp.Regexp, kind string) {
+		for _, m := range re.FindAllStringSubmatchIndex(content, -1) {
+			r.Symbols = append(r.Symbols, models.Symbol{
+				Name: content[m[2]:m[3]],
+				Kind: kind,
+				Line: lineForOffset(lines, m[0]),
+			})
+		}
+	}
+
+	addSym(reJavaClass, "class")
+	addSym(reJavaMethod, "method")
+	r.Symbols = deduplicateSymbols(r.Symbols)
+
+	var sb strings.Builder
+	for _, imp := range r.Imports {
+		fmt.Fprintf(&sb, "import %s;\n", imp)
+	}
+	for _, s := range r.Symbols {
+		switch s.Kind {
+		case "class":
+			fmt.Fprintf(&sb, "class/interface %s { ... }\n", s.Name)
+		case "method":
+			fmt.Fprintf(&sb, "  %s(...)\n", s.Name)
+		}
+	}
+	r.Signature = sb.String()
+	return r
+}
+
+// ─── Ruby ────────────────────────────────────────────────────────────────────
+
+var (
+	reRubyRequire     = regexp.MustCompile(`(?m)^require(?:_relative)?\s+['"]([^'"]+)['"]`)
+	reRubyClassModule = regexp.MustCompile(`(?m)^(?:class|module)\s+(\w+)`)
+	reRubyDef         = regexp.MustCompile(`(?m)^\s*def\s+(\w+[\?!]?)`)
+)
+
+func parseRuby(content string) Result {
+	var r Result
+
+	for _, m := range reRubyRequire.FindAllStringSubmatch(content, -1) {
+		r.Imports = append(r.Imports, m[1])
+	}
+	r.Imports = unique(r.Imports)
+
+	lines := lineIndex(content)
+
+	addSym := func(re *regexp.Regexp, kind string) {
+		for _, m := range re.FindAllStringSubmatchIndex(content, -1) {
+			r.Symbols = append(r.Symbols, models.Symbol{
+				Name: content[m[2]:m[3]],
+				Kind: kind,
+				Line: lineForOffset(lines, m[0]),
+			})
+		}
+	}
+
+	addSym(reRubyClassModule, "class")
+	addSym(reRubyDef, "func")
+	r.Symbols = deduplicateSymbols(r.Symbols)
+
+	var sb strings.Builder
+	for _, imp := range r.Imports {
+		fmt.Fprintf(&sb, "require '%s'\n", imp)
+	}
+	for _, s := range r.Symbols {
+		switch s.Kind {
+		case "class":
+			fmt.Fprintf(&sb, "class/module %s\n", s.Name)
+		case "func":
+			fmt.Fprintf(&sb, "  def %s\n", s.Name)
+		}
+	}
+	r.Signature = sb.String()
+	return r
 }

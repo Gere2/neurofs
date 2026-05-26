@@ -275,6 +275,77 @@ Some content here.
 	assertContainsSymbol(t, result.Symbols, "Data Layer", "h2")
 }
 
+func TestParseRust(t *testing.T) {
+	content := `
+use std::collections::HashMap;
+mod auth;
+
+pub struct User {
+    id: u64,
+}
+
+pub trait Authenticator {
+    fn authenticate(&self) -> bool;
+}
+
+pub async fn run_server() {}
+`
+	result := parser.Parse(models.LangRust, content)
+	assertContainsSymbol(t, result.Symbols, "User", "struct")
+	assertContainsSymbol(t, result.Symbols, "Authenticator", "trait")
+	assertContainsSymbol(t, result.Symbols, "run_server", "func")
+	assertContainsImport(t, result.Imports, "std::collections::HashMap")
+	assertContainsImport(t, result.Imports, "auth")
+}
+
+func TestParseCpp(t *testing.T) {
+	content := `
+#include <iostream>
+#include "auth.h"
+
+class UserManager {
+public:
+    void login();
+};
+`
+	result := parser.Parse(models.LangCpp, content)
+	assertContainsSymbol(t, result.Symbols, "UserManager", "class")
+	assertContainsSymbol(t, result.Symbols, "login", "func")
+	assertContainsImport(t, result.Imports, "iostream")
+	assertContainsImport(t, result.Imports, "auth.h")
+}
+
+func TestParseJava(t *testing.T) {
+	content := `
+import java.util.List;
+
+public class App {
+    public static void main(String[] args) {}
+}
+`
+	result := parser.Parse(models.LangJava, content)
+	assertContainsSymbol(t, result.Symbols, "App", "class")
+	assertContainsSymbol(t, result.Symbols, "main", "method")
+	assertContainsImport(t, result.Imports, "java.util.List")
+}
+
+func TestParseRuby(t *testing.T) {
+	content := `
+require 'json'
+require_relative 'auth'
+
+class Controller
+  def index
+  end
+end
+`
+	result := parser.Parse(models.LangRuby, content)
+	assertContainsSymbol(t, result.Symbols, "Controller", "class")
+	assertContainsSymbol(t, result.Symbols, "index", "func")
+	assertContainsImport(t, result.Imports, "json")
+	assertContainsImport(t, result.Imports, "auth")
+}
+
 func TestParseUnknown(t *testing.T) {
 	result := parser.Parse(models.LangUnknown, "anything")
 	if len(result.Symbols) != 0 || len(result.Imports) != 0 {
