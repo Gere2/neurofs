@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/quality"
 )
@@ -483,4 +484,37 @@ func mkRatings(yes, no, skip int) []quality.Entry {
 		out = append(out, quality.Entry{Rating: quality.RatingSkip})
 	}
 	return out
+}
+
+func TestEvaluateG4(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no records → SKIP", func(t *testing.T) {
+		got := EvaluateG4(nil, DefaultG4Thresholds())
+		if got.Verdict != Skip {
+			t.Errorf("expected SKIP when no records, got %s", got.Verdict)
+		}
+	})
+
+	t.Run("mean drift below threshold → PASS", func(t *testing.T) {
+		records := []audit.AuditRecord{
+			{Drift: audit.DriftReport{Rate: 0.10}},
+			{Drift: audit.DriftReport{Rate: 0.05}},
+		}
+		got := EvaluateG4(records, DefaultG4Thresholds())
+		if got.Verdict != Pass {
+			t.Errorf("expected PASS when mean drift is 7.5%%, got %s", got.Verdict)
+		}
+	})
+
+	t.Run("mean drift above threshold → FAIL", func(t *testing.T) {
+		records := []audit.AuditRecord{
+			{Drift: audit.DriftReport{Rate: 0.20}},
+			{Drift: audit.DriftReport{Rate: 0.30}},
+		}
+		got := EvaluateG4(records, DefaultG4Thresholds())
+		if got.Verdict != Fail {
+			t.Errorf("expected FAIL when mean drift is 25%%, got %s", got.Verdict)
+		}
+	})
 }

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/gate"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
@@ -132,12 +133,19 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 			// G2 post-processing depends on G3 outcome.
 			g2 := gate.PostprocessG2(g2res, g3)
 
-			// G4 — drift over historical bundles. Not yet automated; we
-			// emit a SKIP with a clear pointer to the manual flow.
-			g4 := gate.Criterion{
-				ID: "G4", Name: "Replay drift", Verdict: gate.Skip,
-				Detail: "manual: `audit replay --bundle X --response Y`; automation deferred to a later iteration",
+			// G4 — drift over historical bundles.
+			recordsDir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
+			paths, err := audit.ListRecords(recordsDir)
+			var records []audit.AuditRecord
+			if err == nil && len(paths) > 0 {
+				for _, p := range paths {
+					rec, err := audit.LoadRecord(p)
+					if err == nil {
+						records = append(records, rec)
+					}
+				}
 			}
+			g4 := gate.EvaluateG4(records, gate.DefaultG4Thresholds())
 
 			// G5 — cross-shape sanity. Manual; this command only inspects
 			// the current repo.

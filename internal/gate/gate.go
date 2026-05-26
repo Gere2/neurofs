@@ -303,6 +303,52 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 	return c
 }
 
+// G4Thresholds parameterises response drift. Default: 15% max mean drift.
+type G4Thresholds struct {
+	MaxMeanDrift float64
+}
+
+// DefaultG4Thresholds returns the default drift threshold.
+func DefaultG4Thresholds() G4Thresholds {
+	return G4Thresholds{MaxMeanDrift: 0.15}
+}
+
+// EvaluateG4 evaluates response drift over historical audit records.
+// It loads all audit records and computes the mean drift rate.
+//
+// Verdict:
+//   - SKIP if no records are present.
+//   - FAIL if the mean drift rate is above the threshold.
+//   - PASS otherwise.
+func EvaluateG4(records []audit.AuditRecord, th G4Thresholds) Criterion {
+	c := Criterion{ID: "G4", Name: "Replay drift"}
+	if len(records) == 0 {
+		c.Verdict = Skip
+		c.Detail = "no audit records available — run `neurofs audit replay` or use the UI to produce them"
+		return c
+	}
+	sum := 0.0
+	for _, r := range records {
+		sum += r.Drift.Rate
+	}
+	mean := sum / float64(len(records))
+	c.Numbers = map[string]float64{
+		"records":    float64(len(records)),
+		"mean_drift": mean,
+		"max_drift":  th.MaxMeanDrift,
+	}
+	if mean > th.MaxMeanDrift {
+		c.Verdict = Fail
+		c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d records is above %.0f%% threshold",
+			mean*100, len(records), th.MaxMeanDrift*100)
+		return c
+	}
+	c.Verdict = Pass
+	c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d records (threshold %.0f%%)",
+		mean*100, len(records), th.MaxMeanDrift*100)
+	return c
+}
+
 // PostprocessG2 downgrades G2 from PASS to WARN when median utilisation
 // is low AND G3 failed. Rationale: low utilisation alone is fine (an
 // excerpt-shaped bundle is naturally smaller). Low utilisation paired
