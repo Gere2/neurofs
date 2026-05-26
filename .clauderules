@@ -1,0 +1,66 @@
+# Reglas de Repositorio para Claude Code, Cursor y Agentes Autónomos
+
+Este archivo contiene instrucciones obligatorias para cualquier IA o agente de codificación que opere en este repositorio. Claude Code y Cursor deben leer y aplicar estas instrucciones en cada respuesta y acción que realicen.
+
+---
+
+## 1. Instrucción Fundamental: Uso Obligatorio de NeuroFS
+
+**NUNCA realices búsquedas manuales exhaustivas o lecturas ciegas de archivos** (como ejecutar comandos secuenciales de `cat` sobre múltiples archivos, o búsquedas con `grep` para rastrear la arquitectura). Esto desperdicia tokens, degrada el rendimiento de la ventana de contexto y aumenta los costes innecesariamente.
+
+En su lugar, **utiliza el compilador de contexto local NeuroFS** para orientarte y recuperar el código relevante.
+
+### Herramientas Disponibles:
+1. **Si estás integrado como host MCP (Recomendado)**:
+   * `neurofs_task(query, budget)`: Devuelve un prompt estructurado optimizado con el código relevante compilado para resolver una tarea o responder una consulta.
+   * `neurofs_view_file(path, repo)`: Lee de forma segura y completa el contenido de un archivo específico que esté en el repositorio.
+   * `neurofs_scan(repo)`: Reindexa el repositorio para actualizar la base de datos de SQLite.
+2. **Si ejecutas a través de la terminal (CLI)**:
+   * `./bin/neurofs task "<tu consulta>"` (Compila prompt de Claude).
+   * `./bin/neurofs scan` (Indexa el repositorio).
+
+---
+
+## 2. Obligaciones en Cada Respuesta (Grounding y Citas)
+
+Para garantizar la precisión del código generado y evitar alucinaciones, debes cumplir estrictamente lo siguiente en cada interacción:
+
+* **Cita Obligatoria (`ruta:línea`)**: Cada vez que realices una afirmación sobre el funcionamiento del código o expliques una sección, debes citar explícitamente el archivo y el rango de líneas exacto (ej. `internal/ranking/test_files.go:45-56`).
+* **Validación de Estado (`<git_status>` y `<git_diff>`)**: 
+  * Antes de realizar cualquier cambio, debes revisar las etiquetas `<git_status>` y `<git_diff>` inyectadas en tu prompt (si están presentes). 
+  * Esto te permite identificar si el usuario o un agente previo tiene cambios no comprometidos en curso para evitar conflictos, regresiones o sobrescribir código activo.
+* **Prohibido Inventar/Suponer**:
+  * Si un fragmento de archivo está marcado como `rep="excerpt"`, es una vista parcial. No asumas el comportamiento de las líneas omitidas.
+  * Si necesitas ver el cuerpo completo de un archivo o función representado como `signature` o `excerpt`, utiliza la herramienta `neurofs_view_file` para leer su contenido completo antes de escribir código.
+  * Si falta contexto esencial, indica claramente qué ruta o símbolo necesitas expandir en lugar de suponer.
+
+---
+
+## 3. Estrategia de Contexto en Dos Fases
+
+Para maximizar la eficiencia en costes y el presupuesto de tokens:
+1. **Fase 1: Descubrimiento**: Llama a `neurofs_task` para obtener un mapa general estructurado del repositorio (que incluye firmas, extractos mínimos de alta relevancia y el estado de git).
+2. **Fase 2: Expansión de Precisión**: Si identificas archivos clave en los que vas a escribir código o realizar cambios complejos, llama a `neurofs_view_file` para leer exclusivamente la versión completa de esos archivos seleccionados.
+
+---
+
+## 4. Configuración del Servidor MCP de NeuroFS
+
+Si necesitas configurar el servidor MCP de NeuroFS en tus entornos de agente locales:
+
+* **Claude Code (`~/.claude.json`)**:
+  ```json
+  {
+    "mcpServers": {
+      "neurofs": {
+        "command": "/ruta/absoluta/a/NeuroMFS/bin/neurofs",
+        "args": ["mcp"]
+      }
+    }
+  }
+  ```
+* **Cursor**:
+  Añade un nuevo servidor MCP en `Settings -> Features -> MCP` con:
+  * Name: `neurofs`
+  * Type: `command`
+  * Command: `/ruta/absoluta/a/NeuroMFS/bin/neurofs mcp`
