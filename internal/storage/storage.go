@@ -73,7 +73,9 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("storage: open sqlite: %w", err)
 	}
 
-	_, _ = db.Exec("PRAGMA foreign_keys = ON;")
+	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
+		return nil, fmt.Errorf("storage: enable foreign keys: %w", err)
+	}
 
 	db.SetMaxOpenConns(1) // SQLite is single-writer
 
