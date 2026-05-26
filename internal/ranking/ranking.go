@@ -12,12 +12,14 @@
 package ranking
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/tokenbudget"
@@ -35,6 +37,7 @@ const (
 	weightDependencyMatch = 1.2
 	weightFocus           = 4.0
 	weightChanged         = 2.0
+	weightSemantic        = 4.0
 	// weightRootDoc is a floor for canonical project docs at the repo root
 	// (README, ARCHITECTURE, CONTRIBUTING, CHANGELOG). Without it, queries in
 	// languages other than the doc's language — or any query that does not
@@ -73,6 +76,10 @@ type Options struct {
 	// so active work surfaces above unrelated historical files at the same
 	// match quality.
 	ChangedFiles []string
+	// Embeddings maps file absolute paths to their embedding vectors.
+	Embeddings map[string][]float32
+	// QueryEmbedding is the embedding vector of the search query.
+	QueryEmbedding []float32
 }
 
 // Rank scores all files against the query and returns them sorted by score
@@ -111,6 +118,25 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	for i, f := range files {
 		sc, reasons := scoreFile(f, terms)
 		scored[i] = models.ScoredFile{Record: f, Score: sc, Reasons: reasons}
+	}
+
+	// Apply semantic similarity boost if embeddings are provided
+	if len(opts.QueryEmbedding) > 0 && len(opts.Embeddings) > 0 {
+		for i := range scored {
+			if vec, ok := opts.Embeddings[scored[i].Record.Path]; ok {
+				sim := embeddings.CosineSimilarity(opts.QueryEmbedding, vec)
+				// Cosine similarity can be negative, clamp it to >= 0 for scoring boost
+				if sim > 0 {
+					boost := sim * weightSemantic
+					scored[i].Score += boost
+					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
+						Signal: "semantic_match",
+						Detail: fmt.Sprintf("similarity: %.3f", sim),
+						Weight: boost,
+					})
+				}
+			}
+		}
 	}
 
 	if opts.Project != nil {
@@ -546,6 +572,7 @@ func SignalWeights() map[string]float64 {
 		"focus":            weightFocus,
 		"changed":          weightChanged,
 		"root_doc":         weightRootDoc,
+		"semantic_match":   weightSemantic,
 	}
 }
 

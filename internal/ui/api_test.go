@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-
 func TestConfineToRepo_AcceptsRelativeInsideRepo(t *testing.T) {
 	root := t.TempDir()
 	got, err := confineToRepo(root, "audit/records/x.json", false)

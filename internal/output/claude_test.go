@@ -100,9 +100,9 @@ func TestWriteClaudeInstructionsCoverExcerpt(t *testing.T) {
 
 	for _, want := range []string{
 		"<instructions>",
-		"`excerpt`",                            // rep value mentioned literally
-		"partial view",                         // framing
-		"do not assume unseen code",            // anti-hallucination clause
+		"`excerpt`",                 // rep value mentioned literally
+		"partial view",              // framing
+		"do not assume unseen code", // anti-hallucination clause
 		"`signature`, `structural_note`, or `excerpt`", // grouped guidance
 		"ask for the full file or a wider excerpt",     // remediation path
 	} {
@@ -164,10 +164,10 @@ function logout() { /* ... */ }
 	}
 	// Self-describing body: every marker the extractor emits must survive.
 	for _, want := range []string{
-		"// representation: excerpt",                  // body header
-		"// ── src/auth.ts:12-18 (authenticate) ──",   // line-range header
-		"// ── src/auth.ts:60-65 (logout) ──",         // second block header
-		"// ... 40 lines omitted ...",                 // elision marker
+		"// representation: excerpt",                // body header
+		"// ── src/auth.ts:12-18 (authenticate) ──", // line-range header
+		"// ── src/auth.ts:60-65 (logout) ──",       // second block header
+		"// ... 40 lines omitted ...",               // elision marker
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("excerpt marker missing in writer output: %q\n---\n%s", want, got)
@@ -220,5 +220,25 @@ func TestWriteClaudeThroughDispatcher(t *testing.T) {
 	}
 	if !strings.HasPrefix(buf.String(), "<task>") {
 		t.Errorf("claude dispatcher should lead with <task>, got: %s", buf.String())
+	}
+}
+
+func TestWriteClaudeGitStatusAndDiff(t *testing.T) {
+	b := models.Bundle{Query: "q"}
+	summary := output.RepoSummary{
+		GitStatus: "M  main.go\n?? newfile.go",
+		GitDiff:   "diff --git a/main.go b/main.go\n...",
+	}
+	var buf bytes.Buffer
+	if err := output.WriteClaude(&buf, b, summary); err != nil {
+		t.Fatalf("WriteClaude: %v", err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, "<git_status>\nM  main.go\n?? newfile.go\n</git_status>") {
+		t.Errorf("expected <git_status> tags with content, got:\n%s", got)
+	}
+	if !strings.Contains(got, "<git_diff>\ndiff --git a/main.go b/main.go\n...\n</git_diff>") {
+		t.Errorf("expected <git_diff> tags with content, got:\n%s", got)
 	}
 }

@@ -45,50 +45,10 @@ func Run(opts Options) error {
 		startupDir = cwd
 	}
 
-	mux := http.NewServeMux()
-
-	// Static assets are served from the embedded subtree rooted at static/.
-	// We strip the embed prefix so routes look like /static/app.js, not
-	// /static/static/app.js.
-	sub, err := fs.Sub(assets, "static")
+	mux, err := buildMux()
 	if err != nil {
-		return fmt.Errorf("ui: embed subfs: %w", err)
+		return err
 	}
-	// no-cache wrapper: assets are embedded at build time, so the binary
-	// is the source of truth. Without these headers, browsers happily
-	// serve a stale app.js after the user upgrades, and the resulting
-	// HTML/JS skew throws "null is not an object" at every getElementById.
-	noCache := func(h http.Handler) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-			w.Header().Set("Pragma", "no-cache")
-			w.Header().Set("Expires", "0")
-			h.ServeHTTP(w, r)
-		}
-	}
-	fileServer := http.FileServer(http.FS(sub))
-	mux.Handle("/static/", noCache(http.StripPrefix("/static/", fileServer)))
-
-	// Root serves index.html directly so the app opens at `/` without a
-	// trailing /static path. Everything else is delegated by the API.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		data, err := fs.ReadFile(sub, "index.html")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
-		w.Header().Set("Pragma", "no-cache")
-		w.Header().Set("Expires", "0")
-		_, _ = w.Write(data)
-	})
-
-	registerAPI(mux)
 
 	srv := &http.Server{
 		Addr:    opts.Addr,
@@ -116,6 +76,100 @@ func Run(opts Options) error {
 		return err
 	}
 	return nil
+}
+
+// buildMux builds the common multiplexer for both the UI and Proxy servers.
+func buildMux() (*http.ServeMux, error) {
+	mux := http.NewServeMux()
+
+	sub, err := fs.Sub(assets, "static")
+	if err != nil {
+		return nil, fmt.Errorf("ui: embed subfs: %w", err)
+	}
+
+	noCache := func(h http.Handler) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			w.Header().Set("Pragma", "no-cache")
+			w.Header().Set("Expires", "0")
+			h.ServeHTTP(w, r)
+		}
+	}
+	fileServer := http.FileServer(http.FS(sub))
+	mux.Handle("/static/", noCache(http.StripPrefix("/static/", fileServer)))
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		data, err := fs.ReadFile(sub, "index.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		w.Header().Set("Pragma", "no-cache")
+		w.Header().Set("Expires", "0")
+		_, _ = w.Write(data)
+	})
+
+	registerAPI(mux)
+
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	return mux, nil
+}
+
+// RunProxy starts a dedicated Anthropic-compatible proxy server.
+func RunProxy(opts Options) error {
+	if opts.Addr == "" {
+		opts.Addr = "127.0.0.1:7777"
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		startupDir = cwd
+	}
+
+	mux, err := buildMux()
+	if err != nil {
+		return err
+	}
+
+	srv := &http.Server{
+		Addr:              opts.Addr,
+		Handler:           withProxyLogger(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      3 * time.Minute,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	fmt.Printf("NeuroFS Multimodel Proxy server listening at http://%s\n", opts.Addr)
+	fmt.Printf("  Target repository: %s\n", startupDir)
+	fmt.Printf("  For Anthropic (Claude Code, etc.), set: ANTHROPIC_BASE_URL=http://%s/v1\n", opts.Addr)
+	fmt.Printf("  For OpenAI (Cursor IDE, Copilot, etc.), set: OPENAI_BASE_URL=http://%s/v1\n", opts.Addr)
+	fmt.Printf("  Open your browser at http://%s to monitor savings\n", opts.Addr)
+
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+func withProxyLogger(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		h.ServeHTTP(w, r)
+		if r.URL.Path == "/v1/messages" || r.URL.Path == "/proxy/v1/messages" ||
+			r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/proxy/v1/chat/completions" {
+			fmt.Printf("  %s %s  %s\n", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		}
+	})
 }
 
 // openInBrowser tries to launch the default browser. Kept platform-light:

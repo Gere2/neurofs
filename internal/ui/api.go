@@ -18,6 +18,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
@@ -43,6 +44,12 @@ func registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("/api/resume-seed", getOnly(handleResumeSeed))
 	mux.HandleFunc("/api/task", postOnly(handleTask))
 	mux.HandleFunc("/api/bootstrap", getOnly(handleBootstrap))
+	mux.HandleFunc("/api/proxy/stats", getOnly(handleProxyStats))
+	mux.HandleFunc("/api/chat", postOnly(handleChat))
+	mux.HandleFunc("/proxy/v1/messages", postOnly(handleProxyMessages))
+	mux.HandleFunc("/v1/messages", postOnly(handleProxyMessages))
+	mux.HandleFunc("/proxy/v1/chat/completions", postOnly(handleProxyOpenAIMessages))
+	mux.HandleFunc("/v1/chat/completions", postOnly(handleProxyOpenAIMessages))
 }
 
 // --------------------- method gates ---------------------
@@ -186,10 +193,10 @@ type scanReq struct {
 	Verbose bool   `json:"verbose"`
 }
 type scanResp struct {
-	OK      bool             `json:"ok"`
-	Summary map[string]any   `json:"summary"`
-	Lang    map[string]int   `json:"lang,omitempty"`
-	Errors  []string         `json:"errors,omitempty"`
+	OK      bool           `json:"ok"`
+	Summary map[string]any `json:"summary"`
+	Lang    map[string]int `json:"lang,omitempty"`
+	Errors  []string       `json:"errors,omitempty"`
 }
 
 func handleScan(w http.ResponseWriter, r *http.Request) {
@@ -252,11 +259,11 @@ type packReq struct {
 }
 
 type packResp struct {
-	Prompt     string               `json:"prompt"`
-	Stats      models.BundleStats   `json:"stats"`
-	BundlePath string               `json:"bundle_path,omitempty"`
-	Fragments  []fragmentView       `json:"fragments"`
-	Query      string               `json:"query"`
+	Prompt     string             `json:"prompt"`
+	Stats      models.BundleStats `json:"stats"`
+	BundlePath string             `json:"bundle_path,omitempty"`
+	Fragments  []fragmentView     `json:"fragments"`
+	Query      string             `json:"query"`
 }
 
 type fragmentView struct {
@@ -301,9 +308,15 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	embClient := embeddings.NewClient()
+	queryEmb, _ := embClient.GetEmbedding(context.Background(), req.Query)
+	fileEmbs, _ := db.AllEmbeddings()
+
 	rankOpts := ranking.Options{
-		Project: loadProjectInfo(db),
-		Focus:   mergeFocus(req.Focus, req.InheritedFocus),
+		Project:        loadProjectInfo(db),
+		Focus:          mergeFocus(req.Focus, req.InheritedFocus),
+		QueryEmbedding: queryEmb,
+		Embeddings:     fileEmbs,
 	}
 	if req.Changed {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
@@ -325,7 +338,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	// verbatim. Using the same output.WriteClaude path means what the UI
 	// shows is exactly what the CLI would emit.
 	var promptBuf bytes.Buffer
-	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(files, loadProjectInfo(db))); err != nil {
+	if err := output.WriteClaude(&promptBuf, bundle, buildRepoSummary(cfg.RepoRoot, files, loadProjectInfo(db))); err != nil {
 		writeErr(w, http.StatusInternalServerError, "render prompt: "+err.Error())
 		return
 	}
@@ -398,8 +411,8 @@ type replayReq struct {
 }
 
 type replayResp struct {
-	Record     audit.AuditRecord `json:"record"`
-	SavedPath  string            `json:"saved_path,omitempty"`
+	Record    audit.AuditRecord `json:"record"`
+	SavedPath string            `json:"saved_path,omitempty"`
 }
 
 func handleReplay(w http.ResponseWriter, r *http.Request) {
@@ -1113,7 +1126,7 @@ func loadBundleJSON(path string) (models.Bundle, error) {
 	return b, nil
 }
 
-func buildRepoSummary(files []models.FileRecord, info *project.Info) output.RepoSummary {
+func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
 	langs := make(map[string]int, 8)
 	symbols := 0
 	for _, f := range files {
@@ -1124,6 +1137,8 @@ func buildRepoSummary(files []models.FileRecord, info *project.Info) output.Repo
 		Files:     len(files),
 		Symbols:   symbols,
 		Languages: langs,
+		GitDiff:   taskflow.GitDiff(repoRoot),
+		GitStatus: taskflow.GitStatus(repoRoot),
 	}
 	if info != nil {
 		s.Name = info.Label()

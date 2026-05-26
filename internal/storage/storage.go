@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	_ "modernc.org/sqlite"
 )
@@ -34,6 +35,25 @@ CREATE TABLE IF NOT EXISTS metadata (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS proxy_logs (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp     TEXT    NOT NULL,
+    model         TEXT    NOT NULL,
+    query         TEXT    NOT NULL,
+    tokens_before INTEGER NOT NULL,
+    tokens_after  INTEGER NOT NULL,
+    saved_tokens  INTEGER NOT NULL,
+    savings_usd   REAL    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_proxy_logs_timestamp ON proxy_logs(timestamp);
+
+CREATE TABLE IF NOT EXISTS file_embeddings (
+    path      TEXT PRIMARY KEY,
+    embedding BLOB NOT NULL,
+    FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+);
 `
 
 // DB wraps a SQLite connection and provides typed read/write operations.
@@ -52,6 +72,8 @@ func Open(dbPath string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: open sqlite: %w", err)
 	}
+
+	_, _ = db.Exec("PRAGMA foreign_keys = ON;")
 
 	db.SetMaxOpenConns(1) // SQLite is single-writer
 
@@ -273,10 +295,10 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 // scanFile reads one row from a files query into a FileRecord.
 func scanFile(rows *sql.Rows) (models.FileRecord, error) {
 	var (
-		r        models.FileRecord
-		lang     string
-		symsJSON string
-		impsJSON string
+		r         models.FileRecord
+		lang      string
+		symsJSON  string
+		impsJSON  string
 		indexedAt string
 	)
 	if err := rows.Scan(
@@ -304,3 +326,132 @@ func scanFile(rows *sql.Rows) (models.FileRecord, error) {
 	}
 	return r, nil
 }
+
+// ProxyLogRecord represents a persisted log of a proxy invocation.
+type ProxyLogRecord struct {
+	ID           int64
+	Timestamp    time.Time
+	Model        string
+	Query        string
+	TokensBefore int
+	TokensAfter  int
+	SavedTokens  int
+	SavingsUSD   float64
+}
+
+// InsertProxyLog inserts a proxy log record into the database.
+func (s *DB) InsertProxyLog(timestamp time.Time, model, query string, before, after, saved int, usd float64) error {
+	_, err := s.db.Exec(`
+		INSERT INTO proxy_logs (timestamp, model, query, tokens_before, tokens_after, saved_tokens, savings_usd)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`, timestamp.UTC().Format(time.RFC3339), model, query, before, after, saved, usd)
+	return err
+}
+
+// GetProxyLogs retrieves the recent proxy log records (up to limit).
+func (s *DB) GetProxyLogs(limit int) ([]ProxyLogRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, timestamp, model, query, tokens_before, tokens_after, saved_tokens, savings_usd
+		FROM proxy_logs
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []ProxyLogRecord
+	for rows.Next() {
+		var (
+			l ProxyLogRecord
+			ts string
+		)
+		err := rows.Scan(&l.ID, &ts, &l.Model, &l.Query, &l.TokensBefore, &l.TokensAfter, &l.SavedTokens, &l.SavingsUSD)
+		if err != nil {
+			return nil, err
+		}
+		t, err := time.Parse(time.RFC3339, ts)
+		if err == nil {
+			l.Timestamp = t
+		}
+		logs = append(logs, l)
+	}
+	return logs, rows.Err()
+}
+
+// GetProxySummary aggregates proxy stats.
+func (s *DB) GetProxySummary() (int, int, float64, error) {
+	var (
+		count int
+		saved int
+		usd   float64
+	)
+	err := s.db.QueryRow(`
+		SELECT COUNT(*), COALESCE(SUM(saved_tokens), 0), COALESCE(SUM(savings_usd), 0.0)
+		FROM proxy_logs
+	`).Scan(&count, &saved, &usd)
+	return count, saved, usd, err
+}
+
+// SaveEmbedding stores the binary embedding for a given file path.
+func (s *DB) SaveEmbedding(path string, embedding []float32) error {
+	encoded, err := embeddings.EncodeEmbedding(embedding)
+	if err != nil {
+		return fmt.Errorf("storage: encode embedding: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO file_embeddings (path, embedding)
+		VALUES (?, ?)
+		ON CONFLICT(path) DO UPDATE SET embedding = excluded.embedding
+	`, path, encoded)
+	if err != nil {
+		return fmt.Errorf("storage: save embedding: %w", err)
+	}
+	return nil
+}
+
+// GetEmbedding retrieves the embedding vector for a given file path.
+// Returns (nil, false, nil) if not found.
+func (s *DB) GetEmbedding(path string) ([]float32, bool, error) {
+	var encoded []byte
+	err := s.db.QueryRow(`SELECT embedding FROM file_embeddings WHERE path = ?`, path).Scan(&encoded)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("storage: query embedding: %w", err)
+	}
+	vec, err := embeddings.DecodeEmbedding(encoded)
+	if err != nil {
+		return nil, false, fmt.Errorf("storage: decode embedding: %w", err)
+	}
+	return vec, true, nil
+}
+
+// AllEmbeddings returns a map of all file paths to their embedding vectors.
+func (s *DB) AllEmbeddings() (map[string][]float32, error) {
+	rows, err := s.db.Query(`SELECT path, embedding FROM file_embeddings`)
+	if err != nil {
+		return nil, fmt.Errorf("storage: query all embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	res := make(map[string][]float32)
+	for rows.Next() {
+		var (
+			path    string
+			encoded []byte
+		)
+		if err := rows.Scan(&path, &encoded); err != nil {
+			return nil, fmt.Errorf("storage: scan embedding: %w", err)
+		}
+		vec, err := embeddings.DecodeEmbedding(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("storage: decode embedding for %s: %w", path, err)
+		}
+		res[path] = vec
+	}
+	return res, rows.Err()
+}
+

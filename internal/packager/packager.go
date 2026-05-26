@@ -73,9 +73,9 @@ type Options struct {
 // upgradeCandidate holds the per-fragment data we need for the optional
 // second-pass body upgrade. We keep it package-private; callers never see it.
 type upgradeCandidate struct {
-	idx      int    // index into the fragments slice
-	path     string // absolute path on disk
-	rawToks  int    // tokens needed to upgrade to full_code
+	idx     int    // index into the fragments slice
+	path    string // absolute path on disk
+	rawToks int    // tokens needed to upgrade to full_code
 }
 
 // Pack takes a ranked list of scored files and assembles an auditable Bundle.

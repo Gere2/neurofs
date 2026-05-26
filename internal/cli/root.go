@@ -29,6 +29,7 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newGateCmd())
 	root.AddCommand(newUICmd())
 	root.AddCommand(newMcpCmd())
+	root.AddCommand(newProxyCmd())
 
 	return root
 }

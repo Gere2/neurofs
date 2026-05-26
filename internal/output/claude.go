@@ -22,6 +22,8 @@ type RepoSummary struct {
 	Files     int            // total indexed files
 	Symbols   int            // total indexed symbols
 	Entry     string         // best-effort primary entry point path
+	GitStatus string         // short git status output
+	GitDiff   string         // uncommitted git changes to show the agent
 }
 
 // WriteClaude renders a prompt-shaped view of the bundle, ready to paste
@@ -62,6 +64,14 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 			p("languages: %s\n", formatLanguages(summary.Languages))
 		}
 		p("</repo>\n\n")
+	}
+
+	if summary.GitStatus != "" {
+		p("<git_status>\n%s\n</git_status>\n\n", strings.TrimSpace(summary.GitStatus))
+	}
+
+	if summary.GitDiff != "" {
+		p("<git_diff>\n%s\n</git_diff>\n\n", strings.TrimSpace(summary.GitDiff))
 	}
 
 	p("<selection>\n")

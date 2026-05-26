@@ -9,6 +9,8 @@
 package taskflow
 
 import (
+	"bytes"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -19,8 +21,10 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
@@ -237,7 +241,15 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	}
 	info := loadProjectInfo(db)
 
-	ranked := ranking.RankWithOptions(files, query, ranking.Options{Project: info})
+	embClient := embeddings.NewClient()
+	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
+	fileEmbs, _ := db.AllEmbeddings()
+
+	ranked := ranking.RankWithOptions(files, query, ranking.Options{
+		Project:        info,
+		QueryEmbedding: queryEmb,
+		Embeddings:     fileEmbs,
+	})
 	bundle, err := packager.Pack(ranked, query, packager.Options{
 		Budget:           budget,
 		PreferSignatures: true,
@@ -255,7 +267,7 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	if err != nil {
 		return fmt.Errorf("create prompt: %w", err)
 	}
-	if err := output.WriteClaude(pf, bundle, buildRepoSummary(files, info)); err != nil {
+	if err := output.WriteClaude(pf, bundle, buildRepoSummary(cfg.RepoRoot, files, info)); err != nil {
 		pf.Close()
 		return fmt.Errorf("write prompt: %w", err)
 	}
@@ -280,10 +292,54 @@ func loadProjectInfo(db *storage.DB) *project.Info {
 	return project.Decode(raw)
 }
 
+// GitDiff runs `git diff HEAD` relative to repoRoot and returns the output
+// capped at 6000 characters to prevent budget exhaustion. Returns "" on error
+// or if git status is clean.
+func GitDiff(repoRoot string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "diff", "HEAD")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	res := out.String()
+	if len(res) > 6000 {
+		return res[:6000] + "\n\n[... git diff truncated to 6000 chars due to budget constraint ...]"
+	}
+	return res
+}
+
+// GitStatus runs `git status --short` relative to repoRoot and returns the output
+// capped at 2000 characters to prevent budget exhaustion. Returns "" on error
+// or if git status is clean.
+func GitStatus(repoRoot string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--short")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+
+	if err := cmd.Run(); err != nil {
+		return ""
+	}
+	res := out.String()
+	if len(res) > 2000 {
+		return res[:2000] + "\n\n[... git status truncated to 2000 chars due to budget constraint ...]"
+	}
+	return res
+}
+
 // buildRepoSummary mirrors internal/cli/pack.go for the same
 // reason as loadProjectInfo — avoiding a cli→taskflow import cycle.
 // A few lines of dupe beats a shared "miscellany" package.
-func buildRepoSummary(files []models.FileRecord, info *project.Info) output.RepoSummary {
+func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
 	langs := make(map[string]int, 8)
 	symbols := 0
 	for _, f := range files {
@@ -294,6 +350,8 @@ func buildRepoSummary(files []models.FileRecord, info *project.Info) output.Repo
 		Files:     len(files),
 		Symbols:   symbols,
 		Languages: langs,
+		GitDiff:   GitDiff(repoRoot),
+		GitStatus: GitStatus(repoRoot),
 	}
 	if info != nil {
 		s.Name = info.Label()

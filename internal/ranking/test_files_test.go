@@ -58,12 +58,25 @@ func TestQueryWantsTests(t *testing.T) {
 		{"coverage report", true},
 		{"regression on Go const blocks", true},
 		{"golden output mismatch", true},
+		// Spanish positives
+		{"¿cómo se prueban las constantes?", true},
+		{"cobertura de código en ranker", true},
+		{"maquetas para base de datos", true},
+		{"testear parser de Go", true},
+
 		// negatives — implementation queries that mention adjacent words
 		{"how is authentication configured?", false},
 		{"latest release notes", false},
 		{"contest the score", false},
 		{"request handling", false},
 		{"specification of the bundle format", false},
+		{"Why can tests outrank production code and where is the penalty applied?", false},
+		{"how does the test penalty work?", false},
+		{"algorithm logic in testing", false},
+		// Spanish negatives
+		{"¿dónde se aplica la penalización de pruebas?", false},
+		{"explicación del algoritmo de ranking", false},
+		{"lógica de la penalización de tests", false},
 		{"", false},
 	}
 	for _, c := range cases {

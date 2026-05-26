@@ -309,6 +309,42 @@ func TestRankChangedBoost(t *testing.T) {
 	}
 }
 
+func TestRankSemanticBoost(t *testing.T) {
+	files := []models.FileRecord{
+		{RelPath: "src/semantic_auth.ts", Path: "/abs/src/semantic_auth.ts", Lang: models.LangTypeScript},
+		{RelPath: "src/other.ts", Path: "/abs/src/other.ts", Lang: models.LangTypeScript},
+	}
+
+	vecAuth := make([]float32, 1536)
+	vecAuth[0] = 1.0
+
+	vecOther := make([]float32, 1536)
+	vecOther[1] = 1.0
+
+	queryVec := make([]float32, 1536)
+	queryVec[0] = 1.0
+
+	embs := map[string][]float32{
+		"/abs/src/semantic_auth.ts": vecAuth,
+		"/abs/src/other.ts":         vecOther,
+	}
+
+	ranked := ranking.RankWithOptions(files, "anything", ranking.Options{
+		Embeddings:     embs,
+		QueryEmbedding: queryVec,
+	})
+
+	if len(ranked) < 2 {
+		t.Fatal("expected 2 ranked results")
+	}
+	if ranked[0].Record.RelPath != "src/semantic_auth.ts" {
+		t.Errorf("expected semantic_auth.ts first, got %s", ranked[0].Record.RelPath)
+	}
+	if !hasSignal(ranked[0].Reasons, "semantic_match") {
+		t.Errorf("expected semantic_match reason, got %+v", ranked[0].Reasons)
+	}
+}
+
 func hasSignal(reasons []models.InclusionReason, signal string) bool {
 	for _, r := range reasons {
 		if r.Signal == signal {

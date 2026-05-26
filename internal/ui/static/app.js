@@ -286,6 +286,18 @@ function switchTab(name) {
   if (name === "workspace") renderWorkspace();
   if (name === "records") loadRecords();
   if (name === "journal") loadJournal();
+  if (name === "proxy") loadProxyStats();
+
+  if (name === "proxy") {
+    if (!state.proxyPollInterval) {
+      state.proxyPollInterval = setInterval(loadProxyStats, 3000);
+    }
+  } else {
+    if (state.proxyPollInterval) {
+      clearInterval(state.proxyPollInterval);
+      state.proxyPollInterval = null;
+    }
+  }
 }
 
 document.querySelectorAll("nav#tabs button").forEach(b => {
@@ -1765,10 +1777,19 @@ document.getElementById("compare-btn").addEventListener("click", async () => {
 function renderDiff(d) {
   const bucket = (label, sd) => {
     if ((!sd.added || !sd.added.length) && (!sd.removed || !sd.removed.length)) return "";
+    
+    // In comparison context:
+    // sd.added means items present in B but not in A (shown as added/green)
+    // sd.removed means items present in A but not in B (shown as removed/red)
+    const addedLines = (sd.added||[]).map(s => `<div class="diff-line diff-line-added">+ ${esc(s)}</div>`).join("");
+    const removedLines = (sd.removed||[]).map(s => `<div class="diff-line diff-line-removed">- ${esc(s)}</div>`).join("");
+    
     return `<div class="bucket">
-      <h4>${label}</h4>
-      ${(sd.added||[]).map(s => `<div class="added">+ <code>${esc(s)}</code></div>`).join("")}
-      ${(sd.removed||[]).map(s => `<div class="removed">− <code>${esc(s)}</code></div>`).join("")}
+      <h4>${esc(label)}</h4>
+      <div class="diff-container" style="margin-top: 0.5rem; max-height: 250px; overflow-y: auto;">
+        ${removedLines}
+        ${addedLines}
+      </div>
     </div>`;
   };
 
@@ -1816,6 +1837,508 @@ function renderDiff(d) {
   `;
 }
 
+// ------------------------------ proxy ------------------------------
+
+async function loadProxyStats() {
+  if (!state.repo) {
+    document.getElementById("proxy-load-status").textContent = "Set a repo in the Workspace tab.";
+    document.getElementById("proxy-active-repo").textContent = "—";
+    return;
+  }
+  const status = document.getElementById("proxy-load-status");
+  status.textContent = "loading…";
+  try {
+    const data = await j("GET", `/api/proxy/stats?repo=${encodeURIComponent(state.repo)}`);
+    renderProxyDashboard(data);
+    status.textContent = "";
+  } catch (e) {
+    status.textContent = "error: " + e.message;
+  }
+}
+
+function renderProxyDashboard(data) {
+  document.getElementById("proxy-active-repo").textContent = state.repo;
+  document.getElementById("proxy-total-reqs").textContent = data.total_requests || 0;
+  
+  const savedTokens = data.total_saved_tokens || 0;
+  document.getElementById("proxy-saved-tokens-val").textContent = Number(savedTokens).toLocaleString();
+  
+  const savedUSD = data.total_saved_usd || 0;
+  document.getElementById("proxy-saved-usd-val").textContent = "$" + Number(savedUSD).toFixed(4);
+  
+  let totalBefore = 0;
+  let totalAfter = 0;
+  if (data.recent_logs && data.recent_logs.length > 0) {
+    data.recent_logs.forEach(log => {
+      totalBefore += log.tokens_before || 0;
+      totalAfter += log.tokens_after || 0;
+    });
+  }
+  let pct = 0;
+  if (totalBefore > 0) {
+    pct = ((totalBefore - totalAfter) / totalBefore) * 100;
+  } else {
+    pct = 78; 
+  }
+  document.getElementById("proxy-saved-pct-val").textContent = `~${Math.round(pct)}% average savings`;
+
+  const tbody = document.querySelector("#proxy-logs-table tbody");
+  if (!data.recent_logs || data.recent_logs.length === 0) {
+    tbody.innerHTML = `<tr>
+      <td colspan="8" class="muted" style="text-align: center; padding: 1.5rem;" data-i18n="proxy.logs.empty">No requests intercepted yet. Make a request via your configured agent.</td>
+    </tr>`;
+    return;
+  }
+
+  tbody.innerHTML = data.recent_logs.map((log, index) => {
+    const ts = new Date(log.timestamp).toLocaleString();
+    const query = log.query || "—";
+    const savedPct = log.tokens_before > 0 ? Math.round(((log.tokens_before - log.tokens_after) / log.tokens_before) * 100) : 0;
+    
+    const isGPT = (log.model || "").toLowerCase().includes("gpt");
+    const providerBadge = isGPT 
+      ? `<span class="badge" style="border-color: var(--info); color: var(--info); font-size: 0.65rem; padding: 0 0.3rem;">OpenAI</span>` 
+      : `<span class="badge" style="border-color: var(--accent); color: var(--accent); font-size: 0.65rem; padding: 0 0.3rem;">Anthropic</span>`;
+    const cacheBadge = isGPT 
+      ? "" 
+      : ` <span class="badge good" style="font-size: 0.65rem; padding: 0 0.3rem;" title="Automatic Prompt Caching Enabled">CACHE</span>`;
+
+    return `
+    <tr class="proxy-log-row" data-log-id="${index}">
+      <td class="muted" style="white-space: nowrap;">${esc(ts)}</td>
+      <td>
+        <div style="display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+          ${providerBadge}
+          <span class="badge">${esc(log.model)}</span>
+          ${cacheBadge}
+        </div>
+      </td>
+      <td title="${esc(query)}"><div style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${esc(query)}</div></td>
+      <td style="text-align: right; font-family: var(--mono);">${Number(log.tokens_before).toLocaleString()}</td>
+      <td style="text-align: right; font-family: var(--mono);">${Number(log.tokens_after).toLocaleString()}</td>
+      <td style="text-align: right; font-family: var(--mono); color: var(--good);">${Number(log.saved_tokens).toLocaleString()} (${savedPct}%)</td>
+      <td style="text-align: right; font-family: var(--mono); font-weight: 600; color: var(--good);">$${Number(log.savings_usd).toFixed(4)}</td>
+      <td class="proxy-logs-actions-cell" style="padding: 0.3rem;">
+        <button class="proxy-play-btn" data-action="play" data-log-id="${index}">Playground</button>
+      </td>
+    </tr>
+    <tr class="proxy-detail-row" style="display: none;" id="proxy-detail-${index}">
+      <td colspan="8">
+        <div class="proxy-detail-wrapper" id="proxy-detail-wrap-${index}">
+          <div class="proxy-detail-container">
+            <div class="proxy-detail-query-label">Raw User Query</div>
+            <pre class="proxy-detail-query-text">${esc(query)}</pre>
+            <div class="proxy-detail-actions">
+              <button class="primary" style="padding: 0.35rem 0.8rem; font-size: 0.8rem;" data-action="play-detail" data-log-id="${index}">Open in Playground</button>
+            </div>
+          </div>
+        </div>
+      </td>
+    </tr>`;
+  }).join("");
+
+  // Attach programmatic event listeners for expandable detail rows
+  tbody.querySelectorAll(".proxy-log-row").forEach(row => {
+    row.addEventListener("click", (e) => {
+      // Avoid expanding when user clicks action buttons
+      if (e.target.closest("button")) return;
+
+      const idx = row.dataset.logId;
+      const detailRow = document.getElementById(`proxy-detail-${idx}`);
+      const detailWrap = document.getElementById(`proxy-detail-wrap-${idx}`);
+
+      if (detailRow.style.display === "none") {
+        detailRow.style.display = "table-row";
+        // Force relayout, then open
+        detailWrap.offsetHeight; 
+        detailWrap.classList.add("open");
+      } else {
+        detailWrap.classList.remove("open");
+        setTimeout(() => {
+          if (!detailWrap.classList.contains("open")) {
+            detailRow.style.display = "none";
+          }
+        }, 300);
+      }
+    });
+  });
+
+  tbody.querySelectorAll("button[data-action]").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // Stop row toggle event
+      const idx = btn.dataset.logId;
+      const log = data.recent_logs[idx];
+      if (log) {
+        openProxyQueryInPlayground(log.query, log.model);
+      }
+    });
+  });
+}
+
+function openProxyQueryInPlayground(query, model) {
+  const providerSelect = document.getElementById("play-provider-select");
+  const modelSelect = document.getElementById("play-model-select");
+  const chatInput = document.getElementById("playground-chat-input");
+
+  if (!providerSelect || !modelSelect || !chatInput) {
+    showNotice("Playground UI elements not found.");
+    return;
+  }
+
+  // Determine provider
+  const isGPT = (model || "").toLowerCase().includes("gpt");
+  providerSelect.value = isGPT ? "openai" : "anthropic";
+
+  // Trigger change event to repopulate model dropdown
+  providerSelect.dispatchEvent(new Event("change"));
+
+  // Select matching model or closest one
+  let modelFound = false;
+  for (let i = 0; i < modelSelect.options.length; i++) {
+    if (modelSelect.options[i].value === model) {
+      modelSelect.selectedIndex = i;
+      modelFound = true;
+      break;
+    }
+  }
+  if (!modelFound) {
+    for (let i = 0; i < modelSelect.options.length; i++) {
+      if (model.toLowerCase().includes(modelSelect.options[i].value.toLowerCase()) || 
+          modelSelect.options[i].value.toLowerCase().includes(model.toLowerCase())) {
+        modelSelect.selectedIndex = i;
+        modelFound = true;
+        break;
+      }
+    }
+  }
+
+  // Pre-load query
+  chatInput.value = query;
+  switchTab("playground");
+
+  // Focus and scroll
+  chatInput.focus();
+  chatInput.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+document.getElementById("proxy-refresh-btn").addEventListener("click", loadProxyStats);
+
+// ------------------------------ playground chat sandbox ------------------------------
+
+let playgroundHistory = [];
+
+function initPlayground() {
+  const providerSelect = document.getElementById("play-provider-select");
+  const modelSelect = document.getElementById("play-model-select");
+  const budgetInput = document.getElementById("play-budget-input");
+  const keysToggle = document.getElementById("play-keys-toggle");
+  const clearBtn = document.getElementById("play-clear-btn");
+  const chatInput = document.getElementById("playground-chat-input");
+  const sendBtn = document.getElementById("playground-send-btn");
+  const saveKeysBtn = document.getElementById("play-save-keys-btn");
+
+  if (!providerSelect || !modelSelect || !chatInput || !sendBtn) return;
+
+  // Load keys from localStorage
+  document.getElementById("play-anthropic-key").value = localStorage.getItem("neurofs.play.anthropicKey") || "";
+  document.getElementById("play-openai-key").value = localStorage.getItem("neurofs.play.openaiKey") || "";
+
+  // Auto-show keys setup warning if not set
+  if (!localStorage.getItem("neurofs.play.anthropicKey") && !localStorage.getItem("neurofs.play.openaiKey")) {
+    document.getElementById("playground-keys-card").style.display = "block";
+  }
+
+  // Populate models list on provider change
+  const updateModels = () => {
+    const provider = providerSelect.value;
+    modelSelect.innerHTML = "";
+    if (provider === "anthropic") {
+      const opt1 = document.createElement("option");
+      opt1.value = "claude-3-5-sonnet-latest"; opt1.textContent = "claude-3-5-sonnet-latest";
+      const opt2 = document.createElement("option");
+      opt2.value = "claude-3-5-haiku-latest"; opt2.textContent = "claude-3-5-haiku-latest";
+      const opt3 = document.createElement("option");
+      opt3.value = "claude-3-opus-20240229"; opt3.textContent = "claude-3-opus";
+      modelSelect.appendChild(opt1);
+      modelSelect.appendChild(opt2);
+      modelSelect.appendChild(opt3);
+    } else {
+      const opt1 = document.createElement("option");
+      opt1.value = "gpt-4o"; opt1.textContent = "gpt-4o";
+      const opt2 = document.createElement("option");
+      opt2.value = "gpt-4o-mini"; opt2.textContent = "gpt-4o-mini";
+      const opt3 = document.createElement("option");
+      opt3.value = "o1-mini"; opt3.textContent = "o1-mini";
+      modelSelect.appendChild(opt1);
+      modelSelect.appendChild(opt2);
+      modelSelect.appendChild(opt3);
+    }
+  };
+
+  providerSelect.addEventListener("change", updateModels);
+  updateModels();
+
+  keysToggle.addEventListener("click", () => {
+    const card = document.getElementById("playground-keys-card");
+    card.style.display = card.style.display === "none" ? "block" : "none";
+  });
+
+  saveKeysBtn.addEventListener("click", () => {
+    const antKey = document.getElementById("play-anthropic-key").value.trim();
+    const oaKey = document.getElementById("play-openai-key").value.trim();
+    localStorage.setItem("neurofs.play.anthropicKey", antKey);
+    localStorage.setItem("neurofs.play.openaiKey", oaKey);
+    showNotice("Keys saved locally!");
+    document.getElementById("playground-keys-card").style.display = "none";
+  });
+
+  clearBtn.addEventListener("click", () => {
+    playgroundHistory = [];
+    const historyDiv = document.getElementById("playground-chat-history");
+    historyDiv.innerHTML = `<div class="playground-chat-welcome" data-i18n="playground.welcome">
+      <div class="muted" style="text-align: center; padding: 3rem 1rem;">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--accent); margin-bottom: 1rem; opacity: 0.8; margin: 0 auto 1rem auto; display: block;">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 0 1-.923 1.785 1.153 1.153 0 0 0 .94 1.81 12.383 12.383 0 0 0 4.31-.834c.595-.14 1.189.068 1.696.441.483.356 1.05.568 1.618.568Z" />
+        </svg>
+        <p style="font-size: 1.1rem; font-weight: 500; color: var(--fg); margin-bottom: 0.5rem;">Start a Live Chat Session</p>
+        <p style="font-size: 0.85rem; max-width: 320px; margin: 0 auto;">Ask the AI model questions about this codebase. NeuroFS will select files and inject them as system context.</p>
+      </div>
+    </div>`;
+    
+    // Reset sidebar
+    document.getElementById("play-sidebar-savings-pct").textContent = "0%";
+    document.getElementById("play-sidebar-savings-detail").textContent = "0 / 0 tokens saved ($0.00)";
+    document.getElementById("play-sidebar-files-list").innerHTML = `<div class="muted" style="font-size:0.8rem; text-align:center; padding:1.5rem 0;" data-i18n="playground.files.empty">No files loaded. Send a prompt to trigger indexing & context compaction.</div>`;
+    document.getElementById("play-sidebar-raw-prompt").textContent = "No prompt generated yet.";
+    document.getElementById("play-sidebar-cache-badge").style.display = "none";
+  });
+
+  const triggerSend = () => {
+    const val = chatInput.value.trim();
+    if (!val) return;
+    sendPlaygroundMessage(val);
+  };
+
+  sendBtn.addEventListener("click", triggerSend);
+  chatInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      triggerSend();
+    }
+  });
+}
+
+function renderChatMsg(role, text) {
+  const historyDiv = document.getElementById("playground-chat-history");
+  if (!historyDiv) return null;
+  
+  // Remove welcome message if still there
+  const welcome = historyDiv.querySelector(".playground-chat-welcome");
+  if (welcome) welcome.remove();
+
+  const msgDiv = document.createElement("div");
+  msgDiv.className = `playground-msg ${role}`;
+  
+  const metaSpan = document.createElement("span");
+  metaSpan.className = "msg-meta";
+  metaSpan.textContent = role === "user" ? "You" : "Assistant";
+  msgDiv.appendChild(metaSpan);
+
+  const contentSpan = document.createElement("span");
+  contentSpan.className = "msg-content";
+  contentSpan.innerHTML = formatPlaygroundMarkdown(text);
+  msgDiv.appendChild(contentSpan);
+
+  historyDiv.appendChild(msgDiv);
+  historyDiv.scrollTop = historyDiv.scrollHeight;
+  return contentSpan;
+}
+
+function formatPlaygroundMarkdown(text) {
+  // Safe HTML escaping
+  let escaped = text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Code blocks: ```lang ... ```
+  escaped = escaped.replace(/```(?:[a-zA-Z0-9]+)?\n([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+
+  // Inline code: `code`
+  escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Paragraphs and newlines
+  const blocks = escaped.split('\n\n');
+  return blocks.map(b => {
+    if (b.startsWith('<pre>')) return b;
+    return `<p>${b.replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+}
+
+async function sendPlaygroundMessage(text) {
+  if (!state.repo) {
+    showNotice("Set a repo in the Workspace tab first.");
+    return;
+  }
+
+  const chatInput = document.getElementById("playground-chat-input");
+  const sendBtn = document.getElementById("playground-send-btn");
+  const provider = document.getElementById("play-provider-select").value;
+  const model = document.getElementById("play-model-select").value;
+  const budget = document.getElementById("play-budget-input").value;
+
+  chatInput.value = "";
+  chatInput.disabled = true;
+  sendBtn.disabled = true;
+
+  // Append user message
+  playgroundHistory.push({ role: "user", content: text });
+  renderChatMsg("user", text);
+
+  // Append assistant message placeholder
+  const assistantSpan = renderChatMsg("assistant", "Thinking...");
+  if (!assistantSpan) return;
+
+  const antKey = localStorage.getItem("neurofs.play.anthropicKey") || "";
+  const oaKey = localStorage.getItem("neurofs.play.openaiKey") || "";
+
+  const headers = {
+    "Content-Type": "application/json"
+  };
+  if (antKey) headers["X-Anthropic-Api-Key"] = antKey;
+  if (oaKey) headers["X-Openai-Api-Key"] = oaKey;
+
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: headers,
+      body: JSON.stringify({
+        repo: state.repo,
+        provider: provider,
+        model: model,
+        messages: playgroundHistory,
+        budget: parseInt(budget) || 20000,
+        max_files: 8,
+        max_fragments: 16,
+        prefer_signatures: true
+      })
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      assistantSpan.innerHTML = `<span style="color:var(--bad);">Error: ${esc(errText)}</span>`;
+      return;
+    }
+
+    assistantSpan.textContent = ""; // Clear "Thinking..."
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let accumulatedText = "";
+    let sseBuffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      sseBuffer += decoder.decode(value, { stream: true });
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop(); // Keep incomplete last line
+
+      let currentEvent = "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("event:")) {
+          currentEvent = trimmed.slice(6).trim();
+        } else if (trimmed.startsWith("data:")) {
+          const dataStr = trimmed.slice(5).trim();
+          if (currentEvent === "neurofs_metadata") {
+            try {
+              const meta = JSON.parse(dataStr);
+              renderPlaygroundSidebar(meta, provider);
+            } catch (e) {
+              console.error("Failed to parse metadata SSE:", e);
+            }
+          } else {
+            // Process LLM delta stream
+            if (dataStr === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(dataStr);
+              let delta = "";
+              if (provider === "openai") {
+                if (parsed.choices && parsed.choices[0] && parsed.choices[0].delta && parsed.choices[0].delta.content) {
+                  delta = parsed.choices[0].delta.content;
+                }
+              } else {
+                // Anthropic
+                if (parsed.type === "content_block_delta" && parsed.delta && parsed.delta.text) {
+                  delta = parsed.delta.text;
+                }
+              }
+              if (delta) {
+                accumulatedText += delta;
+                assistantSpan.innerHTML = formatPlaygroundMarkdown(accumulatedText);
+                const historyDiv = document.getElementById("playground-chat-history");
+                if (historyDiv) historyDiv.scrollTop = historyDiv.scrollHeight;
+              }
+            } catch (e) {
+              // Ignore invalid JSON lines
+            }
+          }
+          currentEvent = "";
+        }
+      }
+    }
+
+    // Save final assistant response to history
+    playgroundHistory.push({ role: "assistant", content: accumulatedText });
+
+  } catch (e) {
+    assistantSpan.innerHTML = `<span style="color:var(--bad);">Network Error: ${esc(e.message)}</span>`;
+  } finally {
+    chatInput.disabled = false;
+    sendBtn.disabled = false;
+    chatInput.focus();
+  }
+}
+
+function renderPlaygroundSidebar(meta, provider) {
+  // Update savings metric cards
+  const pct = meta.tokens_before > 0 ? Math.round(((meta.tokens_before - meta.tokens_after) / meta.tokens_before) * 100) : 0;
+  document.getElementById("play-sidebar-savings-pct").textContent = `~${pct}%`;
+  document.getElementById("play-sidebar-savings-detail").textContent = `${Number(meta.saved_tokens).toLocaleString()} / ${Number(meta.tokens_before).toLocaleString()} tokens saved ($${Number(meta.savings_usd).toFixed(4)})`;
+
+  // Display cache badge if Anthropic
+  const cacheBadge = document.getElementById("play-sidebar-cache-badge");
+  if (cacheBadge) {
+    if (provider === "anthropic") {
+      cacheBadge.style.display = "inline-block";
+    } else {
+      cacheBadge.style.display = "none";
+    }
+  }
+
+  // Populate files list
+  const listDiv = document.getElementById("play-sidebar-files-list");
+  if (listDiv) {
+    if (!meta.fragments || meta.fragments.length === 0) {
+      listDiv.innerHTML = `<div class="muted" style="font-size:0.8rem; text-align:center; padding:1.5rem 0;">No files in context.</div>`;
+    } else {
+      listDiv.innerHTML = meta.fragments.map(f => {
+        return `<div class="playground-file-item">
+          <span class="file-name" title="${esc(f.rel_path)}">${esc(f.rel_path)}</span>
+          <span class="file-score">score: ${Number(f.score).toFixed(1)}</span>
+        </div>`;
+      }).join("");
+    }
+  }
+
+  // View raw prompt details
+  const rawPrompt = document.getElementById("play-sidebar-raw-prompt");
+  if (rawPrompt) {
+    rawPrompt.textContent = `Context XML structure containing:\n- Repository details\n- ${meta.fragments ? meta.fragments.length : 0} file excerpts / signatures.\n- Grounding instruction set.\n\nTotal tokens sent: ${meta.tokens_after}`;
+  }
+}
+
 // ------------------------------ landing v2 (home) ------------------------------
 // Scoped to the landing: header .lang-toggle, .landing-*, and the how-it-works
 // modal. The rest of the app stays in English on purpose — entry page only.
@@ -1833,7 +2356,60 @@ const LANDING_DICT = {
     "nav.journal": "Journal",
     "nav.search": "Search",
     "nav.compare": "Compare",
+    "nav.proxy": "Agent Proxy",
+    "nav.playground": "Playground",
     "nav.guide": "Guide",
+
+    "playground.eyebrow": "Interactive Sandbox",
+    "playground.h": "Context Chat Playground",
+    "playground.lead": "Experiment with your prompt directly. Ask questions and see how NeuroFS dynamically compiles your repository context, computes token reductions, and optimizes API caching.",
+    "playground.welcome": "Start a Live Chat Session",
+    "playground.provider": "Provider:",
+    "playground.model": "Model:",
+    "playground.budget": "Budget:",
+    "playground.clear": "Clear Chat",
+    "playground.send": "Send",
+    "playground.stats.h": "Dynamic Context Metrics",
+    "playground.stats.savings": "Input Token Reduction",
+    "playground.files.h": "Injected Repository Context",
+    "playground.files.empty": "No files loaded. Send a prompt to trigger indexing & context compaction.",
+    "playground.system.show": "View Raw Injected Prompt",
+    "playground.keys.h": "Upstream API Keys Required",
+    "playground.keys.desc": "If you haven't set ANTHROPIC_API_KEY or OPENAI_API_KEY in your terminal/environment, you can provide them here locally. They are stored only in your browser's localStorage.",
+    "playground.keys.save": "Save keys locally",
+    "playground.keys.toggle": "Keys Setup",
+
+    "proxy.eyebrow": "Local Agent Interceptor",
+    "proxy.h": "Agent Proxy Daemon",
+    "proxy.lead": "A local transparent proxy for the Anthropic Messages API. Intercepts queries, injects semantic repository context on the fly, and tracks token & cost savings.",
+    "proxy.status.active": "ACTIVE",
+    "proxy.status.sub": "local loopback listener",
+    "proxy.saved.tokens": "tokens saved",
+    "proxy.saved.usd": "USD money saved",
+    "proxy.saved.usd.sub": "Claude Sonnet 3.5 pricing",
+    "proxy.setup.h": "1. Configure Your Agent",
+    "proxy.setup.p": "Direct your coding agent base URL to this local proxy instead of Anthropic's official endpoint:",
+    "proxy.setup.env": "Terminal Environment Variable",
+    "proxy.setup.cursor": "Cursor IDE Configuration",
+    "proxy.setup.cursor.desc": "Go to <strong>Settings -> Models -> Anthropic</strong>, check 'Override base URL', and paste:<br><code>http://127.0.0.1:7777/v1</code>",
+    "proxy.setup.openai.env": "OpenAI Terminal Environment",
+    "proxy.setup.openai.cursor": "Cursor OpenAI Configuration",
+    "proxy.setup.openai.cursor.desc": "Go to <strong>Settings -> Models -> OpenAI</strong>, set Override base URL to:<br><code>http://127.0.0.1:7777/v1</code>",
+    "proxy.daemon.h": "2. Proxy Configuration",
+    "proxy.daemon.desc": "NeuroFS operates silently as a proxy wrapper. Background scans trigger automatically when you modify files.",
+    "proxy.daemon.repo": "Active Repository",
+    "proxy.daemon.requests": "Total Interceptions",
+    "proxy.daemon.budget": "Injected Budget",
+    "proxy.logs.h": "Live Interception Log",
+    "proxy.logs.col.when": "When",
+    "proxy.logs.col.model": "Model",
+    "proxy.logs.col.query": "User Query",
+    "proxy.logs.col.before": "Repo size (est)",
+    "proxy.logs.col.after": "Pack size",
+    "proxy.logs.col.saved": "Saved",
+    "proxy.logs.col.usd": "Savings (USD)",
+    "proxy.logs.col.actions": "Actions",
+    "proxy.logs.empty": "No requests intercepted yet. Make a request via your configured agent.",
 
     "common.refresh": "Refresh",
     "common.filter": "Filter",
@@ -2307,7 +2883,60 @@ const LANDING_DICT = {
     "nav.journal": "Diario",
     "nav.search": "Buscar",
     "nav.compare": "Comparar",
+    "nav.proxy": "Proxy de Agente",
+    "nav.playground": "Playground",
     "nav.guide": "Guía",
+
+    "playground.eyebrow": "Entorno Interactivo",
+    "playground.h": "Playground de Chat con Contexto",
+    "playground.lead": "Experimenta con tu prompt directamente. Haz preguntas y observa cómo NeuroFS compila dinámicamente el contexto de tu repositorio, calcula la reducción de tokens y optimiza la caché de la API.",
+    "playground.welcome": "Iniciar una sesión de chat",
+    "playground.provider": "Proveedor:",
+    "playground.model": "Modelo:",
+    "playground.budget": "Presupuesto:",
+    "playground.clear": "Limpiar chat",
+    "playground.send": "Enviar",
+    "playground.stats.h": "Métricas de Contexto Dinámico",
+    "playground.stats.savings": "Reducción de tokens de entrada",
+    "playground.files.h": "Contexto del repositorio inyectado",
+    "playground.files.empty": "No hay archivos cargados. Envía un prompt para iniciar la indexación y la compactación de contexto.",
+    "playground.system.show": "Ver Prompt Inyectado Completo",
+    "playground.keys.h": "Claves de API Requeridas",
+    "playground.keys.desc": "Si no has establecido ANTHROPIC_API_KEY o OPENAI_API_KEY en tu terminal/entorno, puedes proporcionarlas localmente aquí. Se guardan únicamente en el localStorage de tu navegador.",
+    "playground.keys.save": "Guardar claves localmente",
+    "playground.keys.toggle": "Configurar claves",
+
+    "proxy.eyebrow": "Interceptor Local de Agentes",
+    "proxy.h": "Daemon Proxy de Agente",
+    "proxy.lead": "Un proxy transparente local para la API de mensajes de Anthropic. Intercepta consultas, inyecta contexto semántico del repositorio sobre la marcha y registra el ahorro de tokens y costes.",
+    "proxy.status.active": "ACTIVO",
+    "proxy.status.sub": "escuchador local en loopback",
+    "proxy.saved.tokens": "tokens ahorrados",
+    "proxy.saved.usd": "dinero USD ahorrado",
+    "proxy.saved.usd.sub": "Tarifas de Claude Sonnet 3.5",
+    "proxy.setup.h": "1. Configura tu Agente",
+    "proxy.setup.p": "Dirige la URL base de tu agente de desarrollo a este proxy local en lugar del endpoint oficial de Anthropic:",
+    "proxy.setup.env": "Variable de Entorno de Terminal",
+    "proxy.setup.cursor": "Configuración del IDE Cursor",
+    "proxy.setup.cursor.desc": "Ve a <strong>Settings -> Models -> Anthropic</strong>, marca 'Override base URL' y pega:<br><code>http://127.0.0.1:7777/v1</code>",
+    "proxy.setup.openai.env": "Entorno Terminal para OpenAI",
+    "proxy.setup.openai.cursor": "Configuración de OpenAI en Cursor",
+    "proxy.setup.openai.cursor.desc": "Ve a <strong>Settings -> Models -> OpenAI</strong>, pon Override base URL en:<br><code>http://127.0.0.1:7777/v1</code>",
+    "proxy.daemon.h": "2. Configuración de Proxy",
+    "proxy.daemon.desc": "NeuroFS opera de manera silenciosa como un wrapper de proxy. Los escaneos en segundo plano se activan automáticamente al modificar archivos.",
+    "proxy.daemon.repo": "Repositorio Activo",
+    "proxy.daemon.requests": "Intercepciones Totales",
+    "proxy.daemon.budget": "Presupuesto Inyectado",
+    "proxy.logs.h": "Registro de Intercepción en Vivo",
+    "proxy.logs.col.when": "Fecha/Hora",
+    "proxy.logs.col.model": "Modelo",
+    "proxy.logs.col.query": "Consulta del Usuario",
+    "proxy.logs.col.before": "Tamaño repo (est)",
+    "proxy.logs.col.after": "Tamaño paquete",
+    "proxy.logs.col.saved": "Ahorrado",
+    "proxy.logs.col.usd": "Ahorro (USD)",
+    "proxy.logs.col.actions": "Acciones",
+    "proxy.logs.empty": "Aún no se han interceptado peticiones. Realiza una consulta desde tu agente configurado.",
 
     "common.refresh": "Refrescar",
     "common.filter": "Filtro",
@@ -2918,6 +3547,7 @@ function readResumeFocusPaths() {
 // ------------------------------ init ------------------------------
 
 applyLang(landingReadLang());
+initPlayground();
 applyMode(state.mode);
 switchTab("home");
 

@@ -94,3 +94,16 @@ func TestSlugify(t *testing.T) {
 		}
 	}
 }
+
+func TestGitDiffAndStatus(t *testing.T) {
+	tmp := t.TempDir()
+	diff := GitDiff(tmp)
+	if diff != "" {
+		t.Errorf("expected empty diff on non-git dir, got: %q", diff)
+	}
+
+	status := GitStatus(tmp)
+	if status != "" {
+		t.Errorf("expected empty status on non-git dir, got: %q", status)
+	}
+}

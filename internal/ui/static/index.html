@@ -30,6 +30,8 @@
       <button data-tab="journal" data-i18n="nav.journal">Journal</button>
       <button data-tab="search" data-i18n="nav.search">Search</button>
       <button data-tab="compare" data-i18n="nav.compare">Compare</button>
+      <button data-tab="proxy" data-i18n="nav.proxy">Agent Proxy</button>
+      <button data-tab="playground" data-i18n="nav.playground">Playground</button>
       <button data-tab="guide" data-i18n="nav.guide">Guide</button>
     </nav>
   </header>
@@ -701,6 +703,224 @@
         <span id="compare-status" class="muted"></span>
       </div>
       <div id="compare-report" class="card"></div>
+    </section>
+
+    <!-- ============================ AGENT PROXY ============================ -->
+    <section id="tab-proxy" class="tab">
+      <div class="v8-section-head">
+        <div class="v8-eyebrow" data-i18n="proxy.eyebrow">Local Agent Interceptor</div>
+        <h2 data-i18n="proxy.h">Agent Proxy Daemon</h2>
+        <p class="lead" data-i18n="proxy.lead">A local transparent proxy for the Anthropic Messages API. Intercepts queries, injects semantic repository context on the fly, and tracks token & cost savings.</p>
+      </div>
+
+      <!-- Telemetry cards layout -->
+      <div class="v8-stats">
+        <div class="v8-stat">
+          <div class="v8-stat-num" id="proxy-status-val">
+            <span class="v8-badge-dot" style="display:inline-block; margin-right:8px; vertical-align:middle;"></span>
+            <span data-i18n="proxy.status.active">ACTIVE</span>
+          </div>
+          <div class="v8-stat-label" id="proxy-addr-val">http://127.0.0.1:7777</div>
+          <div class="v8-stat-sub" data-i18n="proxy.status.sub">local loopback listener</div>
+        </div>
+        <div class="v8-stat">
+          <div class="v8-stat-num" id="proxy-saved-tokens-val">0</div>
+          <div class="v8-stat-label" data-i18n="proxy.saved.tokens">tokens saved</div>
+          <div class="v8-stat-sub" id="proxy-saved-pct-val">0% vs full repo</div>
+        </div>
+        <div class="v8-stat">
+          <div class="v8-stat-num" id="proxy-saved-usd-val">0.00</div>
+          <div class="v8-stat-label" data-i18n="proxy.saved.usd">USD money saved</div>
+          <div class="v8-stat-sub" data-i18n="proxy.saved.usd.sub">Claude Sonnet 3.5 pricing</div>
+        </div>
+      </div>
+
+      <!-- Instructions block -->
+      <div class="grid-2" style="margin-top: 2rem;">
+        <div class="card" style="margin: 0;">
+          <h3 data-i18n="proxy.setup.h">1. Configure Your Agent</h3>
+          <p class="muted" style="margin-bottom: 1rem;" data-i18n="proxy.setup.p">Direct your coding agent base URL to this local proxy instead of the official endpoints:</p>
+          
+          <div style="border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1rem;">
+            <strong style="color: var(--accent); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; display:block; margin-bottom: 0.5rem;">Anthropic Claude</strong>
+            <label data-i18n="proxy.setup.env">Terminal Environment Variable
+              <pre class="log" style="margin-top:0.25rem; max-height:80px; padding: 0.4rem 0.55rem; background: var(--bg-2); border-color: var(--border-2);"><code style="background:transparent; padding:0;">export ANTHROPIC_BASE_URL=http://127.0.0.1:7777/v1</code></pre>
+            </label>
+            <label data-i18n="proxy.setup.cursor">Cursor IDE Configuration
+              <div class="muted" style="font-size:0.78rem; line-height:1.4;" data-i18n-html="proxy.setup.cursor.desc">
+                Go to <strong>Settings -> Models -> Anthropic</strong>, check "Override base URL", and paste:<br>
+                <code>http://127.0.0.1:7777/v1</code>
+              </div>
+            </label>
+          </div>
+
+          <div>
+            <strong style="color: var(--info); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; display:block; margin-bottom: 0.5rem;">OpenAI GPT</strong>
+            <label data-i18n="proxy.setup.openai.env">OpenAI Terminal Environment
+              <pre class="log" style="margin-top:0.25rem; max-height:80px; padding: 0.4rem 0.55rem; background: var(--bg-2); border-color: var(--border-2);"><code style="background:transparent; padding:0;">export OPENAI_BASE_URL=http://127.0.0.1:7777/v1</code></pre>
+            </label>
+            <label data-i18n="proxy.setup.openai.cursor">Cursor OpenAI Configuration
+              <div class="muted" style="font-size:0.78rem; line-height:1.4;" data-i18n-html="proxy.setup.openai.cursor.desc">
+                Go to <strong>Settings -> Models -> OpenAI</strong>, set Override base URL to:<br>
+                <code>http://127.0.0.1:7777/v1</code>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="card" style="margin: 0;">
+          <h3 data-i18n="proxy.daemon.h">2. Proxy Configuration</h3>
+          <p class="muted" style="margin-bottom: 0.5rem;" data-i18n="proxy.daemon.desc">NeuroFS operates silently as a proxy wrapper. Background scans trigger automatically when you modify files.</p>
+          <dl class="kv">
+            <dt data-i18n="proxy.daemon.repo">Active Repository</dt>
+            <dd id="proxy-active-repo">—</dd>
+            
+            <dt data-i18n="proxy.daemon.requests">Total Interceptions</dt>
+            <dd id="proxy-total-reqs">0</dd>
+            
+            <dt data-i18n="proxy.daemon.budget">Injected Budget</dt>
+            <dd>8,000 tokens</dd>
+          </dl>
+          <div class="row" style="margin-top: 1rem;">
+            <button id="proxy-refresh-btn" class="primary" data-i18n="common.refresh">Refresh</button>
+            <span id="proxy-load-status" class="muted"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live logs table -->
+      <h3 style="margin-top: 2.5rem; margin-bottom: 0.75rem;" data-i18n="proxy.logs.h">Live Interception Log</h3>
+      <table id="proxy-logs-table" class="records">
+        <thead>
+          <tr>
+            <th data-i18n="proxy.logs.col.when">When</th>
+            <th data-i18n="proxy.logs.col.model">Model</th>
+            <th data-i18n="proxy.logs.col.query">User Query</th>
+            <th style="text-align: right;" data-i18n="proxy.logs.col.before">Repo size (est)</th>
+            <th style="text-align: right;" data-i18n="proxy.logs.col.after">Pack size</th>
+            <th style="text-align: right;" data-i18n="proxy.logs.col.saved">Saved</th>
+            <th style="text-align: right;" data-i18n="proxy.logs.col.usd">Savings (USD)</th>
+            <th style="text-align: center;" data-i18n="proxy.logs.col.actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td colspan="8" class="muted" style="text-align: center; padding: 1.5rem;" data-i18n="proxy.logs.empty">No requests intercepted yet. Make a request via your configured agent.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============================ CHAT PLAYGROUND ============================ -->
+    <section id="tab-playground" class="tab">
+      <div class="v8-section-head">
+        <div class="v8-eyebrow" data-i18n="playground.eyebrow">Interactive Sandbox</div>
+        <h2 data-i18n="playground.h">Context Chat Playground</h2>
+        <p class="lead" data-i18n="playground.lead">Experiment with your prompt directly. Ask questions and see how NeuroFS dynamically compiles your repository context, computes token reductions, and optimizes API caching.</p>
+      </div>
+
+      <div class="playground-layout">
+        <!-- Left Column: Chat Console -->
+        <div class="playground-chat-col">
+          <!-- API Keys Alert & Configuration -->
+          <div class="card" id="playground-keys-card" style="margin-top: 0; margin-bottom: 1.5rem; display: none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.75rem;">
+              <h4 style="margin:0; font-size:0.9rem;" data-i18n="playground.keys.h">Upstream API Keys Required</h4>
+              <button class="muted-btn" style="padding:2px 6px; font-size:0.75rem;" onclick="document.getElementById('playground-keys-card').style.display='none'">Dismiss</button>
+            </div>
+            <p class="muted" style="font-size:0.8rem; margin-bottom:0.75rem;" data-i18n="playground.keys.desc">If you haven't set ANTHROPIC_API_KEY or OPENAI_API_KEY in your terminal/environment, you can provide them here locally. They are stored only in your browser's localStorage.</p>
+            <div class="grid-2" style="gap:1rem; margin:0;">
+              <div>
+                <label style="font-size:0.78rem;">Anthropic API Key
+                  <input type="password" id="play-anthropic-key" placeholder="sk-ant-..." style="margin-top:0.25rem;">
+                </label>
+              </div>
+              <div>
+                <label style="font-size:0.78rem;">OpenAI API Key
+                  <input type="password" id="play-openai-key" placeholder="sk-..." style="margin-top:0.25rem;">
+                </label>
+              </div>
+            </div>
+            <div style="margin-top:0.5rem; text-align:right;">
+              <button class="primary" style="padding:0.35rem 0.75rem; font-size:0.78rem;" id="play-save-keys-btn" data-i18n="playground.keys.save">Save keys locally</button>
+            </div>
+          </div>
+
+          <!-- Chat messages area -->
+          <div class="playground-chat-history" id="playground-chat-history">
+            <div class="playground-chat-welcome" data-i18n="playground.welcome">
+              <div class="muted" style="text-align: center; padding: 3rem 1rem;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--accent); margin-bottom: 1rem; opacity: 0.8; margin: 0 auto 1rem auto; display: block;">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 20.25c4.97 0 9-3.694 9-8.25s-4.03-8.25-9-8.25S3 7.444 3 12c0 2.104.859 4.023 2.273 5.48.432.447.74 1.04.586 1.641a4.483 4.483 0 0 1-.923 1.785 1.153 1.153 0 0 0 .94 1.81 12.383 12.383 0 0 0 4.31-.834c.595-.14 1.189.068 1.696.441.483.356 1.05.568 1.618.568Z" />
+                </svg>
+                <p style="font-size: 1.1rem; font-weight: 500; color: var(--fg); margin-bottom: 0.5rem;">Start a Live Chat Session</p>
+                <p style="font-size: 0.85rem; max-width: 320px; margin: 0 auto;">Ask the AI model questions about this codebase. NeuroFS will select files and inject them as system context.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input bar -->
+          <div class="playground-chat-input-area">
+            <div class="playground-chat-settings-bar">
+              <div class="setting-item">
+                <span data-i18n="playground.provider">Provider:</span>
+                <select id="play-provider-select" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="openai">OpenAI (GPT)</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <span data-i18n="playground.model">Model:</span>
+                <select id="play-model-select" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;">
+                  <option value="claude-3-5-sonnet-latest">claude-3-5-sonnet-latest</option>
+                  <option value="claude-3-5-haiku-latest">claude-3-5-haiku-latest</option>
+                  <option value="claude-3-opus-20240229">claude-3-opus-20240229</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <span data-i18n="playground.budget">Budget:</span>
+                <input type="number" id="play-budget-input" value="20000" step="5000" min="4000" style="width: 75px; padding: 0.25rem; font-size: 0.8rem;">
+              </div>
+              <div class="setting-item" style="margin-left: auto; display: flex; gap: 8px;">
+                <button class="muted-btn" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" id="play-keys-toggle" data-i18n="playground.keys.toggle">Keys Setup</button>
+                <button class="muted-btn" style="padding: 0.25rem 0.5rem; font-size: 0.8rem;" id="play-clear-btn" data-i18n="playground.clear">Clear Chat</button>
+              </div>
+            </div>
+            <div class="playground-chat-input-wrap">
+              <textarea id="playground-chat-input" rows="2" placeholder="Ask about this codebase... (Shift+Enter for newline, Enter to send)" data-i18n-placeholder="playground.chatPh"></textarea>
+              <button class="primary" id="playground-send-btn" data-i18n="playground.send">Send</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: Context Analytics Sidebar -->
+        <div class="playground-sidebar-col">
+          <div class="card" style="margin-top:0;">
+            <h3 style="margin-top:0; font-size:1rem;" data-i18n="playground.stats.h">Dynamic Context Metrics</h3>
+            
+            <div class="v8-stat-mini" style="margin-bottom: 1rem; padding: 0.75rem; border-radius: 6px; background: var(--bg-2); border: 1px solid var(--border-2);">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
+                <span class="muted" style="font-size:0.75rem;" data-i18n="playground.stats.savings">Input Token Reduction</span>
+                <span id="play-sidebar-cache-badge" class="badge good" style="font-size:0.65rem; display:none;">CACHE ACTIVE</span>
+              </div>
+              <div style="font-size:1.4rem; font-weight:700; color:var(--good);" id="play-sidebar-savings-pct">0%</div>
+              <div class="muted" style="font-size:0.7rem;" id="play-sidebar-savings-detail">0 / 0 tokens saved ($0.00)</div>
+            </div>
+
+            <h4 style="font-size:0.85rem; margin-top:1.5rem; margin-bottom:0.5rem;" data-i18n="playground.files.h">Injected Repository Context</h4>
+            <div id="play-sidebar-files-list" class="playground-files-list">
+              <div class="muted" style="font-size:0.8rem; text-align:center; padding:1.5rem 0;" data-i18n="playground.files.empty">No files loaded. Send a prompt to trigger indexing & context compaction.</div>
+            </div>
+
+            <div style="margin-top: 1.5rem; border-top: 1px solid var(--border); padding-top: 1rem;">
+              <details style="font-size:0.8rem;">
+                <summary style="cursor:pointer; color:var(--accent); font-weight:500;" data-i18n="playground.system.show">View Raw Injected Prompt</summary>
+                <pre class="log" id="play-sidebar-raw-prompt" style="margin-top:0.5rem; max-height:220px; font-size:0.75rem; overflow-y:auto; overflow-x:auto; background: var(--bg-2); border-color: var(--border-2);">No prompt generated yet.</pre>
+              </details>
+            </div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ============================ GUIDE ============================ -->

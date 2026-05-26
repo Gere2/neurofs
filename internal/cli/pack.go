@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -77,10 +79,16 @@ Examples:
 				return fmt.Errorf("pack: load index: %w", err)
 			}
 
+			embClient := embeddings.NewClient()
+			queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
+			fileEmbs, _ := db.AllEmbeddings()
+
 			info := loadProjectInfo(db)
 			rankOpts := ranking.Options{
-				Project: info,
-				Focus:   focus,
+				Project:        info,
+				Focus:          focus,
+				QueryEmbedding: queryEmb,
+				Embeddings:     fileEmbs,
 			}
 			if changed {
 				rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
@@ -117,7 +125,7 @@ Examples:
 			}
 			defer dest.Close()
 
-			if err := writeBundle(dest, bundle, format, forTarget, files, info); err != nil {
+			if err := writeBundle(cfg.RepoRoot, dest, bundle, format, forTarget, files, info); err != nil {
 				return fmt.Errorf("pack: write: %w", err)
 			}
 
@@ -174,10 +182,10 @@ func writeBundleJSON(path string, b models.Bundle) error {
 // writeBundle dispatches to the correct serialiser. The Claude path takes a
 // RepoSummary derived from the already-loaded index, so the prompt gets
 // repo orientation for free without another DB query.
-func writeBundle(dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info) error {
+func writeBundle(repoRoot string, dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info) error {
 	eff := effectiveFormat(format, forTarget)
 	if eff == string(output.FormatClaude) {
-		return output.WriteClaude(dest, b, buildRepoSummary(files, info))
+		return output.WriteClaude(dest, b, buildRepoSummary(repoRoot, files, info))
 	}
 	return output.Write(dest, b, output.Format(eff))
 }
@@ -198,7 +206,7 @@ func effectiveFormat(format, forTarget string) string {
 // buildRepoSummary produces a compact orientation block from the in-memory
 // file list. We intentionally keep it cheap — no new DB queries — so
 // failures here never break pack.
-func buildRepoSummary(files []models.FileRecord, info *project.Info) output.RepoSummary {
+func buildRepoSummary(repoRoot string, files []models.FileRecord, info *project.Info) output.RepoSummary {
 	langs := make(map[string]int, 8)
 	symbols := 0
 	for _, f := range files {
@@ -209,6 +217,8 @@ func buildRepoSummary(files []models.FileRecord, info *project.Info) output.Repo
 		Files:     len(files),
 		Symbols:   symbols,
 		Languages: langs,
+		GitDiff:   taskflow.GitDiff(repoRoot),
+		GitStatus: taskflow.GitStatus(repoRoot),
 	}
 	if info != nil {
 		s.Name = info.Label()

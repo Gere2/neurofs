@@ -3,12 +3,14 @@
 package indexer
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/parser"
@@ -25,6 +27,7 @@ type Stats struct {
 	Discovered int // all files visited
 	Skipped    int // unsupported or ignored
 	Indexed    int // successfully written to the DB
+	Cached     int // files skipped because they are already indexed and unmodified
 	Updated    int // existing records refreshed
 	Removed    int // stale records deleted
 	Symbols    int // total symbols extracted
@@ -64,6 +67,16 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 	// existingPaths tracks files that still exist on disk (for stale cleanup).
 	existingPaths := make(map[string]bool)
 
+	dbFiles, err := db.AllFiles()
+	if err != nil {
+		return Stats{}, fmt.Errorf("indexer: load index: %w", err)
+	}
+
+	cachedFiles := make(map[string]models.FileRecord, len(dbFiles))
+	for _, f := range dbFiles {
+		cachedFiles[f.Path] = f
+	}
+
 	var stats Stats
 
 	walkErr := fsutil.Walk(cfg.RepoRoot, func(path string, info os.FileInfo) error {
@@ -82,6 +95,15 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 
 		existingPaths[path] = true
 
+		relPath := fsutil.RelPath(cfg.RepoRoot, path)
+		if cached, ok := cachedFiles[path]; ok {
+			if info.Size() == cached.Size && info.ModTime().Unix() <= cached.IndexedAt.Unix() {
+				opts.Logf("  cached: %s", relPath)
+				stats.Cached++
+				return nil
+			}
+		}
+
 		content, err := os.ReadFile(path)
 		if err != nil {
 			opts.Logf("  error reading %s: %v", path, err)
@@ -97,7 +119,6 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		}
 
 		checksum := fmt.Sprintf("%x", sha256.Sum256(content))
-		relPath := fsutil.RelPath(cfg.RepoRoot, path)
 
 		parsed := parser.Parse(lang, string(content))
 
@@ -117,6 +138,21 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 			opts.Logf("  error storing %s: %v", path, err)
 			stats.Errors++
 			return nil
+		}
+
+		// Generate and save embedding
+		embClient := embeddings.NewClient()
+		embedText := string(content)
+		if len(embedText) > 8000 {
+			embedText = embedText[:8000]
+		}
+		emb, err := embClient.GetEmbedding(context.Background(), embedText)
+		if err != nil {
+			opts.Logf("  warning: embedding failed for %s: %v", relPath, err)
+		} else {
+			if err := db.SaveEmbedding(path, emb); err != nil {
+				opts.Logf("  warning: failed to save embedding for %s: %v", relPath, err)
+			}
 		}
 
 		stats.Indexed++

@@ -3,6 +3,7 @@ package ranking
 import (
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/neuromfs/neuromfs/internal/models"
 )
@@ -47,6 +48,28 @@ var testIntentTerms = map[string]bool{
 	"coverage":   true,
 	"regression": true, "regressions": true,
 	"golden": true,
+	// Spanish test intent terms
+	"prueba": true, "pruebas": true, "prueban": true, "pruebe": true,
+	"probar": true, "testear": true, "testeando": true,
+	"probando": true, "cobertura": true, "regresion": true, "regresión": true,
+	"regresiones": true, "maqueta": true, "maquetas": true,
+}
+
+// metaOverrideTerms are query tokens that signal the user is asking about
+// codebase logic, algorithm design, or ranking behavior, even if the query
+// also contains test terms. When present, the test penalty stays active.
+var metaOverrideTerms = map[string]bool{
+	"penalty":        true,
+	"outrank":        true,
+	"why":            true,
+	"algorithm":      true,
+	"implementation": true,
+	"logic":          true,
+	// Spanish meta override terms
+	"penalizacion": true, "penalización": true, "penalizaciones": true,
+	"superar": true, "outrankear": true, "explicación": true, "explicacion": true,
+	"lógica": true, "logica": true, "algoritmo": true, "algoritmos": true,
+	"implementación": true, "implementacion": true,
 }
 
 // isTestLikePath reports whether relPath looks like a test, fixture, or mock
@@ -81,8 +104,15 @@ func queryWantsTests(query string) bool {
 	}
 	lower := strings.ToLower(query)
 	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9') && r != '_'
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
 	})
+	// If the query contains any meta or codebase-logic override terms,
+	// keep the test penalty active.
+	for _, w := range words {
+		if metaOverrideTerms[w] {
+			return false
+		}
+	}
 	for _, w := range words {
 		if testIntentTerms[w] {
 			return true

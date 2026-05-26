@@ -114,7 +114,7 @@ func TestMatchesModeFilter(t *testing.T) {
 		{"", "all", true},
 		{"build", "build", true},
 		{"build", "strategy", false},
-		{"", "unknown", true},    // legacy records surface under "unknown"
+		{"", "unknown", true},       // legacy records surface under "unknown"
 		{"build", "unknown", false}, // and build records don't
 	}
 	for _, c := range cases {
