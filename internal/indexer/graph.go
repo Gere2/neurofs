@@ -91,10 +91,15 @@ func BuildRelations(files []models.FileRecord) []models.FileRelation {
 				// suffix-matches folder "internal/storage".
 				// Python import "crypto" matches "crypto.py".
 				
-				// Suffix folder match: if a directory matches or ends with the import path
+				// Suffix folder match. Match in either direction so we cover
+				// short imports against deep folders (Python: "crypto" → "lib/crypto")
+				// and long canonical imports against shallow folders
+				// (Go: "github.com/x/y/internal/storage" → "internal/storage").
 				foundFolder := false
 				for dir, dirFiles := range dirMap {
-					if dir == cleanedImp || strings.HasSuffix(dir, "/"+cleanedImp) {
+					if dir == cleanedImp ||
+						strings.HasSuffix(dir, "/"+cleanedImp) ||
+						strings.HasSuffix(cleanedImp, "/"+dir) {
 						foundFolder = true
 						for _, target := range dirFiles {
 							if target.Lang == f.Lang { // matching language packages
@@ -107,14 +112,15 @@ func BuildRelations(files []models.FileRecord) []models.FileRelation {
 					continue
 				}
 
-				// Suffix file match: if a file name matches or ends with the import path
+				// Suffix file match: same bidirectional logic.
 				for relPath, target := range fileMap {
-					// Strip extension of target
 					stem := relPath
 					if ext := filepath.Ext(relPath); ext != "" {
 						stem = relPath[:len(relPath)-len(ext)]
 					}
-					if stem == cleanedImp || strings.HasSuffix(stem, "/"+cleanedImp) {
+					if stem == cleanedImp ||
+						strings.HasSuffix(stem, "/"+cleanedImp) ||
+						strings.HasSuffix(cleanedImp, "/"+stem) {
 						addRelation(f.Path, target.Path, "import")
 					}
 				}

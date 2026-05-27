@@ -1,12 +1,17 @@
 package retrieval
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
 func TestResolveRepoReturnsAbsolutePath(t *testing.T) {
@@ -397,5 +402,67 @@ func TestSnippetForRange(t *testing.T) {
 	}
 	if got := snippetForRange("", 1, 1); got != "" {
 		t.Errorf("empty content → empty snippet; got %q", got)
+	}
+}
+
+// ---------- end-to-end integration ----------
+
+func TestSearchEndToEnd(t *testing.T) {
+	// Force deterministic mock embeddings independently of dev env.
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("VOYAGE_API_KEY", "")
+
+	repo := t.TempDir()
+	write := func(relPath, content string) {
+		t.Helper()
+		full := filepath.Join(repo, relPath)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", relPath, err)
+		}
+	}
+	write("parser.go", "package main\n\nfunc ParseFunction(input string) string {\n\treturn input\n}\n")
+	write("ranking.go", "package main\n\nfunc RankResults(items []string) []string {\n\treturn items\n}\n")
+	write("README.md", "# Test repo\n")
+
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("storage: %v", err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		db.Close()
+		t.Fatalf("indexer.Run: %v", err)
+	}
+	db.Close() // Search opens its own handle
+
+	resp, err := Search(context.Background(), Options{
+		Query: "ParseFunction",
+		Repo:  repo,
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(resp.Results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+
+	top := resp.Results[0]
+	if filepath.Base(top.Path) != "parser.go" {
+		t.Errorf("expected parser.go on top, got %s (results=%v)", filepath.Base(top.Path), resp.Results)
+	}
+	if top.Score <= 0 {
+		t.Errorf("expected positive score on top hit, got %v", top.Score)
+	}
+	if len(top.Reasons) == 0 {
+		t.Errorf("expected reasons populated on top hit, got empty")
 	}
 }
