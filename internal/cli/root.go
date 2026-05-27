@@ -30,6 +30,7 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newUICmd())
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newProxyCmd())
+	root.AddCommand(newVersionCmd())
 
 	return root
 }

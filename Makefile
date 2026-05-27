@@ -1,8 +1,9 @@
-.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps
+.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps lint
 
 BINARY   := neurofs
 CMD_PATH := ./cmd/neurofs
 OUT_DIR  := ./bin
+VERSION  := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 
 ## deps: Download and tidy Go module dependencies
 deps:
@@ -11,12 +12,12 @@ deps:
 ## build: Compile the neurofs binary to ./bin/neurofs
 build:
 	@mkdir -p $(OUT_DIR)
-	go build -o $(OUT_DIR)/$(BINARY) $(CMD_PATH)
-	@echo "built: $(OUT_DIR)/$(BINARY)"
+	go build -ldflags "-X github.com/neuromfs/neuromfs/internal/cli.Version=$(VERSION)" -o $(OUT_DIR)/$(BINARY) $(CMD_PATH)
+	@echo "built: $(OUT_DIR)/$(BINARY) version $(VERSION)"
 
 ## install: Install neurofs to GOPATH/bin (makes it available system-wide)
 install:
-	go install $(CMD_PATH)
+	go install -ldflags "-X github.com/neuromfs/neuromfs/internal/cli.Version=$(VERSION)" $(CMD_PATH)
 
 ## test: Run all tests
 test:
@@ -77,6 +78,10 @@ vet:
 ## fmt: Format all Go files
 fmt:
 	gofmt -w .
+
+## lint: Run golangci-lint
+lint:
+	golangci-lint run ./...
 
 ## help: Print available targets
 help:
