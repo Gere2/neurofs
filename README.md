@@ -430,10 +430,14 @@ relevance score, file size, and remaining budget:
 
 | Language | Extensions | Extracted |
 |---|---|---|
-| TypeScript | `.ts`, `.tsx` | imports, exports, functions, classes, types |
-| JavaScript | `.js`, `.jsx`, `.mjs` | imports, require, functions, classes |
+| TypeScript | `.ts`, `.tsx`, `.mts` | imports, exports, functions, classes, types |
+| JavaScript | `.js`, `.jsx`, `.mjs`, `.cjs` | imports, require, functions, classes |
 | Python | `.py` | imports, functions, classes |
 | Go | `.go` | imports, functions, types, consts |
+| Rust | `.rs` | imports (use/mod), functions, structs, enums, traits, impls |
+| C++ | `.cpp`, `.hpp`, `.cc`, `.h` | imports (include), class/struct, functions |
+| Java | `.java` | imports, class/interface/enum, methods |
+| Ruby | `.rb` | imports (require), class/module, methods (def) |
 | Markdown | `.md`, `.mdx` | headings (h1–h3) |
 | JSON/YAML | `.json`, `.yaml`, `.yml` | structural note |
 
@@ -441,15 +445,21 @@ relevance score, file size, and remaining budget:
 
 ## How Ranking Works
 
-Scoring is structural and lexical — no embeddings, no external model calls.
+Scoring is hybrid, combining lexical, structural, and semantic signals. If an `OPENAI_API_KEY` is present, it uses `text-embedding-3-small` for semantic similarity; otherwise, it falls back to a deterministic local mock embedding generator to remain offline-safe.
 
 | Signal | Weight | Description |
 |---|---|---|
+| `semantic_match` | +4.0 | Cosine similarity between query and file embeddings |
+| `focus` | +4.0 | Boost for files explicitly targeted by user or inherited |
+| `root_doc` | +3.5 | Floor boost for canonical repo root docs (README, CONTRIBUTING) |
 | `filename_match` | +3.0 | Query term in the file name |
 | `symbol_match` | +2.5 | Query term in a symbol name |
+| `changed` | +2.0 | Boost for files with uncommitted git changes |
 | `path_match` | +1.5 | Query term in the directory path |
-| `import_expansion` | +0.8 | File imported by a high-scoring file |
+| `entry_point` | +1.5 | Boost for entry point files |
+| `dependency_match` | +1.2 | Boost for direct dependencies of high-scoring files |
 | `import_match` | +1.0 | Query term in an import path |
+| `import_expansion` | +0.8 | File imported by a high-scoring file |
 | `content_match` | +0.5 | TF-style term frequency in file content |
 | `lang_bonus` | +0.3 | Preference for code over config |
 
@@ -521,9 +531,7 @@ exposing `neurofs_task` and `neurofs_scan` as tools any MCP host
 dependencies, stdout reserved for protocol traffic.
 
 **Next**  
-IDE extension hooks, optional semantic indexing via embeddings.
-Hierarchical bundles, progressive expansion, attention routing for
-large context windows.
+IDE extension hooks, hierarchical bundles, progressive expansion, attention routing for large context windows.
 
 ---
 
