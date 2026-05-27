@@ -11,6 +11,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
@@ -18,16 +19,19 @@ import (
 
 func newPackCmd() *cobra.Command {
 	var (
-		budget       int
-		repoPath     string
-		format       string
-		outPath      string
-		forTarget    string
-		focus        string
-		changed      bool
-		maxFiles     int
-		maxFragments int
-		saveBundle   string
+		budget          int
+		repoPath        string
+		format          string
+		outPath         string
+		forTarget       string
+		focus           string
+		changed         bool
+		maxFiles        int
+		maxFragments    int
+		saveBundle      string
+		stripComments   bool
+		stripBlankLines bool
+		noChunks        bool
 	)
 
 	cmd := &cobra.Command{
@@ -77,29 +81,29 @@ Examples:
 				return fmt.Errorf("pack: load index: %w", err)
 			}
 
-			embClient := embeddings.NewClient()
+			embClient := embeddings.NewClient(cfg.HybridMode)
 			queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
 			fileEmbs, _ := db.AllEmbeddings()
 
+			rels, _ := db.AllRelations()
 			info := loadProjectInfo(db)
 			rankOpts := ranking.Options{
 				Project:        info,
 				Focus:          focus,
 				QueryEmbedding: queryEmb,
 				Embeddings:     fileEmbs,
+				Relations:      rels,
 			}
 			if changed {
 				rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
 				fmt.Fprintf(os.Stderr, "pack: --changed matched %d files from git\n", len(rankOpts.ChangedFiles))
 			}
 
-			ranked := ranking.RankWithOptions(files, query, rankOpts)
-
 			// --for claude implies aggressive compression unless overridden:
 			// prompts are cheaper when signatures replace full bodies.
 			preferSig := output.Format(forTarget) == output.FormatClaude
 
-			bundle, err := packager.Pack(ranked, query, packager.Options{
+			packOpts := packager.Options{
 				Budget:           budget,
 				MaxFiles:         maxFiles,
 				MaxFragments:     maxFragments,
@@ -111,8 +115,33 @@ Examples:
 				UpgradeWithSlack: true,
 				// Query terms unlock sub-file excerpts on the top-ranked
 				// TS/JS/Python files (see packager/excerpt.go).
-				QueryTerms: ranking.Tokenise(query),
-			})
+				QueryTerms:      ranking.Tokenise(query),
+				StripComments:   stripComments,
+				StripBlankLines: stripBlankLines,
+			}
+
+			var bundle models.Bundle
+			if !noChunks {
+				searchLimit := maxFragments
+				if searchLimit <= 0 {
+					searchLimit = maxFiles
+				}
+				if searchLimit <= 0 {
+					searchLimit = 12
+				}
+				searchRes, err := retrieval.Search(cmd.Context(), retrieval.Options{
+					Query: query,
+					Repo:  cfg.RepoRoot,
+					Limit: searchLimit,
+				})
+				if err != nil {
+					return fmt.Errorf("pack: chunk search: %w", err)
+				}
+				bundle, err = packager.PackChunks(chunkHitsFromSearch(searchRes, files), query, packOpts)
+			} else {
+				ranked := ranking.RankWithOptions(files, query, rankOpts)
+				bundle, err = packager.Pack(ranked, query, packOpts)
+			}
 			if err != nil {
 				return fmt.Errorf("pack: %w", err)
 			}
@@ -158,9 +187,36 @@ Examples:
 	cmd.Flags().IntVar(&maxFiles, "max-files", 0, "Hard cap on files included in the bundle (0 = no cap)")
 	cmd.Flags().IntVar(&maxFragments, "max-fragments", 0, "Hard cap on fragments included in the bundle (0 = no cap)")
 	cmd.Flags().StringVar(&saveBundle, "save-bundle", "", "Also write a JSON snapshot of the bundle here (consumed by 'audit replay --bundle')")
+	cmd.Flags().BoolVar(&stripComments, "strip-comments", false, "Strip all comments from source files to optimize token budget")
+	cmd.Flags().BoolVar(&stripBlankLines, "strip-blank-lines", false, "Strip all blank lines from source files to optimize token budget")
+	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the bundle from ranked whole files instead of code chunks")
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
+}
+
+func chunkHitsFromSearch(searchRes retrieval.Response, files []models.FileRecord) []packager.ChunkHit {
+	langByPath := make(map[string]models.Lang, len(files))
+	for _, file := range files {
+		langByPath[file.RelPath] = file.Lang
+	}
+	hits := make([]packager.ChunkHit, 0, len(searchRes.Results))
+	for _, hit := range searchRes.Results {
+		hits = append(hits, packager.ChunkHit{
+			RelPath:       hit.Path,
+			Lang:          langByPath[hit.Path],
+			StartLine:     hit.StartLine,
+			EndLine:       hit.EndLine,
+			Kind:          hit.Kind,
+			Symbol:        hit.Symbol,
+			Score:         hit.Score,
+			Reasons:       hit.Reasons,
+			TokenEstimate: hit.TokenEstimate,
+			ContentHash:   hit.ContentHash,
+			Snippet:       hit.Snippet,
+		})
+	}
+	return hits
 }
 
 // writeBundle dispatches to the correct serialiser. The Claude path takes a
@@ -186,4 +242,3 @@ func effectiveFormat(format, forTarget string) string {
 	}
 	return format
 }
-

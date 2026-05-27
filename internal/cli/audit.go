@@ -323,15 +323,17 @@ func rebuildBundle(cfg *config.Config, query string, budget int, focus string, c
 		return models.Bundle{}, err
 	}
 
-	embClient := embeddings.NewClient()
+	embClient := embeddings.NewClient(cfg.HybridMode)
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
 	fileEmbs, _ := db.AllEmbeddings()
 
+	rels, _ := db.AllRelations()
 	rankOpts := ranking.Options{
 		Project:        loadProjectInfo(db),
 		Focus:          focus,
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
+		Relations:      rels,
 	}
 	if changedFlag {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)

@@ -212,14 +212,14 @@ func TestWriteClaudeSignatureAndStructuralNoteUnchanged(t *testing.T) {
 
 func TestWriteClaudeThroughDispatcher(t *testing.T) {
 	// output.Write with FormatClaude must not panic and must produce a
-	// task-first body even without a summary.
+	// selection-first body even without a summary.
 	var buf bytes.Buffer
 	err := output.Write(&buf, models.Bundle{Query: "q"}, output.FormatClaude)
 	if err != nil {
 		t.Fatalf("Write(FormatClaude): %v", err)
 	}
-	if !strings.HasPrefix(buf.String(), "<task>") {
-		t.Errorf("claude dispatcher should lead with <task>, got: %s", buf.String())
+	if !strings.HasPrefix(buf.String(), "<selection>") {
+		t.Errorf("claude dispatcher should lead with <selection>, got: %s", buf.String())
 	}
 }
 

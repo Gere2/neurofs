@@ -50,6 +50,9 @@ make build
 # Or open the local UI (loopback only — nothing leaves your machine)
 ./bin/neurofs ui
 
+# Or keep the SQLite index fresh while you work
+./bin/neurofs watch
+
 # Or expose neurofs as MCP tools to Claude Desktop / Cursor / any MCP host
 ./bin/neurofs mcp     # stdio JSON-RPC — wire it as an MCP server
 ```
@@ -59,9 +62,9 @@ make build
 filter. The UI wraps the same flow plus `scan`, `pack`, `replay`, the
 journal, and global search in one page; it opens at
 <http://127.0.0.1:7777> automatically. `neurofs mcp` exposes the same
-flow as MCP tools so a host LLM can call `neurofs_task` / `neurofs_scan`
-directly. The lower-level `neurofs ask` / `neurofs pack` commands stay
-available — see [Commands](#commands).
+flow as MCP tools so a host LLM can call NeuroFS directly. The lower-level
+`neurofs ask` / `neurofs pack` commands stay available — see
+[Commands](#commands).
 
 ---
 
@@ -74,6 +77,9 @@ available — see [Commands](#commands).
 git clone https://github.com/neuromfs/neuromfs
 cd neuromfs
 make install   # installs to $GOPATH/bin
+
+# Direct installation (requires Go 1.22+)
+go install github.com/neuromfs/neuromfs/cmd/neurofs@latest
 ```
 
 ---
@@ -91,12 +97,17 @@ clipboard helper handle it.
 neurofs task "where is jwt verified"               # prints prompt to stdout
 neurofs task "review my ranking changes" > p.md    # redirect to a file
 neurofs task "resume seed UI" --budget 3000        # tighter budget
+neurofs task "where is BuildChunks" --no-chunks    # build from ranked whole files instead of chunks
 neurofs task "..." --force                         # ignore the cache
 ```
 
 Stderr carries a short summary (tokens, files, top picks, cache
-status) so pipes stay clean. Shared logic lives in `internal/taskflow`,
-so `neurofs task` and the UI's Task tab can never drift.
+status, mode) so pipes stay clean. By default, it uses chunk-based retrieval;
+pass `--no-chunks` to fall back to whole files. It uses the same hybrid
+retrieval path as `neurofs_search` and emits excerpt fragments with
+line ranges instead of whole-file ranked fragments. Shared logic lives
+in `internal/taskflow`, so `neurofs task` and the UI's Task tab can
+never drift.
 
 ### `neurofs scan [path]`
 
@@ -154,6 +165,7 @@ prompt-shaped output with grounding instructions.
 ```
 neurofs pack "how does auth work?" --out auth.prompt --budget 6000
 neurofs pack "database schema" --out schema.prompt --format json
+neurofs pack "where is jwt verified" --for claude --out jwt.prompt
 ```
 
 #### Flags that save real tokens
@@ -163,6 +175,7 @@ neurofs pack "database schema" --out schema.prompt --format json
 | `--for claude` | Prompt-shaped output, aggressive signature compression, grounding instructions appended. |
 | `--focus <path[,path]>` | Strong additive boost to files under these prefixes. Use when you know which subtree matters. |
 | `--changed` | Boost files in `git status`. No-op with a friendly message when the repo is not a git worktree. |
+| `--no-chunks` | Disable chunk-based retrieval and pack whole files instead of relevant code chunks. |
 | `--max-files N` | Cap on files included regardless of budget slack. |
 | `--max-fragments N` | Cap on fragments included regardless of budget slack. |
 
@@ -170,12 +183,32 @@ neurofs pack "database schema" --out schema.prompt --format json
 
 Runs a Model Context Protocol server over stdio (newline-delimited
 JSON-RPC 2.0). Stdout carries protocol traffic; stderr carries logs.
-The server exposes two tools that any MCP host can call:
+The server exposes these tools to any MCP host:
 
+- **`neurofs_context`** — broker entry point that routes a question to
+  outline, search, excerpt, or a chunk-backed prompt bundle and returns a
+  `tool_trace` plus `structural_hints` from indexed symbols/imports.
+  Supports profile-like intents such as `research`, `review`, `test`, and
+  `build` with different limits/budgets.
 - **`neurofs_task`** — pack a Claude-ready prompt for a query.
   Args: `query` (required), `repo` (default: cwd), `budget` (default: 3000).
 - **`neurofs_scan`** — index a repo and return a read-only summary
   (file count, total size, top extensions). Args: `repo` (default: cwd).
+- **`neurofs_view_file`** — read one repository-confined file by relative path.
+- **`neurofs_get_outline`** — return the indexed file outline.
+- **`neurofs_list_signatures`** — return compact signatures for one file.
+- **`neurofs_get_excerpt`** — return query-matching code excerpts for one file.
+- **`neurofs_search`** — return ranked code chunks with line ranges,
+  snippets, scores, reasons, content hashes, exact `rg` matches, semantic
+  matches, and graph dependency/working-set bridges.
+
+### `neurofs watch [path]`
+
+Runs an initial scan and then keeps `.neurofs/index.db` synchronized with
+file changes using `fsnotify`. It debounces bursts of writes, ignores the
+same directories as `scan`, updates modified files incrementally, removes
+deleted files from the index, and refreshes the dependency graph after
+changes.
 
 #### Wire it into Claude Desktop
 
@@ -193,7 +226,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
-Restart Claude Desktop. The two tools appear under the 🔌 menu.
+Restart Claude Desktop. The NeuroFS tools appear under the tools menu.
 
 #### Wire it into Cursor / any stdio MCP client
 
@@ -218,7 +251,7 @@ printf '%s\n%s\n' \
 ```
 
 You should see two JSON-RPC responses: one with `protocolVersion`
-and `serverInfo`, one listing the two tools with their input schemas.
+and `serverInfo`, one listing the available tools with their input schemas.
 
 ---
 
@@ -399,16 +432,27 @@ are plain JSON and small.
 ### Bench as a CI gate
 
 `neurofs bench --bundle` now reports mean/p50/p95 bundle token counts.
-Combine it with `--max-mean-bundle-tokens` to fail the job when the
-bundle silently gets fatter:
+`--search` adds the same style of report for `neurofs_search`: top-k
+chunk hits, returned-token counts, p50/p95 latency, fact recall over
+returned snippets, token ratio versus bundle output, and optional stable
+JSON prefix checks. `--context` exercises the `neurofs_context` broker
+itself, reporting route distribution, structural hint counts, output
+tokens, latency, and top-k hits from routed results.
+Combine the ceilings to fail the job when either retrieval quality drops
+or context gets fatter:
 
 ```
-neurofs bench --bundle --prefer-signatures \
-    --min-top3 75 --max-mean-bundle-tokens 1200
+neurofs bench --bundle --prefer-signatures --search --context --search-stability \
+    --min-top3 75 \
+    --max-mean-bundle-tokens 1200 \
+    --max-mean-search-tokens 700 \
+    --max-mean-context-tokens 900
 ```
 
 If the ranker regresses *or* the packager starts emitting bigger bundles
-for the same questions, the exit code is non-zero.
+for the same questions, the exit code is non-zero. With `--search` and
+`--context`, the same gate also catches chunk retrieval and broker output
+bloat.
 
 ---
 
@@ -476,15 +520,22 @@ internal/
   config/             — configuration and defaults
   fsutil/             — file system helpers, language detection
   storage/            — SQLite persistence (database/sql + modernc.org/sqlite)
-  parser/             — symbol and import extraction (regex, no AST)
-  indexer/            — orchestrates walk → parse → store
+  embeddings/         — OpenAI and mock vector embeddings for semantic ranking
+  parser/             — symbol and import extraction (mostly regex)
+  project/            — metadata extraction (package.json, tsconfig.json) to aid ranking
+  indexer/            — orchestrates walk/watch → parse → store → graph
   ranking/            — lexical + structural relevance scoring
   packager/           — token-budget-aware bundle assembly
   tokenbudget/        — token estimation and budget management
   output/             — markdown / json / text serialisation
+  taskflow/           — orchestrates the multi-step task pipeline
   audit/              — citation/drift/fact scoring + replay persistence
+  quality/            — records human ratings of task prompts for feedback loops
+  gate/               — pivot-readiness criteria evaluation (G1–G5)
   benchmark/          — curated (question → expected-file) ranking bench
-  cli/                — cobra commands: scan, ask, pack, stats, bench, audit
+  ui/                 — local web UI server, API handlers, and AI proxy
+  mcp/                — Model Context Protocol (MCP) server implementation
+  cli/                — cobra commands: scan, ask, pack, stats, bench, audit, gate
 testdata/
   sample-repo/        — realistic sample repository for tests
 ```
@@ -494,13 +545,18 @@ testdata/
 ## Development
 
 ```bash
-make deps      # go mod tidy
-make build     # compile binary
-make test      # run all tests including integration
-make run-scan  # scan testdata/sample-repo
-make run-ask   # ask against testdata/sample-repo
-make vet       # go vet
-make fmt       # gofmt
+make deps         # go mod tidy
+make build        # compile binary to ./bin/neurofs
+make install      # install system-wide to $GOPATH/bin
+make test         # run all tests including integration
+make test-short   # run tests skipping integration tests
+make run-ui       # start the local web UI
+make run-scan     # scan testdata/sample-repo
+make run-ask      # ask against testdata/sample-repo
+make vet          # go vet
+make fmt          # gofmt
+make lint         # run golangci-lint
+make help         # print all available targets
 ```
 
 ---
@@ -526,12 +582,34 @@ single command, with a `(query, budget)` cache. The shared
 
 **Phase 4 — MCP** *(shipped)*  
 `neurofs mcp` runs a Model Context Protocol server over stdio,
-exposing `neurofs_task` and `neurofs_scan` as tools any MCP host
-(Claude Desktop, Cursor, etc.) can call. JSON-RPC 2.0, no extra
-dependencies, stdout reserved for protocol traffic.
+exposing task, scan, outline, signatures, excerpts, and safe file-view
+tools, plus chunk-level search and the `neurofs_context` broker any MCP
+host (Claude Desktop, Cursor, etc.) can call. The broker uses indexed
+symbols/imports to promote symbol-shaped questions to excerpts and to
+boost routed search results. JSON-RPC 2.0, no extra dependencies,
+stdout reserved for protocol traffic.
+
+**Phase 5 — Living index** *(in progress)*
+`neurofs watch` keeps the SQLite index fresh with `fsnotify`, while the
+packager already has a Go AST excerpt path for precise sub-file context.
+The index now persists chunks with content hashes and exposes an MCP
+search tool over those chunks, including semantic scoring from cached
+chunk embeddings, graph expansion through direct imports, and git
+working-set boosts. Exact identifier and filename matches now add
+`exact_content` / `exact_filename` reasons, while very large chunks lose
+rank when smaller alternatives match. `neurofs pack` (or `neurofs task`) now uses
+chunk-based retrieval by default to build bundles from those chunk hits (opt out with
+`--no-chunks`), carrying the same line-ranged retrieval into the one-shot prompt flow.
+Next: AST-backed chunking for TS/JS/Python.
+
+**Strategic planning**
+Current competitive radar and implementation direction live in
+[`docs/strategic_anticipations.md`](docs/strategic_anticipations.md) and
+[`docs/implementation_plan.md`](docs/implementation_plan.md).
 
 **Next**  
-IDE extension hooks, hierarchical bundles, progressive expansion, attention routing for large context windows.
+Hybrid agentic search, MCP broker routing, session ledger, progressive
+expansion, and attention routing for large context windows.
 
 ---
 

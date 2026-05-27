@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
 func TestServerHandshakeAndDispatch(t *testing.T) {
@@ -78,14 +83,22 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 3 {
-		t.Fatalf("tools: got %d want 3", len(listResult.Tools))
+	if len(listResult.Tools) != 8 {
+		t.Fatalf("tools: got %d want 8", len(listResult.Tools))
 	}
-	names := []string{listResult.Tools[0].Name, listResult.Tools[1].Name, listResult.Tools[2].Name}
-	wantNames := map[string]bool{"neurofs_task": true, "neurofs_scan": true, "neurofs_view_file": true}
-	for _, n := range names {
-		if !wantNames[n] {
-			t.Fatalf("unexpected tool name %q in %v", n, names)
+	wantNames := map[string]bool{
+		"neurofs_context":         true,
+		"neurofs_task":            true,
+		"neurofs_scan":            true,
+		"neurofs_view_file":       true,
+		"neurofs_get_outline":     true,
+		"neurofs_list_signatures": true,
+		"neurofs_get_excerpt":     true,
+		"neurofs_search":          true,
+	}
+	for _, tool := range listResult.Tools {
+		if !wantNames[tool.Name] {
+			t.Fatalf("unexpected tool name %q", tool.Name)
 		}
 	}
 
@@ -125,6 +138,593 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 }
 
+func TestContextToolRoutesSearchAndBundle(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	goCode := `package service
+
+func AlphaWorker() string {
+	return "alpha"
+}
+
+func BetaWorker() string {
+	return "beta"
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "service.go"), []byte(goCode), 0o644); err != nil {
+		t.Fatalf("write go file: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query":  "AlphaWorker",
+		"repo":   tmpDir,
+		"intent": "search",
+		"limit":  3,
+	})
+	searchRes := runContextTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("context search failed: %s", searchRes.Content[0].Text)
+	}
+	var searchPayload ContextResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &searchPayload); err != nil {
+		t.Fatalf("decode context search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if searchPayload.Route != "search" || !traceHasTool(searchPayload.ToolTrace, "neurofs_search") {
+		t.Fatalf("unexpected context search route: %+v", searchPayload)
+	}
+	if len(searchPayload.StructuralHints) == 0 || searchPayload.StructuralHints[0].Path != "service.go" {
+		t.Fatalf("expected structural hint for service.go, got %+v", searchPayload.StructuralHints)
+	}
+	if len(searchPayload.StructuralHints[0].SymbolMatches) == 0 || searchPayload.StructuralHints[0].SymbolMatches[0].Name != "AlphaWorker" {
+		t.Fatalf("expected AlphaWorker structural symbol, got %+v", searchPayload.StructuralHints[0])
+	}
+	if len(searchPayload.Results) == 0 || searchPayload.Results[0].Symbol != "AlphaWorker" {
+		t.Fatalf("expected AlphaWorker search result, got %+v", searchPayload.Results)
+	}
+	if !containsString(searchPayload.Results[0].Reasons, "structural_symbol") {
+		t.Fatalf("expected structural_symbol boost reason, got %+v", searchPayload.Results[0].Reasons)
+	}
+
+	autoArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "AlphaWorker location",
+		"repo":  tmpDir,
+	})
+	autoRes := runContextTool(ctx, autoArgsRaw)
+	if autoRes.IsError {
+		t.Fatalf("context auto route failed: %s", autoRes.Content[0].Text)
+	}
+	var autoPayload ContextResponse
+	if err := json.Unmarshal([]byte(autoRes.Content[0].Text), &autoPayload); err != nil {
+		t.Fatalf("decode context auto payload: %v\n%s", err, autoRes.Content[0].Text)
+	}
+	if autoPayload.Route != "excerpt" || autoPayload.Intent != "excerpt" {
+		t.Fatalf("expected structural symbol query to route to excerpt, got %+v", autoPayload)
+	}
+	if !strings.Contains(autoPayload.Text, "AlphaWorker") {
+		t.Fatalf("expected excerpt text to contain AlphaWorker, got:\n%s", autoPayload.Text)
+	}
+	if got := inferContextIntent("BuildChunks location"); got != "search" {
+		t.Fatalf("symbol-like query should not be treated as build intent, got %q", got)
+	}
+
+	researchArgsRaw, _ := json.Marshal(map[string]any{
+		"query":  "Worker",
+		"repo":   tmpDir,
+		"intent": "research",
+		"limit":  1,
+	})
+	researchRes := runContextTool(ctx, researchArgsRaw)
+	if researchRes.IsError {
+		t.Fatalf("context research route failed: %s", researchRes.Content[0].Text)
+	}
+	var researchPayload ContextResponse
+	if err := json.Unmarshal([]byte(researchRes.Content[0].Text), &researchPayload); err != nil {
+		t.Fatalf("decode context research payload: %v\n%s", err, researchRes.Content[0].Text)
+	}
+	if researchPayload.Intent != "research" || researchPayload.Route != "search" {
+		t.Fatalf("expected research profile to use search route, got %+v", researchPayload)
+	}
+	if len(researchPayload.Results) < 2 {
+		t.Fatalf("expected research profile to widen limit beyond 1, got %+v", researchPayload.Results)
+	}
+	if !traceReasonContains(researchPayload.ToolTrace, "research profile") {
+		t.Fatalf("expected research trace reason, got %+v", researchPayload.ToolTrace)
+	}
+
+	bundleArgsRaw, _ := json.Marshal(map[string]any{
+		"query":  "Where is AlphaWorker implemented?",
+		"repo":   tmpDir,
+		"intent": "build",
+		"budget": 1200,
+	})
+	bundleRes := runContextTool(ctx, bundleArgsRaw)
+	if bundleRes.IsError {
+		t.Fatalf("context bundle failed: %s", bundleRes.Content[0].Text)
+	}
+	var bundlePayload ContextResponse
+	if err := json.Unmarshal([]byte(bundleRes.Content[0].Text), &bundlePayload); err != nil {
+		t.Fatalf("decode context bundle payload: %v\n%s", err, bundleRes.Content[0].Text)
+	}
+	if bundlePayload.Route != "task_chunks" || bundlePayload.PromptPath == "" || bundlePayload.BundlePath == "" {
+		t.Fatalf("unexpected context bundle route: %+v", bundlePayload)
+	}
+	if !strings.Contains(bundlePayload.Prompt, `rep="excerpt"`) || !strings.Contains(bundlePayload.Prompt, "AlphaWorker") {
+		t.Fatalf("expected chunk excerpt prompt, got:\n%s", bundlePayload.Prompt)
+	}
+}
+
+func TestSearchToolReturnsPersistedGoChunks(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	goCode := `package service
+
+func AlphaWorker() string {
+	return "alpha"
+}
+
+func BetaWorker() string {
+	return "beta"
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "service.go"), []byte(goCode), 0o644); err != nil {
+		t.Fatalf("write go file: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "alpha",
+		"repo":  tmpDir,
+		"limit": 3,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) == 0 {
+		t.Fatalf("expected at least one search result")
+	}
+	top := payload.Results[0]
+	if top.Symbol != "AlphaWorker" {
+		t.Fatalf("expected AlphaWorker first, got %+v", top)
+	}
+	if !strings.Contains(top.Snippet, "AlphaWorker") || strings.Contains(top.Snippet, "BetaWorker") {
+		t.Fatalf("expected alpha-only chunk snippet, got:\n%s", top.Snippet)
+	}
+	if !containsString(top.Reasons, "symbol_match") {
+		t.Fatalf("expected symbol_match reason, got %+v", top.Reasons)
+	}
+
+	excArgsRaw, _ := json.Marshal(map[string]any{
+		"path":  "service.go",
+		"query": "alpha",
+		"repo":  tmpDir,
+	})
+	excRes := runGetExcerptTool(ctx, excArgsRaw)
+	if excRes.IsError {
+		t.Fatalf("get excerpt failed: %s", excRes.Content[0].Text)
+	}
+	if !strings.Contains(excRes.Content[0].Text, "source: persisted_chunks") {
+		t.Fatalf("expected persisted chunk excerpt, got:\n%s", excRes.Content[0].Text)
+	}
+	if !strings.Contains(excRes.Content[0].Text, "AlphaWorker") || strings.Contains(excRes.Content[0].Text, "BetaWorker") {
+		t.Fatalf("expected excerpt to include AlphaWorker only, got:\n%s", excRes.Content[0].Text)
+	}
+}
+
+func TestSearchToolUsesSemanticChunkEmbeddings(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	goCode := `package service
+
+func AlphaWorker() string {
+	return "alpha"
+}
+
+func BetaWorker() string {
+	return "beta"
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "service.go"), []byte(goCode), 0o644); err != nil {
+		t.Fatalf("write go file: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	cfg, err := config.New(tmpDir)
+	if err != nil {
+		t.Fatalf("config: %v", err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	rec, err := db.GetFileByRelPath("service.go")
+	if err != nil {
+		t.Fatalf("get file: %v", err)
+	}
+	chunks, err := db.GetChunksForFile(rec.Path)
+	if err != nil {
+		t.Fatalf("get chunks: %v", err)
+	}
+
+	var betaHash string
+	for _, chunk := range chunks {
+		if chunk.Symbol == "BetaWorker" {
+			betaHash = chunk.ContentHash
+			break
+		}
+	}
+	if betaHash == "" {
+		t.Fatalf("expected BetaWorker chunk in %+v", chunks)
+	}
+
+	embClient := embeddings.NewClient()
+	queryEmbedding, err := embClient.GetEmbedding(ctx, "semantic needle")
+	if err != nil {
+		t.Fatalf("query embedding: %v", err)
+	}
+	if err := db.SaveChunkEmbedding(betaHash, queryEmbedding, embClient.ProviderName(), embClient.ModelName()); err != nil {
+		t.Fatalf("save forced chunk embedding: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "semantic needle",
+		"repo":  tmpDir,
+		"limit": 2,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) == 0 {
+		t.Fatalf("expected semantic search result")
+	}
+	top := payload.Results[0]
+	if top.Symbol != "BetaWorker" {
+		t.Fatalf("expected BetaWorker first from semantic match, got %+v", top)
+	}
+	if !containsString(top.Reasons, "semantic_match") {
+		t.Fatalf("expected semantic_match reason, got %+v", top.Reasons)
+	}
+}
+
+func TestSearchToolAddsDependencyGraphBridge(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	appCode := `import { helper } from "./util";
+
+export function startApp() {
+  return helper();
+}
+`
+	utilCode := `export function helper() {
+  return "ok";
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "app.ts"), []byte(appCode), 0o644); err != nil {
+		t.Fatalf("write app file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "util.ts"), []byte(utilCode), 0o644); err != nil {
+		t.Fatalf("write util file: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "startApp",
+		"repo":  tmpDir,
+		"limit": 5,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+
+	var foundDependency bool
+	for _, result := range payload.Results {
+		if result.Path == "util.ts" && containsString(result.Reasons, "graph_dependency") {
+			foundDependency = true
+			break
+		}
+	}
+	if !foundDependency {
+		t.Fatalf("expected util.ts graph dependency bridge, got %+v", payload.Results)
+	}
+}
+
+func TestSearchToolAddsWorkingSetBoost(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git executable not available")
+	}
+
+	files := map[string]string{
+		".gitignore": ".neurofs/\n",
+		"alpha.go": `package service
+
+func AlphaWorker() string {
+	return "alpha"
+}
+`,
+		"beta.go": `package service
+
+func BetaWorker() string {
+	return "beta"
+}
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	runGit(t, tmpDir, "init")
+	runGit(t, tmpDir, "config", "user.email", "neurofs-test@example.com")
+	runGit(t, tmpDir, "config", "user.name", "NeuroFS Test")
+	runGit(t, tmpDir, "add", ".")
+	runGit(t, tmpDir, "commit", "-m", "initial")
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	modifiedAlpha := `package service
+
+func AlphaWorker() string {
+	return "alpha changed"
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "alpha.go"), []byte(modifiedAlpha), 0o644); err != nil {
+		t.Fatalf("modify alpha.go: %v", err)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "review current edits",
+		"repo":  tmpDir,
+		"limit": 5,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) == 0 {
+		t.Fatalf("expected working-set search result")
+	}
+	top := payload.Results[0]
+	if top.Path != "alpha.go" {
+		t.Fatalf("expected changed alpha.go first, got %+v", top)
+	}
+	if !containsString(top.Reasons, "working_set") {
+		t.Fatalf("expected working_set reason, got %+v", top.Reasons)
+	}
+}
+
+func TestSearchToolAddsExactContentBoostFromRG(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg executable not available")
+	}
+
+	goCode := `package service
+
+func ExactNeedle() string {
+	const NeedleID = "needle"
+	return NeedleID
+}
+
+func OtherWorker() string {
+	return NeedleIDValue
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "service.go"), []byte(goCode), 0o644); err != nil {
+		t.Fatalf("write service.go: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "NeedleID",
+		"repo":  tmpDir,
+		"limit": 3,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) == 0 {
+		t.Fatalf("expected exact content result")
+	}
+	top := payload.Results[0]
+	if top.Symbol != "ExactNeedle" {
+		t.Fatalf("expected ExactNeedle first, got %+v", top)
+	}
+	if !containsString(top.Reasons, "exact_content") {
+		t.Fatalf("expected exact_content reason, got %+v", top.Reasons)
+	}
+	for _, result := range payload.Results {
+		if result.Symbol == "OtherWorker" && containsString(result.Reasons, "exact_content") {
+			t.Fatalf("substring-only NeedleIDValue must not get exact_content: %+v", result)
+		}
+	}
+}
+
+func TestSearchToolAddsExactFilenameBoost(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	files := map[string]string{
+		"auth.go": `package service
+
+func Handler() string {
+	return "ok"
+}
+`,
+		"authenticator.go": `package service
+
+func Handler() string {
+	return "ok"
+}
+`,
+	}
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(tmpDir, name), []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "auth",
+		"repo":  tmpDir,
+		"limit": 2,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) == 0 {
+		t.Fatalf("expected exact filename result")
+	}
+	top := payload.Results[0]
+	if top.Path != "auth.go" {
+		t.Fatalf("expected auth.go first, got %+v", top)
+	}
+	if !containsString(top.Reasons, "exact_filename") {
+		t.Fatalf("expected exact_filename reason, got %+v", top.Reasons)
+	}
+}
+
+func TestSearchToolPenalizesLongChunksWhenSmallAlternativeExists(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	var goCode strings.Builder
+	goCode.WriteString("package service\n\n")
+	goCode.WriteString("func LargeMatch() string {\n")
+	goCode.WriteString("\tvalue := \"TargetNeedle\"\n")
+	for i := 0; i < 260; i++ {
+		goCode.WriteString("\tvalue += \"filler filler filler filler filler\"\n")
+	}
+	goCode.WriteString("\treturn value\n")
+	goCode.WriteString("}\n\n")
+	goCode.WriteString("func SmallMatch() string {\n")
+	goCode.WriteString("\treturn \"TargetNeedle\"\n")
+	goCode.WriteString("}\n")
+
+	if err := os.WriteFile(filepath.Join(tmpDir, "service.go"), []byte(goCode.String()), 0o644); err != nil {
+		t.Fatalf("write service.go: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "TargetNeedle",
+		"repo":  tmpDir,
+		"limit": 2,
+	})
+	searchRes := runSearchTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("search tool failed: %s", searchRes.Content[0].Text)
+	}
+	var payload searchResponse
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &payload); err != nil {
+		t.Fatalf("decode search payload: %v\n%s", err, searchRes.Content[0].Text)
+	}
+	if len(payload.Results) < 2 {
+		t.Fatalf("expected two search results, got %+v", payload.Results)
+	}
+	if payload.Results[0].Symbol != "SmallMatch" {
+		t.Fatalf("expected smaller chunk first, got %+v", payload.Results[0])
+	}
+	var foundPenalty bool
+	for _, result := range payload.Results {
+		if result.Symbol == "LargeMatch" && containsString(result.Reasons, "long_chunk_penalty") {
+			foundPenalty = true
+			break
+		}
+	}
+	if !foundPenalty {
+		t.Fatalf("expected LargeMatch long_chunk_penalty, got %+v", payload.Results)
+	}
+}
+
 func mustReencode(t *testing.T, src any, dst any) {
 	t.Helper()
 	b, err := json.Marshal(src)
@@ -133,6 +733,16 @@ func mustReencode(t *testing.T, src any, dst any) {
 	}
 	if err := json.Unmarshal(b, dst); err != nil {
 		t.Fatalf("re-unmarshal: %v", err)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
 	}
 }
 
@@ -186,4 +796,89 @@ func TestViewFileTool(t *testing.T) {
 		!strings.Contains(resEscape.Content[0].Text, "does not exist") {
 		t.Errorf("expected path containment or existence error, got: %q", resEscape.Content[0].Text)
 	}
+}
+
+func TestSurgicalTools(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Write a mock TS file
+	tsPath := "app.ts"
+	tsCode := `
+export function computeSum(a: number, b: number): number {
+  return a + b;
+}
+
+export function unrelated() {
+  console.log("hello");
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, tsPath), []byte(tsCode), 0o644); err != nil {
+		t.Fatalf("write temp ts file: %v", err)
+	}
+
+	// 1) Scan the repo first using scan tool to populate DB
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	scanRes := runScanTool(ctx, scanArgsRaw)
+	if scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	// 2) Test outline tool
+	outlineArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	outlineRes := runGetOutlineTool(ctx, outlineArgsRaw)
+	if outlineRes.IsError {
+		t.Fatalf("outline tool failed: %s", outlineRes.Content[0].Text)
+	}
+	if !strings.Contains(outlineRes.Content[0].Text, tsPath) {
+		t.Errorf("expected outline to list %q, got: %s", tsPath, outlineRes.Content[0].Text)
+	}
+
+	// 3) Test list signatures tool
+	sigArgsRaw, _ := json.Marshal(map[string]any{
+		"path": tsPath,
+		"repo": tmpDir,
+	})
+	sigRes := runListSignaturesTool(ctx, sigArgsRaw)
+	if sigRes.IsError {
+		t.Fatalf("list signatures tool failed: %s", sigRes.Content[0].Text)
+	}
+	if !strings.Contains(sigRes.Content[0].Text, "computeSum") || !strings.Contains(sigRes.Content[0].Text, "unrelated") {
+		t.Errorf("expected signatures to contain symbols, got: %s", sigRes.Content[0].Text)
+	}
+
+	// 4) Test get excerpt tool
+	excArgsRaw, _ := json.Marshal(map[string]any{
+		"path":  tsPath,
+		"query": "sum",
+		"repo":  tmpDir,
+	})
+	excRes := runGetExcerptTool(ctx, excArgsRaw)
+	if excRes.IsError {
+		t.Fatalf("get excerpt tool failed: %s", excRes.Content[0].Text)
+	}
+	if !strings.Contains(excRes.Content[0].Text, "computeSum") {
+		t.Errorf("expected excerpt to contain matching function, got: %s", excRes.Content[0].Text)
+	}
+	if strings.Contains(excRes.Content[0].Text, "unrelated") {
+		t.Errorf("expected excerpt to NOT contain unrelated function, got: %s", excRes.Content[0].Text)
+	}
+}
+
+func traceHasTool(trace []ContextTraceStep, tool string) bool {
+	for _, step := range trace {
+		if step.Tool == tool {
+			return true
+		}
+	}
+	return false
+}
+
+func traceReasonContains(trace []ContextTraceStep, text string) bool {
+	for _, step := range trace {
+		if strings.Contains(step.Reason, text) {
+			return true
+		}
+	}
+	return false
 }

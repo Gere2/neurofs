@@ -72,6 +72,7 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			}
 			fmt.Fprintf(os.Stderr, "  symbols    : %d\n", stats.Symbols)
 			fmt.Fprintf(os.Stderr, "  imports    : %d\n", stats.Imports)
+			fmt.Fprintf(os.Stderr, "  chunks     : %d\n", stats.Chunks)
 			fmt.Fprintf(os.Stderr, "  index      : %s\n", cfg.DBPath)
 			fmt.Fprintf(os.Stderr, "  time       : %s\n", stats.Duration.Round(1e6))
 			fmt.Fprintf(os.Stderr, "\n")

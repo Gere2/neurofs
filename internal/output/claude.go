@@ -44,8 +44,6 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 		fmt.Fprintf(w, format, args...)
 	}
 
-	p("<task>\n%s\n</task>\n\n", strings.TrimSpace(b.Query))
-
 	if hasSummary(summary) {
 		p("<repo>\n")
 		if summary.Name != "" {
@@ -64,14 +62,6 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 			p("languages: %s\n", formatLanguages(summary.Languages))
 		}
 		p("</repo>\n\n")
-	}
-
-	if summary.GitStatus != "" {
-		p("<git_status>\n%s\n</git_status>\n\n", strings.TrimSpace(summary.GitStatus))
-	}
-
-	if summary.GitDiff != "" {
-		p("<git_diff>\n%s\n</git_diff>\n\n", strings.TrimSpace(summary.GitDiff))
 	}
 
 	p("<selection>\n")
@@ -99,6 +89,16 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 		}
 	}
 	p("</context>\n\n")
+
+	if summary.GitStatus != "" {
+		p("<git_status>\n%s\n</git_status>\n\n", strings.TrimSpace(summary.GitStatus))
+	}
+
+	if summary.GitDiff != "" {
+		p("<git_diff>\n%s\n</git_diff>\n\n", strings.TrimSpace(summary.GitDiff))
+	}
+
+	p("<task>\n%s\n</task>\n\n", strings.TrimSpace(b.Query))
 
 	p("<instructions>\n")
 	p("- Treat the files above as the only source of truth.\n")

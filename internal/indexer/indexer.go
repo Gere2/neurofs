@@ -32,6 +32,7 @@ type Stats struct {
 	Removed    int // stale records deleted
 	Symbols    int // total symbols extracted
 	Imports    int // total unique imports extracted
+	Chunks     int // total chunks extracted
 	Errors     int // files that produced errors (skipped)
 	Duration   time.Duration
 }
@@ -67,6 +68,25 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 	// existingPaths tracks files that still exist on disk (for stale cleanup).
 	existingPaths := make(map[string]bool)
 
+	embClient := embeddings.NewClient(cfg.HybridMode)
+
+	// Check if the embedding provider/model configuration has changed.
+	// If it has, we invalidate the cached files and embeddings to force a clean re-scan
+	// and ensure vector dimensionality and model coherence.
+	currentProvider := embClient.ProviderName() + ":" + embClient.ModelName()
+	storedProvider, hasStored, _ := db.GetMeta("embedding_provider")
+	if hasStored && storedProvider != currentProvider {
+		opts.Logf("  embedding provider/model changed from %q to %q; clearing index to force fresh re-scan...", storedProvider, currentProvider)
+		if err := db.ClearIndex(); err != nil {
+			return Stats{}, fmt.Errorf("indexer: clear index on provider change: %w", err)
+		}
+	}
+
+	// Persist the current provider name in metadata.
+	if err := db.SetMeta("embedding_provider", currentProvider); err != nil {
+		return Stats{}, fmt.Errorf("indexer: set embedding provider: %w", err)
+	}
+
 	dbFiles, err := db.AllFiles()
 	if err != nil {
 		return Stats{}, fmt.Errorf("indexer: load index: %w", err)
@@ -76,8 +96,6 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 	for _, f := range dbFiles {
 		cachedFiles[f.Path] = f
 	}
-
-	embClient := embeddings.NewClient()
 
 	var stats Stats
 
@@ -100,9 +118,13 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		relPath := fsutil.RelPath(cfg.RepoRoot, path)
 		if cached, ok := cachedFiles[path]; ok {
 			if info.Size() == cached.Size && info.ModTime().Unix() <= cached.IndexedAt.Unix() {
-				opts.Logf("  cached: %s", relPath)
-				stats.Cached++
-				return nil
+				chunks, err := db.GetChunksForFile(path)
+				if err == nil && len(chunks) > 0 {
+					opts.Logf("  cached: %s", relPath)
+					stats.Cached++
+					return nil
+				}
+				opts.Logf("  cache missing chunks, refreshing: %s", relPath)
 			}
 		}
 
@@ -142,6 +164,13 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 			return nil
 		}
 
+		chunkCount, err := persistChunks(context.Background(), db, embClient, record, string(content))
+		if err != nil {
+			opts.Logf("  error chunking %s: %v", relPath, err)
+			stats.Errors++
+			return nil
+		}
+
 		// Generate and save embedding
 		embedText := string(content)
 		if len(embedText) > 8000 {
@@ -159,7 +188,8 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		stats.Indexed++
 		stats.Symbols += len(parsed.Symbols)
 		stats.Imports += len(parsed.Imports)
-		opts.Logf("  indexed: %s (%s, %d symbols)", relPath, lang, len(parsed.Symbols))
+		stats.Chunks += chunkCount
+		opts.Logf("  indexed: %s (%s, %d symbols, %d chunks)", relPath, lang, len(parsed.Symbols), chunkCount)
 		return nil
 	})
 
@@ -173,6 +203,19 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		return stats, fmt.Errorf("indexer: cleanup: %w", err)
 	}
 	stats.Removed = removed
+
+	// Rebuild and save semantic dependency graph
+	opts.Logf("  building semantic dependency graph...")
+	allFiles, err := db.AllFiles()
+	if err != nil {
+		return stats, fmt.Errorf("indexer: load all files for dependency graph: %w", err)
+	}
+	relations := BuildRelations(allFiles)
+	if err := db.UpdateRelations(relations); err != nil {
+		return stats, fmt.Errorf("indexer: update file relations: %w", err)
+	}
+	opts.Logf("  semantic dependency graph: %d relationships persisted", len(relations))
+
 	stats.Duration = time.Since(start)
 
 	return stats, nil

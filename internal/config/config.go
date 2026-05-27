@@ -2,6 +2,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,6 +35,9 @@ type Config struct {
 
 	// Budget is the token budget for bundle generation.
 	Budget int
+
+	// HybridMode configures local embeddings and cloud reasoning.
+	HybridMode bool
 }
 
 // New returns a Config rooted at the given directory.
@@ -52,11 +56,28 @@ func New(root string) (*Config, error) {
 		return nil, err
 	}
 
-	return &Config{
+	cfg := &Config{
 		RepoRoot: abs,
 		DBPath:   filepath.Join(abs, DirName, DBName),
 		Budget:   DefaultBudget,
-	}, nil
+	}
+
+	// Try to load config from .neurofs/config.json if it exists
+	configFile := filepath.Join(abs, DirName, "config.json")
+	if data, err := os.ReadFile(configFile); err == nil {
+		var raw struct {
+			HybridMode bool `json:"hybrid_mode"`
+			Budget     int  `json:"budget"`
+		}
+		if err := json.Unmarshal(data, &raw); err == nil {
+			cfg.HybridMode = raw.HybridMode
+			if raw.Budget > 0 {
+				cfg.Budget = raw.Budget
+			}
+		}
+	}
+
+	return cfg, nil
 }
 
 // DBDir returns the directory that contains the database file.

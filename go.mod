@@ -1,6 +1,6 @@
 module github.com/neuromfs/neuromfs
 
-go 1.22
+go 1.23
 
 require (
 	github.com/spf13/cobra v1.8.0
@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

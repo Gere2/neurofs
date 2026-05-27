@@ -68,14 +68,17 @@ type Options struct {
 	PreferSignatures bool
 	UpgradeWithSlack bool
 	QueryTerms       []string
+	StripComments    bool
+	StripBlankLines  bool
 }
 
 // upgradeCandidate holds the per-fragment data we need for the optional
 // second-pass body upgrade. We keep it package-private; callers never see it.
 type upgradeCandidate struct {
-	idx     int    // index into the fragments slice
-	path    string // absolute path on disk
-	rawToks int    // tokens needed to upgrade to full_code
+	idx               int    // index into the fragments slice
+	path              string // absolute path on disk
+	rawToks           int    // tokens needed to upgrade to full_code
+	compressedContent string // pre-compressed content
 }
 
 // Pack takes a ranked list of scored files and assembles an auditable Bundle.
@@ -102,19 +105,20 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 			break
 		}
 
-		content, err := os.ReadFile(sf.Record.Path)
+		contentBytes, err := os.ReadFile(sf.Record.Path)
 		if err != nil {
 			rankPos++ // count the slot — a top-3 file that fails to read should not move the gate down
 			continue
 		}
+		content := CompressCode(sf.Record.Lang, string(contentBytes), opts.StripComments, opts.StripBlankLines)
 
-		rawTokens := tokenbudget.EstimateTokens(string(content))
+		rawTokens := tokenbudget.EstimateTokens(content)
 		totalRawTokens += rawTokens
 
 		tryExcerpt := rankPos < excerptTopN && len(opts.QueryTerms) > 0
 		rankPos++
 
-		frag := selectFragment(sf, string(content), rawTokens, budget, opts, tryExcerpt)
+		frag := selectFragment(sf, content, rawTokens, budget, opts, tryExcerpt)
 		if frag == nil {
 			continue // nothing fits even as a structural note
 		}
@@ -125,9 +129,10 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 		if opts.UpgradeWithSlack &&
 			(frag.Representation == models.RepSignature || frag.Representation == models.RepExcerpt) {
 			upgrades = append(upgrades, upgradeCandidate{
-				idx:     len(fragments) - 1,
-				path:    sf.Record.Path,
-				rawToks: rawTokens,
+				idx:               len(fragments) - 1,
+				path:              sf.Record.Path,
+				rawToks:           rawTokens,
+				compressedContent: content,
 			})
 		}
 	}
@@ -146,12 +151,8 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 		if delta <= 0 || !budget.CanFit(delta) {
 			continue
 		}
-		content, err := os.ReadFile(u.path)
-		if err != nil {
-			continue
-		}
 		fragments[u.idx].Representation = models.RepFullCode
-		fragments[u.idx].Content = string(content)
+		fragments[u.idx].Content = u.compressedContent
 		fragments[u.idx].Tokens = u.rawToks
 		budget.Consume(delta)
 	}
@@ -209,7 +210,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 	// names symbols that actually exist in the file. This is the
 	// granular middle ground between "full body" and "names only".
 	if tryExcerpt && isExcerptLang(sf.Record.Lang) {
-		if exc, ok := extractExcerpt(sf.Record, content, opts.QueryTerms); ok {
+		if exc, ok := ExtractExcerpt(sf.Record, content, opts.QueryTerms); ok {
 			excTokens := tokenbudget.EstimateTokens(exc)
 			// Skip when (a) the excerpt is too small to be useful, (b) it
 			// blew past the per-fragment cap (better to fall to signature
@@ -226,7 +227,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 	}
 
 	// Option 3: signature — compact interface view.
-	sig := buildSignature(sf, content)
+	sig := BuildSignature(sf, content)
 	sig = capSignature(sig, signatureMaxTokens)
 	sigTokens := tokenbudget.EstimateTokens(sig)
 	if sigTokens > 0 && budget.CanFit(sigTokens) {
@@ -251,8 +252,8 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 	return nil // budget exhausted, nothing fits
 }
 
-// buildSignature returns a compact signature derived from the parser output.
-func buildSignature(sf models.ScoredFile, content string) string {
+// BuildSignature returns a compact signature derived from the parser output.
+func BuildSignature(sf models.ScoredFile, content string) string {
 	parsed := parser.Parse(sf.Record.Lang, content)
 	if parsed.Signature == "" {
 		return buildStructuralNote(sf)

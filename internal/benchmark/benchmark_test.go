@@ -52,13 +52,14 @@ func TestSampleRepoPrecision(t *testing.T) {
 		t.Fatalf("load benchmark: %v", err)
 	}
 
-	// Exercise project signals exactly like the CLI path does.
 	raw, _, _ := db.GetMeta(indexer.ProjectMetaKey)
 	projInfo := project.Decode(raw)
 
+	rels, _ := db.AllRelations()
 	_, summary := benchmark.Run(files, questions, benchmark.RunOptions{
-		TopK:    3,
-		Project: projInfo,
+		TopK:      3,
+		Project:   projInfo,
+		Relations: rels,
 	})
 
 	const minTop3 = 75.0 // %
@@ -116,12 +117,14 @@ func TestSampleRepoBundleSizes(t *testing.T) {
 	raw, _, _ := db.GetMeta(indexer.ProjectMetaKey)
 	projInfo := project.Decode(raw)
 
+	rels, _ := db.AllRelations()
 	results, summary := benchmark.Run(files, questions, benchmark.RunOptions{
 		TopK:             3,
 		Project:          projInfo,
 		ComputeBundle:    true,
 		PackBudget:       4000,
 		PreferSignatures: true,
+		Relations:        rels,
 	})
 
 	if summary.BundleMeanTokens <= 0 {

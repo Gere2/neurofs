@@ -1,8 +1,7 @@
 // Package mcp implements a minimal Model Context Protocol server that
 // speaks JSON-RPC 2.0 over a single bidirectional byte stream
-// (typically stdio). It exposes two tools — neurofs_task and
-// neurofs_scan — and nothing else: no resources, prompts, sampling,
-// or streaming.
+// (typically stdio). It exposes NeuroFS tools and no resources, prompts,
+// sampling, or streaming.
 package mcp
 
 import "encoding/json"

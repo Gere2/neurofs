@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
@@ -31,7 +29,9 @@ type packReq struct {
 	MaxFiles         int    `json:"max_files"`
 	MaxFragments     int    `json:"max_fragments"`
 	PreferSignatures bool   `json:"prefer_signatures"`
-	SnapshotName     string `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
+	StripComments    bool     `json:"strip_comments"`
+	StripBlankLines  bool     `json:"strip_blank_lines"`
+	SnapshotName     string   `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
 	// InheritedFocus carries the focus paths the user kept from a parent
 	// record. Merged with Focus server-side so the ranker sees one list and
 	// legacy clients (no parent) remain unchanged.
@@ -88,15 +88,17 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	embClient := embeddings.NewClient()
+	embClient := embeddings.NewClient(cfg.HybridMode)
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), req.Query)
 	fileEmbs, _ := db.AllEmbeddings()
 
+	rels, _ := db.AllRelations()
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		Focus:          mergeFocus(req.Focus, req.InheritedFocus),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
+		Relations:      rels,
 	}
 	if req.Changed {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)
@@ -108,6 +110,8 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 		MaxFiles:         req.MaxFiles,
 		MaxFragments:     req.MaxFragments,
 		PreferSignatures: req.PreferSignatures,
+		StripComments:    req.StripComments,
+		StripBlankLines:  req.StripBlankLines,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "pack: "+err.Error())
@@ -167,10 +171,11 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 // --------------------- /api/task ---------------------
 
 type taskReq struct {
-	Repo   string `json:"repo"`
-	Query  string `json:"query"`
-	Budget int    `json:"budget"`
-	Force  bool   `json:"force"`
+	Repo          string `json:"repo"`
+	Query         string `json:"query"`
+	Budget        int    `json:"budget"`
+	Force         bool   `json:"force"`
+	DisableChunks bool   `json:"disable_chunks"`
 }
 
 func handleTask(w http.ResponseWriter, r *http.Request) {
@@ -191,10 +196,11 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := taskflow.Run(taskflow.Opts{
-		RepoRoot: req.Repo,
-		Query:    req.Query,
-		Budget:   req.Budget,
-		Force:    req.Force,
+		RepoRoot:      req.Repo,
+		Query:         req.Query,
+		Budget:        req.Budget,
+		Force:         req.Force,
+		DisableChunks: req.DisableChunks,
 	})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "task: "+err.Error())
@@ -206,32 +212,7 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 // --------------------- pack helper ---------------------
 
 func gitChangedFiles(repoRoot string) []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=normal")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil
-	}
-	var files []string
-	seen := make(map[string]bool)
-	for _, line := range strings.Split(string(out), "\n") {
-		if len(line) < 4 {
-			continue
-		}
-		path := strings.TrimSpace(line[3:])
-		if arrow := strings.Index(path, " -> "); arrow >= 0 {
-			path = path[arrow+4:]
-		}
-		path = strings.Trim(path, `"`)
-		path = filepath.ToSlash(path)
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
-		files = append(files, path)
-	}
-	return files
+	return fsutil.GitChangedFiles(repoRoot)
 }
 
 // mergeFocus joins the user-typed focus CSV with the inherited list carried

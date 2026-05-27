@@ -57,6 +57,7 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 			"errors":     stats.Errors,
 			"symbols":    stats.Symbols,
 			"imports":    stats.Imports,
+			"chunks":     stats.Chunks,
 			"db_path":    cfg.DBPath,
 			"elapsed_ms": time.Since(start).Milliseconds(),
 		},

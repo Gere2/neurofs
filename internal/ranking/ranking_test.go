@@ -345,6 +345,53 @@ func TestRankSemanticBoost(t *testing.T) {
 	}
 }
 
+func TestRankGraphRelations(t *testing.T) {
+	files := []models.FileRecord{
+		{RelPath: "src/main.ts", Path: "/abs/src/main.ts", Lang: models.LangTypeScript},
+		{RelPath: "src/helper.ts", Path: "/abs/src/helper.ts", Lang: models.LangTypeScript},
+		{RelPath: "src/other.ts", Path: "/abs/src/other.ts", Lang: models.LangTypeScript},
+	}
+
+	rels := []models.FileRelation{
+		{SourcePath: "/abs/src/main.ts", TargetPath: "/abs/src/helper.ts", RelType: "import"},
+		{SourcePath: "/abs/src/other.ts", TargetPath: "/abs/src/main.ts", RelType: "import"},
+	}
+
+	ranked := ranking.RankWithOptions(files, "main", ranking.Options{
+		Relations: rels,
+	})
+
+	if ranked[0].Record.RelPath != "src/main.ts" {
+		t.Errorf("expected src/main.ts first, got %s", ranked[0].Record.RelPath)
+	}
+
+	var helper *models.ScoredFile
+	for i := range ranked {
+		if ranked[i].Record.RelPath == "src/helper.ts" {
+			helper = &ranked[i]
+		}
+	}
+	if helper == nil {
+		t.Fatal("helper.ts not found in ranked output")
+	}
+	if !hasSignal(helper.Reasons, "dependency_relation") {
+		t.Errorf("expected dependency_relation signal on helper.ts, got %+v", helper.Reasons)
+	}
+
+	var other *models.ScoredFile
+	for i := range ranked {
+		if ranked[i].Record.RelPath == "src/other.ts" {
+			other = &ranked[i]
+		}
+	}
+	if other == nil {
+		t.Fatal("other.ts not found in ranked output")
+	}
+	if !hasSignal(other.Reasons, "consumer_relation") {
+		t.Errorf("expected consumer_relation signal on other.ts, got %+v", other.Reasons)
+	}
+}
+
 func hasSignal(reasons []models.InclusionReason, signal string) bool {
 	for _, r := range reasons {
 		if r.Signal == signal {

@@ -160,7 +160,7 @@ func extractClassMethods(content string) []models.Symbol {
 
 	for _, m := range reJSClassAny.FindAllStringSubmatchIndex(content, -1) {
 		className := content[m[2]:m[3]]
-		bodyStart, bodyEnd := findBraceBody(content, m[1])
+		bodyStart, bodyEnd := FindBraceBody(content, m[1])
 		if bodyStart < 0 {
 			continue
 		}
@@ -172,13 +172,13 @@ func extractClassMethods(content string) []models.Symbol {
 	return syms
 }
 
-// findBraceBody locates the first `{` at or after startIdx, then returns the
+// FindBraceBody locates the first `{` at or after startIdx, then returns the
 // byte range (exclusive of the outer braces) up to its matching `}`. It
 // handles nested braces, strings, and // and /* */ comments so that braces
 // appearing inside those regions don't fool the counter.
 //
 // Returns (-1, -1) when no balanced body is found.
-func findBraceBody(content string, startIdx int) (int, int) {
+func FindBraceBody(content string, startIdx int) (int, int) {
 	openIdx := -1
 	for i := startIdx; i < len(content); i++ {
 		c := content[i]

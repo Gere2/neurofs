@@ -149,9 +149,10 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get query embedding and all file embeddings
-	embClient := embeddings.NewClient()
+	embClient := embeddings.NewClient(cfg.HybridMode)
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
 	fileEmbs, _ := db.AllEmbeddings()
+	rels, _ := db.AllRelations()
 
 	// 4. Rank and package the context bundle
 	rankOpts := ranking.Options{
@@ -159,6 +160,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
+		Relations:      rels,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 
@@ -286,9 +288,10 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get query embedding and all file embeddings
-	embClient := embeddings.NewClient()
+	embClient := embeddings.NewClient(cfg.HybridMode)
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
 	fileEmbs, _ := db.AllEmbeddings()
+	rels, _ := db.AllRelations()
 
 	// 4. Rank and package the context bundle
 	rankOpts := ranking.Options{
@@ -296,6 +299,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
+		Relations:      rels,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 
@@ -729,9 +733,10 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get query embedding and all file embeddings
-	embClient := embeddings.NewClient()
+	embClient := embeddings.NewClient(cfg.HybridMode)
 	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
 	fileEmbs, _ := db.AllEmbeddings()
+	rels, _ := db.AllRelations()
 
 	// 5. Rank and package
 	rankOpts := ranking.Options{
@@ -740,6 +745,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		Focus:          req.Focus,
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
+		Relations:      rels,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 

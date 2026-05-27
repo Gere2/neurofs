@@ -42,6 +42,7 @@ func newGateCmd() *cobra.Command {
 		maxFixtures  int
 		jsonOut      bool
 		skipFixtures bool
+		noChunks     bool
 	)
 
 	cmd := &cobra.Command{
@@ -126,7 +127,7 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 				if maxFixtures > 0 && len(fixtures) > maxFixtures {
 					fixtures = fixtures[:maxFixtures]
 				}
-				g3Details = runFixtures(cfg.RepoRoot, fixtures, fixtureBudg)
+				g3Details = runFixtures(cfg.RepoRoot, fixtures, fixtureBudg, noChunks)
 				g3 = gate.EvaluateG3(g3Details, gate.DefaultG3Thresholds())
 			}
 
@@ -185,6 +186,7 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 	cmd.Flags().IntVar(&maxFixtures, "max-fixtures", 0, "Cap how many fixtures to run (0 = all)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full Report as JSON instead of the human table")
 	cmd.Flags().BoolVar(&skipFixtures, "skip-fixtures", false, "Skip G3; evaluate G1 + G2 only (strictly read-only)")
+	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Disable chunk-based packing during fixture evaluation")
 
 	return cmd
 }
@@ -208,14 +210,15 @@ func indexReady(dbPath string) bool {
 // failure is captured in the FactResult.Error field instead of aborting:
 // the gate is most useful when it can still report the fixtures that DID
 // run, even if one is broken.
-func runFixtures(repoRoot string, fixtures []gate.Fixture, budget int) []gate.FactResult {
+func runFixtures(repoRoot string, fixtures []gate.Fixture, budget int, noChunks bool) []gate.FactResult {
 	results := make([]gate.FactResult, 0, len(fixtures))
 	for _, f := range fixtures {
 		r, err := taskflow.Run(taskflow.Opts{
-			RepoRoot: repoRoot,
-			Query:    f.Question,
-			Budget:   budget,
-			Force:    true, // fresh bundle per fixture; cache hits would defeat the measurement
+			RepoRoot:      repoRoot,
+			Query:         f.Question,
+			Budget:        budget,
+			Force:         true, // fresh bundle per fixture; cache hits would defeat the measurement
+			DisableChunks: noChunks,
 		})
 		if err != nil {
 			results = append(results, gate.FactResult{

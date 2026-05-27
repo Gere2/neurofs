@@ -104,3 +104,27 @@ type ScoredFile struct {
 	Score   float64
 	Reasons []InclusionReason
 }
+
+// FileRelation represents a dependency relationship between two files.
+type FileRelation struct {
+	SourcePath string `json:"source_path"`
+	TargetPath string `json:"target_path"`
+	RelType    string `json:"rel_type"` // "import"
+}
+
+// Chunk represents a logic block of code within a file.
+type Chunk struct {
+	ID            int64     `json:"id"`
+	FilePath      string    `json:"file_path"`
+	ChunkID       string    `json:"chunk_id"`
+	ParentID      string    `json:"parent_id"`
+	Kind          string    `json:"kind"`
+	Symbol        string    `json:"symbol"`
+	StartLine     int       `json:"start_line"`
+	EndLine       int       `json:"end_line"`
+	Content       string    `json:"content"`
+	ContentHash   string    `json:"content_hash"`
+	ASTHash       string    `json:"ast_hash"`
+	TokenEstimate int       `json:"token_estimate"`
+	IndexedAt     time.Time `json:"indexed_at"`
+}

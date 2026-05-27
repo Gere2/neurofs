@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/neuromfs/neuromfs/internal/embeddings"
@@ -54,12 +55,60 @@ CREATE TABLE IF NOT EXISTS file_embeddings (
     embedding BLOB NOT NULL,
     FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS file_relations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_path TEXT    NOT NULL,
+    target_path TEXT    NOT NULL,
+    rel_type    TEXT    NOT NULL,
+    FOREIGN KEY(source_path) REFERENCES files(path) ON DELETE CASCADE,
+    UNIQUE(source_path, target_path, rel_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relations_source ON file_relations(source_path);
+CREATE INDEX IF NOT EXISTS idx_relations_target ON file_relations(target_path);
+
+CREATE TABLE IF NOT EXISTS chunks (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path      TEXT    NOT NULL,
+    chunk_id       TEXT    NOT NULL,
+    parent_id      TEXT    NOT NULL DEFAULT '',
+    kind           TEXT    NOT NULL,
+    symbol         TEXT    NOT NULL DEFAULT '',
+    start_line     INTEGER NOT NULL,
+    end_line       INTEGER NOT NULL,
+    content_hash   TEXT    NOT NULL,
+    ast_hash       TEXT    NOT NULL DEFAULT '',
+    token_estimate INTEGER NOT NULL DEFAULT 0,
+    indexed_at     TEXT    NOT NULL,
+    UNIQUE(file_path, chunk_id),
+    FOREIGN KEY(file_path) REFERENCES files(path) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_file_path ON chunks(file_path);
+CREATE INDEX IF NOT EXISTS idx_chunks_content_hash ON chunks(content_hash);
+
+CREATE TABLE IF NOT EXISTS chunk_embeddings (
+    content_hash TEXT PRIMARY KEY,
+    embedding    BLOB NOT NULL,
+    provider     TEXT NOT NULL,
+    model        TEXT NOT NULL,
+    created_at   TEXT NOT NULL
+);
 `
 
 // DB wraps a SQLite connection and provides typed read/write operations.
 type DB struct {
 	db   *sql.DB
 	path string
+}
+
+// ChunkSearchOptions filters chunk lookups.
+type ChunkSearchOptions struct {
+	FilePath    string
+	Symbol      string
+	ContentHash string
+	Limit       int
 }
 
 // Open opens (or creates) the NeuroFS index database at the given path.
@@ -152,6 +201,25 @@ func (s *DB) AllFiles() ([]models.FileRecord, error) {
 		records = append(records, r)
 	}
 	return records, rows.Err()
+}
+
+// GetFileByRelPath returns a FileRecord by its relative path.
+func (s *DB) GetFileByRelPath(relPath string) (models.FileRecord, error) {
+	rows, err := s.db.Query(`
+		SELECT id, path, rel_path, lang, size, lines, symbols, imports, checksum, indexed_at
+		FROM files
+		WHERE rel_path = ?
+	`, relPath)
+	if err != nil {
+		return models.FileRecord{}, err
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return models.FileRecord{}, fmt.Errorf("file not found: %s", relPath)
+	}
+
+	return scanFile(rows)
 }
 
 // FileCount returns the total number of indexed files.
@@ -294,6 +362,12 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	return len(toDelete), nil
 }
 
+// DeleteFile deletes a single file record by path.
+func (s *DB) DeleteFile(path string) error {
+	_, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, path)
+	return err
+}
+
 // scanFile reads one row from a files query into a FileRecord.
 func scanFile(rows *sql.Rows) (models.FileRecord, error) {
 	var (
@@ -366,7 +440,7 @@ func (s *DB) GetProxyLogs(limit int) ([]ProxyLogRecord, error) {
 	var logs []ProxyLogRecord
 	for rows.Next() {
 		var (
-			l ProxyLogRecord
+			l  ProxyLogRecord
 			ts string
 		)
 		err := rows.Scan(&l.ID, &ts, &l.Model, &l.Query, &l.TokensBefore, &l.TokensAfter, &l.SavedTokens, &l.SavingsUSD)
@@ -457,3 +531,308 @@ func (s *DB) AllEmbeddings() (map[string][]float32, error) {
 	return res, rows.Err()
 }
 
+// ClearIndex truncates all index tables in a transaction.
+func (s *DB) ClearIndex() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM file_relations`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chunks`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM chunk_embeddings`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM file_embeddings`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM files`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM metadata`); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+}
+
+// UpdateRelations replaces all records in the file_relations table with the new set.
+func (s *DB) UpdateRelations(relations []models.FileRelation) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("storage: begin update relations: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`DELETE FROM file_relations`); err != nil {
+		return fmt.Errorf("storage: clear relations: %w", err)
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO file_relations (source_path, target_path, rel_type)
+		VALUES (?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("storage: prepare insert relation: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, r := range relations {
+		if _, err := stmt.Exec(r.SourcePath, r.TargetPath, r.RelType); err != nil {
+			return fmt.Errorf("storage: insert relation (%s -> %s): %w", r.SourcePath, r.TargetPath, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit relations: %w", err)
+	}
+	return nil
+}
+
+// GetRelationsForSource returns all relations originating from sourcePath.
+func (s *DB) GetRelationsForSource(sourcePath string) ([]models.FileRelation, error) {
+	rows, err := s.db.Query(`
+		SELECT source_path, target_path, rel_type
+		FROM file_relations
+		WHERE source_path = ?
+	`, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []models.FileRelation
+	for rows.Next() {
+		var r models.FileRelation
+		if err := rows.Scan(&r.SourcePath, &r.TargetPath, &r.RelType); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}
+
+// GetRelationsForTarget returns all relations targeting targetPath.
+func (s *DB) GetRelationsForTarget(targetPath string) ([]models.FileRelation, error) {
+	rows, err := s.db.Query(`
+		SELECT source_path, target_path, rel_type
+		FROM file_relations
+		WHERE target_path = ?
+	`, targetPath)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []models.FileRelation
+	for rows.Next() {
+		var r models.FileRelation
+		if err := rows.Scan(&r.SourcePath, &r.TargetPath, &r.RelType); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}
+
+// AllRelations returns every FileRelation in the database.
+func (s *DB) AllRelations() ([]models.FileRelation, error) {
+	rows, err := s.db.Query(`
+		SELECT source_path, target_path, rel_type
+		FROM file_relations
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rels []models.FileRelation
+	for rows.Next() {
+		var r models.FileRelation
+		if err := rows.Scan(&r.SourcePath, &r.TargetPath, &r.RelType); err != nil {
+			return nil, err
+		}
+		rels = append(rels, r)
+	}
+	return rels, rows.Err()
+}
+
+// UpdateChunks updates the chunks associated with a file path inside a transaction.
+func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("storage: begin tx for UpdateChunks: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`DELETE FROM chunks WHERE file_path = ?`, filePath)
+	if err != nil {
+		return fmt.Errorf("storage: delete old chunks: %w", err)
+	}
+
+	if len(chunks) == 0 {
+		return tx.Commit()
+	}
+
+	stmt, err := tx.Prepare(`
+		INSERT INTO chunks (
+			file_path, chunk_id, parent_id, kind, symbol,
+			start_line, end_line, content_hash, ast_hash,
+			token_estimate, indexed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		return fmt.Errorf("storage: prepare chunk insert: %w", err)
+	}
+	defer stmt.Close()
+
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	for _, c := range chunks {
+		_, err = stmt.Exec(
+			filePath, c.ChunkID, c.ParentID, c.Kind, c.Symbol,
+			c.StartLine, c.EndLine, c.ContentHash, c.ASTHash,
+			c.TokenEstimate, nowStr,
+		)
+		if err != nil {
+			return fmt.Errorf("storage: insert chunk %s: %w", c.ChunkID, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit chunks: %w", err)
+	}
+	return nil
+}
+
+// SaveChunkEmbedding stores the binary embedding for a given content hash.
+func (s *DB) SaveChunkEmbedding(contentHash string, embedding []float32, provider, model string) error {
+	encoded, err := embeddings.EncodeEmbedding(embedding)
+	if err != nil {
+		return fmt.Errorf("storage: encode chunk embedding: %w", err)
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO chunk_embeddings (content_hash, embedding, provider, model, created_at)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(content_hash) DO UPDATE SET embedding = excluded.embedding, provider = excluded.provider, model = excluded.model, created_at = excluded.created_at
+	`, contentHash, encoded, provider, model, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		return fmt.Errorf("storage: save chunk embedding: %w", err)
+	}
+	return nil
+}
+
+// GetChunkEmbedding retrieves the embedding vector for a given content hash.
+// Returns (nil, false, nil) if not found.
+func (s *DB) GetChunkEmbedding(contentHash string) ([]float32, bool, error) {
+	var encoded []byte
+	err := s.db.QueryRow(`SELECT embedding FROM chunk_embeddings WHERE content_hash = ?`, contentHash).Scan(&encoded)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("storage: get chunk embedding: %w", err)
+	}
+	decoded, err := embeddings.DecodeEmbedding(encoded)
+	if err != nil {
+		return nil, false, fmt.Errorf("storage: decode chunk embedding: %w", err)
+	}
+	return decoded, true, nil
+}
+
+// AllChunkEmbeddings returns all cached chunk embeddings keyed by content hash.
+func (s *DB) AllChunkEmbeddings() (map[string][]float32, error) {
+	rows, err := s.db.Query(`SELECT content_hash, embedding FROM chunk_embeddings`)
+	if err != nil {
+		return nil, fmt.Errorf("storage: query chunk embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	res := make(map[string][]float32)
+	for rows.Next() {
+		var (
+			hash    string
+			encoded []byte
+		)
+		if err := rows.Scan(&hash, &encoded); err != nil {
+			return nil, fmt.Errorf("storage: scan chunk embedding: %w", err)
+		}
+		vec, err := embeddings.DecodeEmbedding(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("storage: decode chunk embedding for %s: %w", hash, err)
+		}
+		res[hash] = vec
+	}
+	return res, rows.Err()
+}
+
+// GetChunksForFile retrieves all chunks for a given file path.
+func (s *DB) GetChunksForFile(filePath string) ([]models.Chunk, error) {
+	return s.SearchChunks(ChunkSearchOptions{FilePath: filePath})
+}
+
+// AllChunks retrieves every chunk in deterministic file/line order.
+func (s *DB) AllChunks() ([]models.Chunk, error) {
+	return s.SearchChunks(ChunkSearchOptions{})
+}
+
+// SearchChunks retrieves chunks by file path, symbol substring, or content hash.
+func (s *DB) SearchChunks(opts ChunkSearchOptions) ([]models.Chunk, error) {
+	query := `
+		SELECT id, file_path, chunk_id, parent_id, kind, symbol, start_line, end_line, content_hash, ast_hash, token_estimate, indexed_at
+		FROM chunks
+	`
+	var where []string
+	var args []any
+	if opts.FilePath != "" {
+		where = append(where, "file_path = ?")
+		args = append(args, opts.FilePath)
+	}
+	if opts.Symbol != "" {
+		where = append(where, "LOWER(symbol) LIKE LOWER(?)")
+		args = append(args, "%"+opts.Symbol+"%")
+	}
+	if opts.ContentHash != "" {
+		where = append(where, "content_hash = ?")
+		args = append(args, opts.ContentHash)
+	}
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+	query += " ORDER BY file_path ASC, start_line ASC, chunk_id ASC"
+	if opts.Limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, opts.Limit)
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: get chunks: %w", err)
+	}
+	defer rows.Close()
+
+	return scanChunks(rows)
+}
+
+func scanChunks(rows *sql.Rows) ([]models.Chunk, error) {
+	var chunks []models.Chunk
+	for rows.Next() {
+		var c models.Chunk
+		var indexedAtStr string
+		err := rows.Scan(
+			&c.ID, &c.FilePath, &c.ChunkID, &c.ParentID, &c.Kind, &c.Symbol,
+			&c.StartLine, &c.EndLine, &c.ContentHash, &c.ASTHash, &c.TokenEstimate,
+			&indexedAtStr,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("storage: scan chunk: %w", err)
+		}
+		c.IndexedAt, _ = time.Parse(time.RFC3339, indexedAtStr)
+		chunks = append(chunks, c)
+	}
+	return chunks, rows.Err()
+}

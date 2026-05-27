@@ -79,7 +79,7 @@ func isExcerptLang(lang models.Lang) bool {
 	return false
 }
 
-// extractExcerpt builds a sub-file excerpt for rec containing the symbol
+// ExtractExcerpt builds a sub-file excerpt for rec containing the symbol
 // blocks whose names lexically match any of terms. Returns ok=false when
 // no useful excerpt could be assembled — caller falls back to signature.
 //
@@ -88,7 +88,7 @@ func isExcerptLang(lang models.Lang) bool {
 // blocks, with `// ... N lines omitted ...` separating them. The model
 // reading the prompt always knows which lines it has and which it does
 // not.
-func extractExcerpt(rec models.FileRecord, content string, terms []string) (string, bool) {
+func ExtractExcerpt(rec models.FileRecord, content string, terms []string) (string, bool) {
 	if len(terms) == 0 || strings.TrimSpace(content) == "" {
 		return "", false
 	}

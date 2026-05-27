@@ -67,6 +67,45 @@ func TestPackMaxFragmentsCap(t *testing.T) {
 	}
 }
 
+func TestPackChunksProducesLineRangedExcerpts(t *testing.T) {
+	hits := []packager.ChunkHit{
+		{
+			RelPath:       "src/auth.go",
+			Lang:          models.LangGo,
+			StartLine:     10,
+			EndLine:       14,
+			Kind:          "func",
+			Symbol:        "VerifyJWT",
+			Score:         12.5,
+			Reasons:       []string{"exact_content", "semantic_match"},
+			TokenEstimate: 24,
+			ContentHash:   "abc123",
+			Snippet:       "func VerifyJWT() bool {\n\treturn true\n}",
+		},
+	}
+
+	b, err := packager.PackChunks(hits, "verify jwt", packager.Options{Budget: 400})
+	if err != nil {
+		t.Fatalf("pack chunks: %v", err)
+	}
+	if len(b.Fragments) != 1 {
+		t.Fatalf("expected one chunk fragment, got %d", len(b.Fragments))
+	}
+	frag := b.Fragments[0]
+	if frag.RelPath != "src/auth.go" {
+		t.Fatalf("expected clean rel path, got %q", frag.RelPath)
+	}
+	if frag.Representation != models.RepExcerpt {
+		t.Fatalf("expected excerpt representation, got %s", frag.Representation)
+	}
+	if !strings.Contains(frag.Content, "// lines: 10-14") || !strings.Contains(frag.Content, "VerifyJWT") {
+		t.Fatalf("expected line ranged chunk content, got:\n%s", frag.Content)
+	}
+	if len(frag.Reasons) != 2 || frag.Reasons[0].Signal != "exact_content" {
+		t.Fatalf("expected chunk reasons, got %+v", frag.Reasons)
+	}
+}
+
 func TestPackPreferSignaturesForLargeFile(t *testing.T) {
 	// Build a file that is slightly larger than aggressiveFullCodeMaxTokens
 	// but small enough to fit under the normal threshold. With

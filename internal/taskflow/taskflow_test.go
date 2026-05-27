@@ -1,6 +1,8 @@
 package taskflow
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -92,6 +94,58 @@ func TestSlugify(t *testing.T) {
 		if got := Slugify(tc.in); got != tc.want {
 			t.Fatalf("Slugify(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestRunUsesChunkMode(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/chunktest\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	source := `package chunktest
+
+func BuildThing(name string) string {
+	return "build:" + name
+}
+
+func OtherThing(name string) string {
+	return "other:" + name
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "builder.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	result, err := Run(Opts{
+		RepoRoot:      tmp,
+		Query:         "Where is BuildThing implemented?",
+		Budget:        1200,
+		Force:         true,
+		DisableChunks: false,
+	})
+	if err != nil {
+		t.Fatalf("Run chunk mode failed: %v", err)
+	}
+	if !result.ChunkMode {
+		t.Fatalf("expected ChunkMode=true")
+	}
+	if len(result.Bundle.Fragments) == 0 {
+		t.Fatalf("expected chunk fragments")
+	}
+	frag := result.Bundle.Fragments[0]
+	if frag.Representation != models.RepExcerpt {
+		t.Fatalf("expected excerpt fragment, got %q", frag.Representation)
+	}
+	if !strings.Contains(frag.Content, "// lines:") || !strings.Contains(frag.Content, "BuildThing") {
+		t.Fatalf("fragment does not look like a chunk excerpt:\n%s", frag.Content)
+	}
+	if !strings.Contains(result.Prompt, `rep="excerpt"`) || !strings.Contains(result.Prompt, "// lines:") {
+		t.Fatalf("prompt missing excerpt metadata:\n%s", result.Prompt)
+	}
+	if !strings.Contains(filepath.Base(result.PromptPath), "chunks-") {
+		t.Fatalf("chunk cache should use a distinct filename, got %s", result.PromptPath)
 	}
 }
 

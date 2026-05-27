@@ -31,6 +31,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/project"
 	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
@@ -41,11 +42,13 @@ import (
 //   - Query must be non-empty after trimming.
 //   - Budget defaults to config.DefaultBudget when ≤ 0.
 //   - Force bypasses the (query, budget) cache lookup.
+//   - DisableChunks builds from ranked whole files instead of ranked code chunks.
 type Opts struct {
-	RepoRoot string
-	Query    string
-	Budget   int
-	Force    bool
+	RepoRoot      string
+	Query         string
+	Budget        int
+	Force         bool
+	DisableChunks bool
 }
 
 // TopPick is the structured form of each line the CLI prints as
@@ -74,6 +77,7 @@ type Result struct {
 	Query       string             `json:"query"`
 	Budget      int                `json:"budget"`
 	RepoRoot    string             `json:"repo_root"`
+	ChunkMode   bool               `json:"chunk_mode"`
 }
 
 // Run executes the full task flow: resolve config, auto-scan if the
@@ -108,6 +112,9 @@ func Run(opts Opts) (Result, error) {
 		return Result{}, fmt.Errorf("taskflow: create cache dir: %w", err)
 	}
 	base := BaseName(query, opts.Budget)
+	if !opts.DisableChunks {
+		base = "chunks-" + base
+	}
 	promptPath := filepath.Join(taskDir, base+".prompt.txt")
 	bundlePath := filepath.Join(taskDir, base+".bundle.json")
 
@@ -115,7 +122,7 @@ func Run(opts Opts) (Result, error) {
 	if !opts.Force && IsCacheFresh(cfg.DBPath, promptPath, bundlePath) {
 		reused = true
 	} else {
-		if err := generate(cfg, query, opts.Budget, promptPath, bundlePath); err != nil {
+		if err := generate(cfg, query, opts.Budget, !opts.DisableChunks, promptPath, bundlePath); err != nil {
 			return Result{}, fmt.Errorf("taskflow: %w", err)
 		}
 	}
@@ -141,6 +148,7 @@ func Run(opts Opts) (Result, error) {
 		Query:       query,
 		Budget:      opts.Budget,
 		RepoRoot:    cfg.RepoRoot,
+		ChunkMode:   !opts.DisableChunks,
 	}, nil
 }
 
@@ -220,12 +228,17 @@ func IsCacheFresh(dbPath, promptPath, bundlePath string) bool {
 // prompt and the bundle JSON. We write to disk first, then the
 // caller re-reads from the file so cache-hit and cache-miss paths
 // share the same return values.
-func generate(cfg *config.Config, query string, budget int, promptPath, bundlePath string) error {
+func generate(cfg *config.Config, query string, budget int, useChunks bool, promptPath, bundlePath string) error {
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open index: %w", err)
 	}
-	defer db.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = db.Close()
+		}
+	}()
 
 	count, err := db.FileCount()
 	if err != nil {
@@ -241,26 +254,54 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 	}
 	info := LoadProjectInfo(db)
 
-	embClient := embeddings.NewClient()
-	queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
-	fileEmbs, _ := db.AllEmbeddings()
+	var bundle models.Bundle
+	if useChunks {
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("close index before chunk search: %w", err)
+		}
+		closed = true
+		searchRes, err := retrieval.Search(context.Background(), retrieval.Options{
+			Query: query,
+			Repo:  cfg.RepoRoot,
+			Limit: 12,
+			Mode:  "task",
+		})
+		if err != nil {
+			return fmt.Errorf("chunk search: %w", err)
+		}
+		bundle, err = packager.PackChunks(chunkHitsFromRetrieval(searchRes, files), query, packager.Options{
+			Budget:           budget,
+			MaxFragments:     12,
+			PreferSignatures: true,
+			UpgradeWithSlack: true,
+		})
+		if err != nil {
+			return fmt.Errorf("pack chunks: %w", err)
+		}
+	} else {
+		embClient := embeddings.NewClient(cfg.HybridMode)
+		queryEmb, _ := embClient.GetEmbedding(context.Background(), query)
+		fileEmbs, _ := db.AllEmbeddings()
+		rels, _ := db.AllRelations()
 
-	ranked := ranking.RankWithOptions(files, query, ranking.Options{
-		Project:        info,
-		QueryEmbedding: queryEmb,
-		Embeddings:     fileEmbs,
-	})
-	bundle, err := packager.Pack(ranked, query, packager.Options{
-		Budget:           budget,
-		PreferSignatures: true,
-		UpgradeWithSlack: true,
-		// Same terms the ranker used; lets the packager extract just the
-		// symbol bodies the query is actually asking about for the top
-		// few files instead of forcing all-or-nothing per file.
-		QueryTerms: ranking.Tokenise(query),
-	})
-	if err != nil {
-		return fmt.Errorf("pack: %w", err)
+		ranked := ranking.RankWithOptions(files, query, ranking.Options{
+			Project:        info,
+			QueryEmbedding: queryEmb,
+			Embeddings:     fileEmbs,
+			Relations:      rels,
+		})
+		bundle, err = packager.Pack(ranked, query, packager.Options{
+			Budget:           budget,
+			PreferSignatures: true,
+			UpgradeWithSlack: true,
+			// Same terms the ranker used; lets the packager extract just the
+			// symbol bodies the query is actually asking about for the top
+			// few files instead of forcing all-or-nothing per file.
+			QueryTerms: ranking.Tokenise(query),
+		})
+		if err != nil {
+			return fmt.Errorf("pack: %w", err)
+		}
 	}
 
 	pf, err := os.Create(promptPath)
@@ -279,6 +320,30 @@ func generate(cfg *config.Config, query string, budget int, promptPath, bundlePa
 		return fmt.Errorf("save bundle: %w", err)
 	}
 	return nil
+}
+
+func chunkHitsFromRetrieval(searchRes retrieval.Response, files []models.FileRecord) []packager.ChunkHit {
+	langByPath := make(map[string]models.Lang, len(files))
+	for _, file := range files {
+		langByPath[file.RelPath] = file.Lang
+	}
+	hits := make([]packager.ChunkHit, 0, len(searchRes.Results))
+	for _, hit := range searchRes.Results {
+		hits = append(hits, packager.ChunkHit{
+			RelPath:       hit.Path,
+			Lang:          langByPath[hit.Path],
+			StartLine:     hit.StartLine,
+			EndLine:       hit.EndLine,
+			Kind:          hit.Kind,
+			Symbol:        hit.Symbol,
+			Score:         hit.Score,
+			Reasons:       hit.Reasons,
+			TokenEstimate: hit.TokenEstimate,
+			ContentHash:   hit.ContentHash,
+			Snippet:       hit.Snippet,
+		})
+	}
+	return hits
 }
 
 // LoadProjectInfo reads project.Info from the metadata table populated by

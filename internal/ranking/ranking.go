@@ -80,6 +80,8 @@ type Options struct {
 	Embeddings map[string][]float32
 	// QueryEmbedding is the embedding vector of the search query.
 	QueryEmbedding []float32
+	// Relations carries the semantic dependency graph relationships.
+	Relations []models.FileRelation
 }
 
 // Rank scores all files against the query and returns them sorted by score
@@ -110,7 +112,12 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 		}
 		applyFocusBoost(out, opts.Focus)
 		applyChangedBoost(out, opts.ChangedFiles)
-		sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+		sort.Slice(out, func(i, j int) bool {
+			if math.Abs(out[i].Score-out[j].Score) < 1e-9 {
+				return out[i].Record.RelPath < out[j].Record.RelPath
+			}
+			return out[i].Score > out[j].Score
+		})
 		return out
 	}
 
@@ -146,12 +153,19 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	applyFocusBoost(scored, opts.Focus)
 	applyChangedBoost(scored, opts.ChangedFiles)
 
-	expandByImports(scored, terms, opts.Project)
+	if len(opts.Relations) > 0 {
+		expandByGraphRelations(scored, opts.Relations)
+	} else {
+		expandByImports(scored, terms, opts.Project)
+	}
 	enrichWithContent(scored, terms)
 
 	applyTestPenalty(scored, query)
 
 	sort.Slice(scored, func(i, j int) bool {
+		if math.Abs(scored[i].Score-scored[j].Score) < 1e-9 {
+			return scored[i].Record.RelPath < scored[j].Record.RelPath
+		}
 		return scored[i].Score > scored[j].Score
 	})
 
@@ -255,6 +269,68 @@ func isRootDoc(relPath string) bool {
 	}
 	stem := strings.ToLower(stripExt(rel))
 	return rootDocStems[stem]
+}
+
+// expandByGraphRelations boosts files that are related (imported or consumers) to top-scoring seeds in the dependency graph.
+func expandByGraphRelations(scored []models.ScoredFile, relations []models.FileRelation) {
+	if len(relations) == 0 {
+		return
+	}
+
+	// 1. Identify seed files (top 12 files by score with score >= 1.0)
+	tmp := make([]models.ScoredFile, len(scored))
+	copy(tmp, scored)
+	sort.Slice(tmp, func(i, j int) bool {
+		if math.Abs(tmp[i].Score-tmp[j].Score) < 1e-9 {
+			return tmp[i].Record.RelPath < tmp[j].Record.RelPath
+		}
+		return tmp[i].Score > tmp[j].Score
+	})
+
+	limit := expansionLimit
+	if limit > len(tmp) {
+		limit = len(tmp)
+	}
+	seeds := make(map[string]bool)
+	for i := 0; i < limit; i++ {
+		if tmp[i].Score >= 1.0 {
+			seeds[tmp[i].Record.Path] = true
+		}
+	}
+
+	if len(seeds) == 0 {
+		return
+	}
+
+	// 2. Propagate scores:
+	for _, rel := range relations {
+		// If source is a seed, target gets a dependency boost (imported by top file)
+		if seeds[rel.SourcePath] {
+			for i := range scored {
+				if scored[i].Record.Path == rel.TargetPath {
+					scored[i].Score += 1.0
+					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
+						Signal: "dependency_relation",
+						Detail: "imported by top file",
+						Weight: 1.0,
+					})
+				}
+			}
+		}
+		// If target is a seed, source gets a consumer boost (imports top file)
+		if seeds[rel.TargetPath] {
+			for i := range scored {
+				if scored[i].Record.Path == rel.SourcePath {
+					scored[i].Score += 0.8
+					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
+						Signal: "consumer_relation",
+						Detail: "imports top file",
+						Weight: 0.8,
+					})
+				}
+			}
+		}
+	}
 }
 
 // expandByImports boosts files that are imported by high-scoring seeds.

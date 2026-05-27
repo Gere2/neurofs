@@ -95,6 +95,8 @@ type RunOptions struct {
 	Embeddings map[string][]float32
 	// EmbClient is used to generate query embeddings for the benchmark queries.
 	EmbClient *embeddings.Client
+	// Relations carries the semantic dependency graph relationships.
+	Relations []models.FileRelation
 }
 
 // Summary rolls up the per-question Results into headline metrics.
@@ -144,6 +146,7 @@ func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Re
 			Project:        opts.Project,
 			QueryEmbedding: queryEmb,
 			Embeddings:     opts.Embeddings,
+			Relations:      opts.Relations,
 		})
 
 		keep := opts.KeepTop

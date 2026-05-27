@@ -42,7 +42,7 @@ func TestExtractExcerpt_TS_PicksMatchingFunctionBody(t *testing.T) {
 		models.Symbol{Name: "doStuff", Kind: "func", Line: 12},
 	)
 
-	out, ok := extractExcerpt(r, content, []string{"search"})
+	out, ok := ExtractExcerpt(r, content, []string{"search"})
 	if !ok {
 		t.Fatalf("expected an excerpt, got none")
 	}
@@ -76,7 +76,7 @@ func TestExtractExcerpt_TS_MergesAdjacentMatches(t *testing.T) {
 		models.Symbol{Name: "alpha", Kind: "func", Line: 1},
 		models.Symbol{Name: "beta", Kind: "func", Line: 4},
 	)
-	out, ok := extractExcerpt(r, content, []string{"alpha", "beta"})
+	out, ok := ExtractExcerpt(r, content, []string{"alpha", "beta"})
 	if !ok {
 		t.Fatalf("expected excerpt")
 	}
@@ -105,7 +105,7 @@ func TestExtractExcerpt_TS_QualifiedClassMethod(t *testing.T) {
 		models.Symbol{Name: "AuthService.authenticate", Kind: "method", Line: 2},
 		models.Symbol{Name: "AuthService.logout", Kind: "method", Line: 5},
 	)
-	out, ok := extractExcerpt(r, content, []string{"authenticate"})
+	out, ok := ExtractExcerpt(r, content, []string{"authenticate"})
 	if !ok {
 		t.Fatalf("expected excerpt for qualified method match")
 	}
@@ -132,7 +132,7 @@ func TestExtractExcerpt_Python_IndentBlock(t *testing.T) {
 		models.Symbol{Name: "compute_score", Kind: "func", Line: 4},
 		models.Symbol{Name: "other", Kind: "func", Line: 9},
 	)
-	out, ok := extractExcerpt(r, content, []string{"score"})
+	out, ok := ExtractExcerpt(r, content, []string{"score"})
 	if !ok {
 		t.Fatalf("expected excerpt")
 	}
@@ -152,7 +152,7 @@ func TestExtractExcerpt_NoMatchReturnsFalse(t *testing.T) {
 	r := rec("src/foo.ts", models.LangTypeScript,
 		models.Symbol{Name: "foo", Kind: "func", Line: 1},
 	)
-	if _, ok := extractExcerpt(r, content, []string{"bar", "baz"}); ok {
+	if _, ok := ExtractExcerpt(r, content, []string{"bar", "baz"}); ok {
 		t.Errorf("non-matching terms must return ok=false (caller falls back to signature)")
 	}
 }
@@ -165,7 +165,7 @@ func TestExtractExcerpt_UnsupportedLangReturnsFalse(t *testing.T) {
 	r := rec("src/data.json", models.LangJSON,
 		models.Symbol{Name: "foo", Kind: "key", Line: 1},
 	)
-	if _, ok := extractExcerpt(r, content, []string{"foo"}); ok {
+	if _, ok := ExtractExcerpt(r, content, []string{"foo"}); ok {
 		t.Errorf("JSON is not supported for excerpts; expected ok=false")
 	}
 }

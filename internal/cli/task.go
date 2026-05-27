@@ -30,6 +30,7 @@ func newTaskCmd() *cobra.Command {
 		budget   int
 		force    bool
 		rate     bool
+		noChunks bool
 	)
 
 	cmd := &cobra.Command{
@@ -90,10 +91,11 @@ Examples:
 			}
 
 			result, err := taskflow.Run(taskflow.Opts{
-				RepoRoot: repoPath,
-				Query:    query,
-				Budget:   budget,
-				Force:    force,
+				RepoRoot:      repoPath,
+				Query:         query,
+				Budget:        budget,
+				Force:         force,
+				DisableChunks: noChunks,
 			})
 			if err != nil {
 				return fmt.Errorf("task: %w", err)
@@ -114,6 +116,9 @@ Examples:
 			}
 			fmt.Fprintf(os.Stderr, "NeuroFS — task\n")
 			fmt.Fprintf(os.Stderr, "  query     : %q\n", truncate(query, 70))
+			if result.ChunkMode {
+				fmt.Fprintf(os.Stderr, "  mode      : chunks\n")
+			}
 			fmt.Fprintf(os.Stderr, "  cache     : %s\n", cacheLabel)
 			fmt.Fprintf(os.Stderr, "  tokens    : %d / %d\n",
 				result.Stats.TokensUsed, result.Stats.TokensBudget)
@@ -163,6 +168,7 @@ Examples:
 	cmd.Flags().IntVar(&budget, "budget", config.DefaultBudget, "Token budget for the prompt")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore the cache and regenerate")
 	cmd.Flags().BoolVar(&rate, "rate", false, "After generating, ask y/n + comment and append to .neurofs/quality.jsonl")
+	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the prompt from ranked whole files instead of code chunks")
 
 	return cmd
 }

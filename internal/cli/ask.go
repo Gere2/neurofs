@@ -73,14 +73,16 @@ Run 'neurofs scan' first to build the index.`,
 				budget, len(files))
 
 			// Load embeddings if they exist.
-			embClient := embeddings.NewClient()
+			embClient := embeddings.NewClient(cfg.HybridMode)
 			queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
 			fileEmbs, _ := db.AllEmbeddings()
 
+			rels, _ := db.AllRelations()
 			ranked := ranking.RankWithOptions(files, query, ranking.Options{
 				Project:        loadProjectInfo(db),
 				QueryEmbedding: queryEmb,
 				Embeddings:     fileEmbs,
+				Relations:      rels,
 			})
 
 			bundle, err := packager.Pack(ranked, query, packager.Options{

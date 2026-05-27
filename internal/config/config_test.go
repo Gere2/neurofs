@@ -82,3 +82,28 @@ func TestDBDirLivesInsideRepoRoot(t *testing.T) {
 		t.Fatalf("DBDir %q should live under repo root %q", cfg.DBDir(), dir)
 	}
 }
+
+func TestConfigJSONLoading(t *testing.T) {
+	dir := t.TempDir()
+	neurofsDir := filepath.Join(dir, config.DirName)
+	if err := os.MkdirAll(neurofsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	configJSON := `{"hybrid_mode": true, "budget": 12000}`
+	if err := os.WriteFile(filepath.Join(neurofsDir, "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	cfg, err := config.New(dir)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	if !cfg.HybridMode {
+		t.Errorf("expected HybridMode true, got false")
+	}
+	if cfg.Budget != 12000 {
+		t.Errorf("expected Budget 12000, got %d", cfg.Budget)
+	}
+}
