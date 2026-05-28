@@ -33,7 +33,12 @@ func NewServer(in io.Reader, out, errOut io.Writer, version string) *Server {
 // fatal write error. EOF is a clean shutdown.
 func (s *Server) Run(ctx context.Context) error {
 	scanner := bufio.NewScanner(s.in)
-	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	// 64 MiB max — large MCP messages (multi-megabyte prompt contexts or
+	// search results) must not crash the server. The MCP traffic agent
+	// surfaced that the prior 4 MiB cap killed the server permanently
+	// on a single >4 MiB line, forcing a host restart. Starting buffer
+	// is 1 MiB so typical small messages avoid repeated growth.
+	scanner.Buffer(make([]byte, 0, 1024*1024), 64*1024*1024)
 	enc := json.NewEncoder(s.out)
 
 	lines := make(chan []byte)

@@ -138,6 +138,73 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 }
 
+// Regression: the MCP traffic agent surfaced that a single stdin line
+// larger than the bufio.Scanner buffer cap (was 4 MiB) killed the
+// server permanently. Multi-megabyte messages (a long search response,
+// or a host-side prompt context) must not kill the server.
+func TestServerSurvivesLargeMessage(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+
+	srv := NewServer(inR, outW, io.Discard, "test")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		err := srv.Run(ctx)
+		outW.Close()
+		done <- err
+	}()
+
+	// 5 MiB filler — well past the prior 4 MiB cap. Embed it as an
+	// argument string in a syntactically valid tools/call; the server
+	// will return an unknown-tool error, but it must NOT crash.
+	filler := strings.Repeat("a", 5*1024*1024)
+	bigMsg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neurofs_unknown","arguments":{"query":"` + filler + `"}}}`
+
+	go func() {
+		defer inW.Close()
+		if _, err := inW.Write([]byte(bigMsg + "\n")); err != nil {
+			return
+		}
+		// Follow-up normal message to prove the server is still alive.
+		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"))
+	}()
+
+	dec := json.NewDecoder(outR)
+
+	// 1) response to the big message — any well-formed response is OK;
+	// the only failure mode we care about is "no response at all" because
+	// scanner died.
+	var bigResp Response
+	if err := dec.Decode(&bigResp); err != nil {
+		t.Fatalf("server did not respond to 5 MiB message (scanner buffer cap?): %v", err)
+	}
+	if string(bigResp.ID) != "1" {
+		t.Fatalf("big-message response id: got %s want 1", bigResp.ID)
+	}
+
+	// 2) follow-up tools/list — server is still alive.
+	var listResp Response
+	if err := dec.Decode(&listResp); err != nil {
+		t.Fatalf("server died after large message — follow-up tools/list got: %v", err)
+	}
+	if listResp.Error != nil {
+		t.Fatalf("tools/list error after large message: %+v", listResp.Error)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("server exited with error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not exit after stdin closed")
+	}
+}
+
 func TestContextToolRoutesSearchAndBundle(t *testing.T) {
 	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
 	ctx := context.Background()

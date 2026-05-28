@@ -1,6 +1,7 @@
 package fsutil_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/neuromfs/neuromfs/internal/fsutil"
@@ -49,6 +50,34 @@ func TestShouldSkipDir(t *testing.T) {
 		if fsutil.ShouldSkipDir(d) {
 			t.Errorf("ShouldSkipDir(%q) = true, want false", d)
 		}
+	}
+}
+
+// Regression: the ranking traffic agent surfaced that a blanket
+// basename match on "audit" also hid internal/audit/ — the package
+// implementing the entire audit/replay/BundleHash story. The path-aware
+// variant must skip the top-level audit/ but keep nested ones indexable.
+func TestShouldSkipDirAt_TopOnlyVsNested(t *testing.T) {
+	root := "/repo"
+
+	// Top-level "audit" must be skipped.
+	if !fsutil.ShouldSkipDirAt(root, filepath.Join(root, "audit")) {
+		t.Errorf("ShouldSkipDirAt root/audit must skip; got false")
+	}
+
+	// Nested internal/audit must NOT be skipped — that's source code.
+	if fsutil.ShouldSkipDirAt(root, filepath.Join(root, "internal", "audit")) {
+		t.Errorf("ShouldSkipDirAt internal/audit must NOT skip; got true (regression of the basename-match bug)")
+	}
+
+	// node_modules anywhere must still be skipped.
+	if !fsutil.ShouldSkipDirAt(root, filepath.Join(root, "x", "node_modules")) {
+		t.Errorf("node_modules at any depth must skip")
+	}
+
+	// testdata anywhere must still be skipped (Go convention).
+	if !fsutil.ShouldSkipDirAt(root, filepath.Join(root, "internal", "pkg", "testdata")) {
+		t.Errorf("testdata at any depth must skip")
 	}
 }
 

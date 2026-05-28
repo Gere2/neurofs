@@ -9,13 +9,14 @@ import (
 	"github.com/neuromfs/neuromfs/internal/models"
 )
 
-// ignoredDirs contains directory names that are always skipped.
-var ignoredDirs = map[string]bool{
+// ignoredDirsAnywhere contains directory names that should be skipped
+// at any depth in the tree. These are tooling caches, build artefacts,
+// and convention-driven non-source dirs whose meaning does not depend
+// on where they sit in the repo.
+var ignoredDirsAnywhere = map[string]bool{
 	".git":          true,
 	".neurofs":      true,
 	".claude":       true, // Claude Code metadata + ephemeral worktrees under .claude/worktrees/**
-	"audit":         true, // NeuroFS's own audit/{bundles,records,responses,notes} — re-ingesting our outputs poisons ranking
-	".audit":        true,
 	"testdata":      true, // Go convention: testdata/ is fixtures, not the project's own code — ignored by `go build` and should be by ranking too
 	"fixtures":      true,
 	"node_modules":  true,
@@ -34,6 +35,18 @@ var ignoredDirs = map[string]bool{
 	"out":           true,
 	".idea":         true,
 	".vscode":       true,
+}
+
+// ignoredDirsTopOnly carries directory names that should be skipped ONLY
+// when they sit directly under the repo root. The ranking traffic agent
+// surfaced the original bug: a blanket basename match on "audit" also
+// hid internal/audit/ (the package implementing audit replay,
+// BundleHash, and the governance pitch). NeuroFS was blind to its own
+// production code about audit, so any query about "where is bundle_hash
+// computed" returned subpar results.
+var ignoredDirsTopOnly = map[string]bool{
+	"audit":  true, // NeuroFS's own audit/{bundles,records,responses,notes} — re-ingesting our outputs poisons ranking
+	".audit": true,
 }
 
 // ignoredExts contains file extensions that carry no useful code context.
@@ -111,9 +124,30 @@ func IsSupported(path string) bool {
 	return LangForPath(path) != models.LangUnknown
 }
 
-// ShouldSkipDir returns true if the directory should be ignored entirely.
+// ShouldSkipDir returns true if the directory basename is in either
+// ignore set. Kept exported because callers without repo-root context
+// rely on it (legacy tests, dir-name surveys). Prefer ShouldSkipDirAt
+// for any walk that knows the repo root — the basename-only version
+// will mistakenly skip nested directories like internal/audit/ that
+// only deserve to be ignored at top level.
 func ShouldSkipDir(name string) bool {
-	return ignoredDirs[name]
+	return ignoredDirsAnywhere[name] || ignoredDirsTopOnly[name]
+}
+
+// ShouldSkipDirAt is the path-aware skip decision. Directories in the
+// "anywhere" set are always skipped; directories in the "top-only" set
+// are skipped only when their parent is the repo root. fullPath is the
+// directory's absolute or repo-relative path; root is the repo root in
+// the same form.
+func ShouldSkipDirAt(root, fullPath string) bool {
+	name := filepath.Base(fullPath)
+	if ignoredDirsAnywhere[name] {
+		return true
+	}
+	if ignoredDirsTopOnly[name] {
+		return filepath.Clean(filepath.Dir(fullPath)) == filepath.Clean(root)
+	}
+	return false
 }
 
 // ShouldSkipFile returns true if the file should be ignored.
@@ -131,14 +165,16 @@ func ShouldSkipFile(path string) bool {
 }
 
 // Walk visits every file under root that NeuroFS should index,
-// calling fn for each. It respects the ignore rules in this package.
+// calling fn for each. It respects the ignore rules in this package
+// using the path-aware ShouldSkipDirAt so that names like "audit" only
+// blanket-skip when they sit at root.
 func Walk(root string, fn func(path string, info os.FileInfo) error) error {
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip inaccessible paths
 		}
 		if info.IsDir() {
-			if ShouldSkipDir(info.Name()) {
+			if ShouldSkipDirAt(root, path) {
 				return filepath.SkipDir
 			}
 			return nil

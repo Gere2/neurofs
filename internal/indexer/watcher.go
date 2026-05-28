@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -68,7 +67,7 @@ func (w *Watcher) Start(ctx context.Context) error {
 			return nil
 		}
 		if d.IsDir() {
-			if fsutil.ShouldSkipDir(d.Name()) {
+			if fsutil.ShouldSkipDirAt(w.cfg.RepoRoot, path) {
 				return filepath.SkipDir
 			}
 			// Register dir to watcher
@@ -99,14 +98,22 @@ func (w *Watcher) Close() error {
 	return w.watcher.Close()
 }
 
-// isIgnoredPath checks if a path falls under ignored directories or ignored patterns.
+// isIgnoredPath checks if a path falls under ignored directories or
+// ignored patterns. Walks up the directory chain from path toward the
+// repo root and asks ShouldSkipDirAt about each ancestor, so a name
+// like "audit" only matters as an ancestor when it sits directly under
+// the repo root.
 func (w *Watcher) isIgnoredPath(path string) bool {
-	rel := fsutil.RelPath(w.cfg.RepoRoot, path)
-	parts := strings.Split(filepath.ToSlash(rel), "/")
-	for _, p := range parts {
-		if fsutil.ShouldSkipDir(p) {
+	cur := path
+	for cur != "" && cur != w.cfg.RepoRoot {
+		if fsutil.ShouldSkipDirAt(w.cfg.RepoRoot, cur) {
 			return true
 		}
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		cur = parent
 	}
 	return false
 }
