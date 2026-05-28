@@ -200,6 +200,9 @@ Pass --save to persist a JSON record under audit/records/.`,
 			if bundlePath == "" && len(args) == 0 {
 				return fmt.Errorf("audit replay: pass a question as positional arg or use --bundle <file>")
 			}
+			if err := validateBudget(budget); err != nil {
+				return fmt.Errorf("audit replay: %w", err)
+			}
 
 			response, err := os.ReadFile(responsePath)
 			if err != nil {

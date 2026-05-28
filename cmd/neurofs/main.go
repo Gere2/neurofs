@@ -2,15 +2,16 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/neuromfs/neuromfs/internal/cli"
 )
 
 func main() {
+	// Cobra already prints "Error: <msg>" to stderr on RunE failures
+	// (SilenceErrors=false in root.go); printing again here produced the
+	// duplicate "Error:" / "error:" pair the QA agent flagged.
 	if err := cli.New().Execute(); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }

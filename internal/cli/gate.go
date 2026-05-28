@@ -38,6 +38,7 @@ func newGateCmd() *cobra.Command {
 		qualityPath  string
 		bundlesDir   string
 		fixturesDir  string
+		baselinePath string
 		fixtureBudg  int
 		maxFixtures  int
 		jsonOut      bool
@@ -161,6 +162,19 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 			}
 			report.Overall = gate.Aggregate(report.Criteria)
 
+			// --baseline compares the current report against a prior
+			// `gate --json` output. Regressions block the PR even when
+			// the absolute thresholds still pass — main may already be
+			// at recall=0.85 against a 0.80 floor; a PR that takes it
+			// to 0.82 is still a regression worth blocking.
+			if baselinePath != "" {
+				baseline, err := gate.LoadBaseline(baselinePath)
+				if err != nil {
+					return fmt.Errorf("gate: %w", err)
+				}
+				report.Regressions = gate.Diff(report, baseline)
+			}
+
 			if jsonOut {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -173,6 +187,9 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 
 			if report.Overall == gate.Fail {
 				return fmt.Errorf("gate: overall FAIL")
+			}
+			if len(report.Regressions) > 0 {
+				return fmt.Errorf("gate: %d regression(s) vs baseline", len(report.Regressions))
 			}
 			return nil
 		},
@@ -187,6 +204,7 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit the full Report as JSON instead of the human table")
 	cmd.Flags().BoolVar(&skipFixtures, "skip-fixtures", false, "Skip G3; evaluate G1 + G2 only (strictly read-only)")
 	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Disable chunk-based packing during fixture evaluation")
+	cmd.Flags().StringVar(&baselinePath, "baseline", "", "Path to a prior `gate --json` output; report and fail on regressions vs baseline")
 
 	return cmd
 }

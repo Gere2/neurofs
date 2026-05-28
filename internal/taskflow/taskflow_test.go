@@ -2,12 +2,81 @@ package taskflow
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/neuromfs/neuromfs/internal/models"
 )
+
+// TestEnrichBundle_PopulatesIdentityFields verifies the audit-identity
+// fields a compliance consumer needs are present after enrichment:
+// resolved repo path, generation timestamp, and a content hash. CommitSHA
+// is checked in TestEnrichBundle_CommitSHAFromGit; here we tolerate an
+// empty SHA because the test tempdir is not a git worktree.
+func TestEnrichBundle_PopulatesIdentityFields(t *testing.T) {
+	repo := t.TempDir()
+	before := time.Now().UTC().Add(-time.Second)
+
+	b := EnrichBundle(models.Bundle{
+		Query:     "q",
+		Fragments: []models.ContextFragment{{RelPath: "a.go", Content: "x"}},
+	}, repo)
+
+	if b.Repo == "" || !filepath.IsAbs(b.Repo) {
+		t.Errorf("Repo must be absolute; got %q", b.Repo)
+	}
+	if b.GeneratedAt.Before(before) {
+		t.Errorf("GeneratedAt must be set to now; got %v", b.GeneratedAt)
+	}
+	if len(b.BundleHash) != 64 {
+		t.Errorf("BundleHash must be sha256-hex (64 chars); got %d chars", len(b.BundleHash))
+	}
+}
+
+// TestEnrichBundle_HashStableAcrossEnrichmentRuns confirms BundleHash
+// excludes GeneratedAt — otherwise two enrich runs with identical
+// content would produce different hashes, defeating the "same context"
+// guarantee.
+func TestEnrichBundle_HashStableAcrossEnrichmentRuns(t *testing.T) {
+	repo := t.TempDir()
+	b := models.Bundle{
+		Query:     "q",
+		Fragments: []models.ContextFragment{{RelPath: "a.go", Content: "x"}},
+	}
+	h1 := EnrichBundle(b, repo).BundleHash
+	time.Sleep(10 * time.Millisecond)
+	h2 := EnrichBundle(b, repo).BundleHash
+	if h1 != h2 {
+		t.Errorf("BundleHash must NOT depend on GeneratedAt; got %s vs %s", h1, h2)
+	}
+}
+
+// TestEnrichBundle_CommitSHAFromGit confirms we capture the HEAD commit
+// when the repo is a git worktree.
+func TestEnrichBundle_CommitSHAFromGit(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "t@t"},
+		{"config", "user.name", "t"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	b := EnrichBundle(models.Bundle{Query: "q"}, repo)
+	if len(b.CommitSHA) != 40 {
+		t.Errorf("CommitSHA must be a 40-char hex SHA from git rev-parse; got %q", b.CommitSHA)
+	}
+}
 
 // TestTopPicks pins the structured shape of the top-N selection that
 // both the CLI summary and the UI panel render. If fields move or the

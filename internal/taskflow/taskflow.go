@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/indexer"
@@ -316,6 +317,7 @@ func generate(cfg *config.Config, query string, budget int, useChunks bool, prom
 		return fmt.Errorf("close prompt: %w", err)
 	}
 
+	bundle = EnrichBundle(bundle, cfg.RepoRoot)
 	if err := WriteBundleJSON(bundlePath, bundle); err != nil {
 		return fmt.Errorf("save bundle: %w", err)
 	}
@@ -439,6 +441,40 @@ func WriteBundleJSON(path string, b models.Bundle) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0o644)
+}
+
+// EnrichBundle populates the audit-identity fields a compliance consumer
+// needs: repo path, current git commit (empty when not a git worktree),
+// generation timestamp, and a content hash that matches the audit-replay
+// record. Callers invoke this immediately before WriteBundleJSON.
+//
+// The hash deliberately does NOT cover GeneratedAt — otherwise two
+// bundles built from identical content would hash differently and the
+// hash would lose its "same context" meaning.
+func EnrichBundle(b models.Bundle, repoRoot string) models.Bundle {
+	abs, err := filepath.Abs(repoRoot)
+	if err == nil {
+		b.Repo = abs
+	} else {
+		b.Repo = repoRoot
+	}
+	b.CommitSHA = currentCommitSHA(repoRoot)
+	b.GeneratedAt = time.Now().UTC()
+	b.BundleHash = audit.BundleHash(b)
+	return b
+}
+
+// currentCommitSHA returns the short HEAD SHA via the local git binary,
+// or "" when the directory is not a git worktree or git is unavailable.
+// The bundle is meant to identify the snapshot of code that produced it,
+// so "no git" is a real and acceptable state — not an error.
+func currentCommitSHA(repoRoot string) string {
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // readBundleJSON parses a persisted bundle. Used on cache hits so the

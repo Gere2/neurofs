@@ -25,9 +25,13 @@ const (
 
 // Write serialises bundle to w in the given format. For FormatClaude with
 // no repo summary available, pass a zero RepoSummary to WriteClaude
-// directly; this dispatcher uses an empty one.
+// directly; this dispatcher uses an empty one. Unknown formats return an
+// explicit error rather than silently rendering as markdown — the QA
+// agent caught `--format zzz` falling through to markdown unnoticed.
 func Write(w io.Writer, bundle models.Bundle, format Format) error {
 	switch format {
+	case "", FormatMarkdown:
+		return writeMarkdown(w, bundle)
 	case FormatJSON:
 		return writeJSON(w, bundle)
 	case FormatText:
@@ -35,7 +39,7 @@ func Write(w io.Writer, bundle models.Bundle, format Format) error {
 	case FormatClaude:
 		return WriteClaude(w, bundle, RepoSummary{})
 	default:
-		return writeMarkdown(w, bundle)
+		return fmt.Errorf("output: unknown format %q (want one of: markdown, json, text, claude)", format)
 	}
 }
 

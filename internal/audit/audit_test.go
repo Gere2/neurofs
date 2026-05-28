@@ -158,6 +158,31 @@ func TestScoreFactsRecall(t *testing.T) {
 	}
 }
 
+// Regression: the DevX traffic-generation agent surfaced a false PASS
+// where renaming `weightFilename` to `weightFilenameRenamed` did not flip
+// the gate. Substring match treated the old name as a prefix of the new
+// one. With word-boundary matching, the old fact must miss.
+func TestScoreFacts_WordBoundaryRejectsRenamedIdentifier(t *testing.T) {
+	hits, r := audit.ScoreFacts("score *= weightFilenameRenamed", []string{"weightFilename"})
+	if len(hits) != 0 || r != 0 {
+		t.Errorf("renamed identifier must not satisfy old fact; got hits=%v recall=%v", hits, r)
+	}
+	// And the genuine identifier still matches.
+	hits, r = audit.ScoreFacts("score *= weightFilename", []string{"weightFilename"})
+	if len(hits) != 1 || r != 1.0 {
+		t.Errorf("exact identifier should match; got hits=%v recall=%v", hits, r)
+	}
+}
+
+// Punctuation-anchor facts (no word chars at the ends) must still match
+// — word-boundary regex is dropped when needed so "=>" still hits.
+func TestScoreFacts_PunctuationAnchorStillMatches(t *testing.T) {
+	hits, _ := audit.ScoreFacts("x := func() {} \nresult => value", []string{"=>"})
+	if len(hits) != 1 {
+		t.Errorf("`=>` must match; got %v", hits)
+	}
+}
+
 func TestBundleHashStableAcrossFragmentOrder(t *testing.T) {
 	b1 := fixtureBundle()
 	b2 := fixtureBundle()

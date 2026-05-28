@@ -130,6 +130,7 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	// Always persist the bundle to a snapshot so replay can audit it later,
 	// even across page reloads. If the user supplied a name, we also copy
 	// the snapshot there for long-term record-keeping.
+	bundle = taskflow.EnrichBundle(bundle, cfg.RepoRoot)
 	defaultPath := filepath.Join(cfg.DBDir(), "ui", "last.bundle.json")
 	if err := taskflow.WriteBundleJSON(defaultPath, bundle); err != nil {
 		writeErr(w, http.StatusInternalServerError, "save default bundle: "+err.Error())

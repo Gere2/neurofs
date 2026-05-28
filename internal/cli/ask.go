@@ -40,6 +40,9 @@ Run 'neurofs scan' first to build the index.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
+			if err := validateBudget(budget); err != nil {
+				return fmt.Errorf("ask: %w", err)
+			}
 
 			cfg, err := config.New(repoPath)
 			if err != nil {

@@ -211,6 +211,24 @@ func TestScoreBundleAgainstFacts_FindsHitsInFragmentContent(t *testing.T) {
 	}
 }
 
+// Regression: the DevX agent found that renaming an identifier in
+// production code did NOT fail the gate because the old name still
+// appeared in `*_test.go` fragments. Test-file fragments must be excluded
+// from the gate's scoring pool — only production coverage counts.
+func TestScoreBundleAgainstFacts_IgnoresTestFileFragments(t *testing.T) {
+	b := models.Bundle{Fragments: []models.ContextFragment{
+		{RelPath: "internal/ranking/ranking.go", Content: "weightFilenameRenamed = 3.0"},
+		{RelPath: "internal/ranking/ranking_test.go", Content: "want weightFilename"},
+	}}
+	got := ScoreBundleAgainstFacts(b, []string{"weightFilename"})
+	if len(got.Hits) != 0 {
+		t.Errorf("fact only present in _test.go must NOT hit; got hits=%v", got.Hits)
+	}
+	if got.Recall != 0 {
+		t.Errorf("recall must be 0 when only test code mentions the old name; got %v", got.Recall)
+	}
+}
+
 func TestAggregate_VerdictPriority(t *testing.T) {
 	cases := []struct {
 		name string

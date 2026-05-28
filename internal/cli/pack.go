@@ -53,6 +53,9 @@ Examples:
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := args[0]
+			if err := validateBudget(budget); err != nil {
+				return fmt.Errorf("pack: %w", err)
+			}
 
 			cfg, err := config.New(repoPath)
 			if err != nil {
@@ -157,7 +160,8 @@ Examples:
 			}
 
 			if saveBundle != "" {
-				if err := taskflow.WriteBundleJSON(saveBundle, bundle); err != nil {
+				enriched := taskflow.EnrichBundle(bundle, cfg.RepoRoot)
+				if err := taskflow.WriteBundleJSON(saveBundle, enriched); err != nil {
 					return fmt.Errorf("pack: --save-bundle: %w", err)
 				}
 				fmt.Fprintf(os.Stderr, "  snapshot: %s\n", saveBundle)

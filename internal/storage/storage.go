@@ -122,8 +122,21 @@ func Open(dbPath string) (*DB, error) {
 		return nil, fmt.Errorf("storage: open sqlite: %w", err)
 	}
 
-	if _, err := db.Exec("PRAGMA foreign_keys = ON;"); err != nil {
-		return nil, fmt.Errorf("storage: enable foreign keys: %w", err)
+	// busy_timeout must be set before journal_mode so the WAL switch
+	// itself waits when another process is mid-switch. WAL lets readers
+	// proceed during writes; synchronous=NORMAL is the documented safe
+	// pair for WAL. Without these, two concurrent `neurofs scan`
+	// invocations collide instantly with SQLITE_BUSY.
+	pragmas := []string{
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA foreign_keys = ON",
+	}
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			return nil, fmt.Errorf("storage: %s: %w", p, err)
+		}
 	}
 
 	db.SetMaxOpenConns(1) // SQLite is single-writer

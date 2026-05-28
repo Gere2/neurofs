@@ -76,9 +76,23 @@ type Criterion struct {
 // see the full slice; the human render filters to imperfect/errored
 // fixtures only.
 type Report struct {
-	Criteria  []Criterion  `json:"criteria"`
-	Overall   Verdict      `json:"overall"`
-	G3Details []FactResult `json:"g3_details,omitempty"`
+	Criteria    []Criterion  `json:"criteria"`
+	Overall     Verdict      `json:"overall"`
+	G3Details   []FactResult `json:"g3_details,omitempty"`
+	Regressions []Regression `json:"regressions,omitempty"`
+}
+
+// Regression describes one way the current report is worse than a baseline
+// report supplied via `--baseline`. Used by CI to block a PR even when the
+// current overall verdict alone would pass — e.g. a fixture that flipped
+// from recall=1.0 to recall=0.5 is below the absolute threshold but is a
+// real regression compared to main.
+type Regression struct {
+	Kind   string `json:"kind"`   // verdict_downgrade | fixture_failed | recall_dropped
+	Where  string `json:"where"`  // criterion ID or fixture identifier
+	Before string `json:"before"`
+	After  string `json:"after"`
+	Detail string `json:"detail"`
 }
 
 // G1Thresholds parameterises the real-use signal. Defaults: 10 rated
@@ -226,8 +240,9 @@ type Fixture struct {
 	Question     string   `json:"question"`
 	ExpectsFacts []string `json:"expects_facts"`
 	// SourcePath is filled by LoadFixtures so the report can name the
-	// failing fixture without forcing the CLI to re-walk the directory.
-	SourcePath string `json:"-"`
+	// failing fixture. Exposed in JSON because the gate's GitHub Action
+	// caller needs a path to attach `::error file=...` annotations.
+	SourcePath string `json:"source_path,omitempty"`
 }
 
 // FactResult is the per-fixture outcome the CLI feeds back into EvaluateG3.
@@ -422,8 +437,22 @@ func Render(w io.Writer, r Report) {
 		fmt.Fprintf(w, "  %-2s  %-22s %-4s  %s\n", c.ID, c.Name, string(c.Verdict), c.Detail)
 	}
 	renderG3FixtureDetail(w, r.G3Details)
+	renderRegressions(w, r.Regressions)
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "  Overall: %s\n", string(r.Overall))
+}
+
+// renderRegressions prints one line per regression detected against a
+// baseline. Empty when --baseline was not passed or no regressions found.
+func renderRegressions(w io.Writer, regs []Regression) {
+	if len(regs) == 0 {
+		return
+	}
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "  Regressions vs baseline (%d):\n", len(regs))
+	for _, r := range regs {
+		fmt.Fprintf(w, "    [%s] %s — %s\n", r.Kind, r.Where, r.Detail)
+	}
 }
 
 // renderG3FixtureDetail prints one line per imperfect or errored
@@ -620,13 +649,18 @@ func LoadFixtures(dir string) ([]Fixture, error) {
 	return out, nil
 }
 
-// ScoreBundleAgainstFacts concatenates every fragment's content and runs
-// audit.ScoreFacts on the joined text. The same scorer audit replay uses,
-// so G3 verdicts mean exactly what `audit replay --facts-file` would mean
-// for the same fixture.
+// ScoreBundleAgainstFacts concatenates every NON-TEST fragment's content
+// and runs audit.ScoreFacts on the joined text. _test.go fragments are
+// dropped because the gate measures whether the production bundle can
+// answer a question — a fact only present in test code is not real
+// production coverage and would let stale test assertions mask a renamed
+// or deleted identifier in the production source.
 func ScoreBundleAgainstFacts(b models.Bundle, facts []string) FactResult {
 	var sb strings.Builder
 	for _, f := range b.Fragments {
+		if strings.HasSuffix(f.RelPath, "_test.go") {
+			continue
+		}
 		sb.WriteString(f.Content)
 		sb.WriteByte('\n')
 	}

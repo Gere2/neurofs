@@ -66,8 +66,8 @@ Examples:
 				repoPath = cwd
 			}
 
-			if budget <= 0 {
-				budget = config.DefaultBudget
+			if err := validateBudget(budget); err != nil {
+				return fmt.Errorf("task: %w", err)
 			}
 
 			if _, err := os.Stat(repoPath); os.IsNotExist(err) {

@@ -91,11 +91,23 @@ type BundleStats struct {
 }
 
 // Bundle is the final auditable context package produced by NeuroFS.
+//
+// Repo, CommitSHA, GeneratedAt and BundleHash are populated by
+// taskflow.EnrichBundle at the moment a bundle is about to be persisted.
+// They are the audit identity fields a compliance/governance consumer
+// needs to claim "this bundle is what we sent to the LLM at time T from
+// commit X." BundleHash is the same content hash used by the audit
+// replay path, so a record produced from this bundle and the bundle
+// itself agree on identity.
 type Bundle struct {
-	Query     string            `json:"query"`
-	Budget    int               `json:"budget"`
-	Fragments []ContextFragment `json:"fragments"`
-	Stats     BundleStats       `json:"stats"`
+	Query       string            `json:"query"`
+	Budget      int               `json:"budget"`
+	Fragments   []ContextFragment `json:"fragments"`
+	Stats       BundleStats       `json:"stats"`
+	Repo        string            `json:"repo,omitempty"`
+	CommitSHA   string            `json:"commit_sha,omitempty"`
+	GeneratedAt time.Time         `json:"generated_at,omitempty"`
+	BundleHash  string            `json:"bundle_hash,omitempty"`
 }
 
 // ScoredFile is an intermediate result from the ranking stage.
