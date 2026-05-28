@@ -49,7 +49,10 @@ var ignoredDirsTopOnly = map[string]bool{
 	".audit": true,
 }
 
-// ignoredExts contains file extensions that carry no useful code context.
+// ignoredExts contains file extensions that carry no useful code
+// context. Includes cryptographic material whose contents are secrets
+// (HIGH-1 from the security traffic agent: a .pem in the repo was
+// landing verbatim in pack bundles — fatal for the governance pitch).
 var ignoredExts = map[string]bool{
 	".png":    true,
 	".jpg":    true,
@@ -76,6 +79,16 @@ var ignoredExts = map[string]bool{
 	".dylib":  true,
 	".map":    true, // source maps
 	".min.js": true,
+	// Cryptographic / credential material — never source code.
+	".pem":  true,
+	".key":  true,
+	".crt":  true,
+	".cer":  true,
+	".p12":  true,
+	".pfx":  true,
+	".kdbx": true, // KeePass database
+	".gpg":  true,
+	".asc":  true,
 }
 
 // extToLang maps file extensions to a Lang value.
@@ -150,7 +163,11 @@ func ShouldSkipDirAt(root, fullPath string) bool {
 	return false
 }
 
-// ShouldSkipFile returns true if the file should be ignored.
+// ShouldSkipFile returns true if the file should be ignored — by
+// extension (binaries, secrets, build artefacts), by dot-prefix
+// (.env, .npmrc, .htpasswd, anything except .md), or by the
+// secret-file heuristic for non-dot config files (secrets.yaml,
+// credentials.json, etc.).
 func ShouldSkipFile(path string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	if ignoredExts[ext] {
@@ -160,6 +177,63 @@ func ShouldSkipFile(path string) bool {
 	// Skip dot-files that are not markdown.
 	if strings.HasPrefix(base, ".") && !strings.HasSuffix(strings.ToLower(base), ".md") {
 		return true
+	}
+	if looksLikeSecretFile(base) {
+		return true
+	}
+	return false
+}
+
+// secretBasenames are exact basenames whose contents are conventionally
+// secrets. The heuristic is name-only — we never read the file to look
+// for "high-entropy strings" because false positives at scan time are
+// too costly.
+var secretBasenames = map[string]bool{
+	"id_rsa":     true,
+	"id_dsa":     true,
+	"id_ed25519": true,
+	"id_ecdsa":   true,
+	"kubeconfig": true,
+	"htpasswd":   true,
+}
+
+// secretPrefixes are basename prefixes that, combined with a
+// config-shaped extension, mark a file as secret-bearing. A file like
+// secrets.go or credentials.ts is left alone — it is source code about
+// secrets, not the secrets themselves — but secrets.production.yaml or
+// credentials-prod.json is skipped.
+var secretPrefixes = []string{
+	"secrets.",
+	"secrets-",
+	"credentials.",
+	"credentials-",
+	"service-account.",
+	"service_account.",
+}
+
+var secretConfigExts = []string{".json", ".yaml", ".yml", ".toml", ".env", ".ini"}
+
+// looksLikeSecretFile flags basenames that conventionally store secret
+// material in config formats. The check is conservative on purpose:
+// source code with secret-flavoured names ("secrets.go") stays
+// indexable — only config-shaped files (json/yaml/toml/env/ini)
+// matching a secret prefix are blocked. The security traffic agent
+// surfaced HIGH-1: config/secrets.yaml was landing verbatim in pack
+// bundles, which kills the governance pitch.
+func looksLikeSecretFile(base string) bool {
+	lower := strings.ToLower(base)
+	if secretBasenames[lower] {
+		return true
+	}
+	for _, p := range secretPrefixes {
+		if !strings.HasPrefix(lower, p) {
+			continue
+		}
+		for _, e := range secretConfigExts {
+			if strings.HasSuffix(lower, e) {
+				return true
+			}
+		}
 	}
 	return false
 }

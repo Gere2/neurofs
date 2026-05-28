@@ -81,6 +81,63 @@ func TestShouldSkipDirAt_TopOnlyVsNested(t *testing.T) {
 	}
 }
 
+// Regression: the security traffic agent's HIGH-1 — config-shaped
+// files carrying secrets (no dot prefix) used to land verbatim in
+// bundles. Confirm the deny-glob denies them now, and confirm source
+// code with secret-flavoured names is still indexed.
+func TestShouldSkipFile_SecretDenyGlob(t *testing.T) {
+	skip := []string{
+		// Config-shaped secret files (HIGH-1 was about these)
+		"secrets.yaml",
+		"secrets.yml",
+		"secrets.json",
+		"secrets.production.yaml",
+		"credentials.json",
+		"credentials-prod.yaml",
+		"service-account.json",
+		"service_account.json",
+		// Exact basenames
+		"id_rsa",
+		"id_ed25519",
+		"kubeconfig",
+		// Cryptographic material by extension
+		"server.pem",
+		"private.key",
+		"wildcard.crt",
+		"client.p12",
+		"vault.kdbx",
+		// Dot-prefixed (already covered by the dot rule, but pin the
+		// behaviour so a future cleanup doesn't accidentally regress).
+		".env",
+		".env.local",
+		".npmrc",
+	}
+	keep := []string{
+		// Source code with secret-flavoured names is NOT a config file
+		// and must keep being indexed — denying these would hide real
+		// production code in any project that has an auth/secrets pkg.
+		"secrets.go",
+		"credentials.ts",
+		"secrets_test.go",
+		"internal/secrets/manager.go",
+		// .key as Go-related ext doesn't exist; "key.go" is just Go.
+		"key.go",
+		// .md is always kept (docs).
+		"README.md",
+		".github-policy.md",
+	}
+	for _, p := range skip {
+		if !fsutil.ShouldSkipFile(p) {
+			t.Errorf("ShouldSkipFile(%q) = false, want true (HIGH-1 regression: this would leak into bundles)", p)
+		}
+	}
+	for _, p := range keep {
+		if fsutil.ShouldSkipFile(p) {
+			t.Errorf("ShouldSkipFile(%q) = true, want false (false positive — would hide legitimate source)", p)
+		}
+	}
+}
+
 func TestCountLines(t *testing.T) {
 	cases := []struct {
 		input []byte
