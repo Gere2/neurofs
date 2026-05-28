@@ -45,7 +45,7 @@ func Run(opts Options) error {
 		startupDir = cwd
 	}
 
-	mux, err := buildMux()
+	mux, err := buildMux(opts.Addr)
 	if err != nil {
 		return err
 	}
@@ -78,8 +78,10 @@ func Run(opts Options) error {
 	return nil
 }
 
-// buildMux builds the common multiplexer for both the UI and Proxy servers.
-func buildMux() (*http.ServeMux, error) {
+// buildMux builds the common multiplexer for both the UI and Proxy
+// servers. addr is the listen address; it is used to derive the
+// allowed-Origin allowlist for state-changing endpoints.
+func buildMux(addr string) (*http.ServeMux, error) {
 	mux := http.NewServeMux()
 
 	sub, err := fs.Sub(assets, "static")
@@ -115,7 +117,7 @@ func buildMux() (*http.ServeMux, error) {
 		_, _ = w.Write(data)
 	})
 
-	registerAPI(mux)
+	registerAPI(mux, originsForAddr(addr))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -135,7 +137,7 @@ func RunProxy(opts Options) error {
 		startupDir = cwd
 	}
 
-	mux, err := buildMux()
+	mux, err := buildMux(opts.Addr)
 	if err != nil {
 		return err
 	}

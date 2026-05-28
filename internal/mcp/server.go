@@ -14,10 +14,11 @@ import (
 // responses to out. Diagnostics go to the logger constructed from
 // errOut so stdout stays exclusive to protocol traffic.
 type Server struct {
-	in      io.Reader
-	out     io.Writer
-	log     *log.Logger
-	version string
+	in       io.Reader
+	out      io.Writer
+	log      *log.Logger
+	version  string
+	repoRoot string
 }
 
 func NewServer(in io.Reader, out, errOut io.Writer, version string) *Server {
@@ -27,6 +28,38 @@ func NewServer(in io.Reader, out, errOut io.Writer, version string) *Server {
 		log:     log.New(errOut, "mcp: ", log.LstdFlags),
 		version: version,
 	}
+}
+
+// SetRepoRoot pins all path-taking tools (view_file, search, scan, etc.)
+// to root. The security traffic agent surfaced CRIT-2: without pinning,
+// a malicious tool argument (`{"repo": "/etc"}`) turned neurofs_view_file
+// into an arbitrary file reader on the host. When this is set, any
+// non-empty `repo` argument that does not canonicalise to root is
+// refused. The CLI calls this with the process cwd at server start so
+// the default deployment is secure; library/test callers can leave it
+// unset to keep the legacy caller-controlled behaviour.
+func (s *Server) SetRepoRoot(root string) {
+	s.repoRoot = root
+}
+
+// ctxKey is the private context-value key type; using a struct here
+// makes accidental collisions impossible.
+type ctxKey struct{ name string }
+
+var ctxKeyRepoRoot = &ctxKey{"repoRoot"}
+
+func withRepoRoot(ctx context.Context, root string) context.Context {
+	if root == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxKeyRepoRoot, root)
+}
+
+func repoRootFromCtx(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyRepoRoot).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // Run loops over input messages until EOF, ctx cancellation, or a
@@ -71,7 +104,7 @@ func (s *Server) Run(ctx context.Context) error {
 			if len(line) == 0 {
 				continue
 			}
-			resp, drop := s.handle(ctx, line)
+			resp, drop := s.handle(withRepoRoot(ctx, s.repoRoot), line)
 			if drop {
 				continue
 			}

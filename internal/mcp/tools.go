@@ -231,7 +231,7 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 	if args.Limit <= 0 {
 		args.Limit = 8
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return ContextResponse{}, err
 	}
@@ -612,7 +612,7 @@ func firstText(res ToolCallResult) string {
 	return res.Content[0].Text
 }
 
-func runTaskTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args taskArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -626,7 +626,7 @@ func runTaskTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	if args.Budget <= 0 {
 		args.Budget = 3000
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -647,14 +647,14 @@ type scanArgs struct {
 	Repo string `json:"repo"`
 }
 
-func runScanTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runScanTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args scanArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return errResult(fmt.Sprintf("invalid arguments: %v", err))
 		}
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -733,8 +733,28 @@ func runScanTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	return textResult(b.String())
 }
 
-func resolveRepo(path string) (string, error) {
-	repo := strings.TrimSpace(path)
+// resolveRepo returns the absolute repo root for a path-taking tool.
+// When the server was started with a pinned root (Server.SetRepoRoot),
+// the caller's `repo` argument is honoured only if it canonicalises to
+// the pinned root — anything else is refused. Without pinning, the
+// legacy behaviour applies (caller-controlled, default cwd).
+func resolveRepo(ctx context.Context, requested string) (string, error) {
+	pinned := repoRootFromCtx(ctx)
+	requested = strings.TrimSpace(requested)
+	if pinned != "" {
+		if requested == "" {
+			return pinned, nil
+		}
+		absReq, err := filepath.Abs(requested)
+		if err != nil {
+			return "", fmt.Errorf("resolve repo: %w", err)
+		}
+		if !sameDir(absReq, pinned) {
+			return "", fmt.Errorf("repo arg %q refused: server is pinned to %q", requested, pinned)
+		}
+		return pinned, nil
+	}
+	repo := requested
 	if repo == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -747,6 +767,19 @@ func resolveRepo(path string) (string, error) {
 		return "", fmt.Errorf("resolve repo: %w", err)
 	}
 	return abs, nil
+}
+
+// sameDir compares two paths after symlink resolution and Clean. Used
+// to verify a caller's `repo` arg matches the server's pinned root even
+// when one side has trailing slashes or symlink prefixes (common on
+// macOS, where /var → /private/var).
+func sameDir(a, b string) bool {
+	aa, err1 := filepath.EvalSymlinks(a)
+	bb, err2 := filepath.EvalSymlinks(b)
+	if err1 == nil && err2 == nil {
+		return filepath.Clean(aa) == filepath.Clean(bb)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func textResult(text string) ToolCallResult {
@@ -778,7 +811,7 @@ type viewFileArgs struct {
 	Repo string `json:"repo"`
 }
 
-func runViewFileTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runViewFileTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args viewFileArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -789,7 +822,7 @@ func runViewFileTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	if args.Path == "" {
 		return errResult("path must not be empty")
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -812,14 +845,14 @@ type outlineArgs struct {
 	Repo string `json:"repo"`
 }
 
-func runGetOutlineTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args outlineArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
 			return errResult(fmt.Sprintf("invalid arguments: %v", err))
 		}
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -852,7 +885,7 @@ type listSignaturesArgs struct {
 	Repo string `json:"repo"`
 }
 
-func runListSignaturesTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runListSignaturesTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args listSignaturesArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -863,7 +896,7 @@ func runListSignaturesTool(_ context.Context, raw json.RawMessage) ToolCallResul
 	if args.Path == "" {
 		return errResult("path must not be empty")
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}
@@ -908,7 +941,7 @@ type getExcerptArgs struct {
 	Repo  string `json:"repo"`
 }
 
-func runGetExcerptTool(_ context.Context, raw json.RawMessage) ToolCallResult {
+func runGetExcerptTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args getExcerptArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -923,7 +956,7 @@ func runGetExcerptTool(_ context.Context, raw json.RawMessage) ToolCallResult {
 	if args.Query == "" {
 		return errResult("query must not be empty")
 	}
-	repo, err := resolveRepo(args.Repo)
+	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
 	}

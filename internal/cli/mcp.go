@@ -39,6 +39,13 @@ Wire it into any MCP host by configuring it as a stdio server that runs
 			defer stop()
 
 			srv := mcp.NewServer(os.Stdin, os.Stdout, os.Stderr, mcpVersion())
+			// Pin all path-taking tools to the process cwd. Without this,
+			// a malicious caller can pass {"repo": "/etc", "path": "passwd"}
+			// to neurofs_view_file and read arbitrary host files (CRIT-2
+			// from the security traffic agent).
+			if cwd, err := os.Getwd(); err == nil {
+				srv.SetRepoRoot(cwd)
+			}
 			if err := srv.Run(ctx); err != nil {
 				return fmt.Errorf("mcp: %w", err)
 			}
