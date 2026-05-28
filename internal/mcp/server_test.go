@@ -138,6 +138,59 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 }
 
+// Regression: the MCP traffic agent surfaced that the server returned
+// full responses to notifications (JSON-RPC §4.1 violation). Send a
+// `tools/list` notification (no id) immediately followed by a normal
+// `tools/list` request (id=2). The wire must show only one response,
+// and that response must be for id=2.
+func TestNotificationsGetNoResponse(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+
+	srv := NewServer(inR, outW, io.Discard, "test")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		err := srv.Run(ctx)
+		outW.Close()
+		done <- err
+	}()
+
+	go func() {
+		defer inW.Close()
+		// Notification (no id) — must be silently swallowed.
+		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","method":"tools/list"}` + "\n"))
+		// Notification of initialize — same.
+		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","method":"initialize","params":{}}` + "\n"))
+		// Real request — id=2. Should be the ONLY response on the wire.
+		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"))
+	}()
+
+	dec := json.NewDecoder(outR)
+	var resp Response
+	if err := dec.Decode(&resp); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+	if string(resp.ID) != "2" {
+		t.Fatalf("first response id = %s, want 2 — server is answering notifications (JSON-RPC §4.1 violation)", resp.ID)
+	}
+
+	// Confirm no further responses came. The server should be alive but
+	// idle. Close stdin and confirm we hit EOF, not another response.
+	if err := dec.Decode(&resp); err != io.EOF {
+		t.Fatalf("expected EOF after only request answered, got resp id=%s err=%v", resp.ID, err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not exit after stdin closed")
+	}
+}
+
 // Regression: the MCP traffic agent surfaced that a single stdin line
 // larger than the bufio.Scanner buffer cap (was 4 MiB) killed the
 // server permanently. Multi-megabyte messages (a long search response,

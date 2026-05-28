@@ -119,8 +119,12 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // handle returns the response and a drop flag. drop=true means the
-// inbound message was a notification (no id) and no response should
-// be written.
+// inbound message was a notification (no id) or a known notification-
+// shaped method and no response should be written. JSON-RPC 2.0 §4.1:
+// a notification never gets a response, even a successful one. The
+// MCP traffic agent surfaced that the prior code only honoured this
+// for invalid-request and method-not-found branches, returning full
+// results for tools/list and initialize when sent as notifications.
 func (s *Server) handle(ctx context.Context, line []byte) (Response, bool) {
 	var req Request
 	if err := json.Unmarshal(line, &req); err != nil {
@@ -137,6 +141,17 @@ func (s *Server) handle(ctx context.Context, line []byte) (Response, bool) {
 		return errResponse(req.ID, codeInvalidRequest, "invalid request", nil), false
 	}
 
+	resp, drop := s.dispatchMethod(ctx, req)
+	// Notification suppression is the LAST step so a side-effecting
+	// method (tools/call as fire-and-forget) still runs — only its
+	// response is dropped on the wire.
+	if notification {
+		return Response{}, true
+	}
+	return resp, drop
+}
+
+func (s *Server) dispatchMethod(ctx context.Context, req Request) (Response, bool) {
 	switch req.Method {
 	case "initialize":
 		return okResponse(req.ID, InitializeResult{
@@ -161,9 +176,6 @@ func (s *Server) handle(ctx context.Context, line []byte) (Response, bool) {
 		return okResponse(req.ID, callTool(ctx, params)), false
 
 	default:
-		if notification {
-			return Response{}, true
-		}
 		return errResponse(req.ID, codeMethodNotFound, fmt.Sprintf("method not found: %s", req.Method), nil), false
 	}
 }
