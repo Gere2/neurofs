@@ -209,10 +209,17 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 				for _, name := range matches.symbolMatches {
 					symBoost += symbolScore(name, terms)
 				}
+				if symBoost > 18.0 {
+					symBoost = 18.0
+				}
 				addReason(&hit, "structural_symbol", symBoost)
 			}
 			if len(matches.importMatches) > 0 {
-				addReason(&hit, "structural_import", float64(len(matches.importMatches))*2.0)
+				impBoost := float64(len(matches.importMatches)) * 2.0
+				if impBoost > 10.0 {
+					impBoost = 10.0
+				}
+				addReason(&hit, "structural_import", impBoost)
 			}
 		}
 		if len(queryEmbedding) > 0 {
@@ -232,6 +239,7 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 	applyWorkingSetBoost(candidates, changedPaths)
 	applyGraphBoost(candidates, relations)
 	applyLongChunkPenalty(candidates)
+	applyTestPenalty(candidates, query)
 
 	hits := make([]Hit, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -253,6 +261,19 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		}
 		return hits[i].Symbol < hits[j].Symbol
 	})
+	
+	// Enforce diversity: allow at most 3 chunks per file in the final search results
+	const maxChunksPerFile = 3
+	filteredHits := make([]Hit, 0, len(hits))
+	fileCounts := make(map[string]int)
+	for _, hit := range hits {
+		if fileCounts[hit.Path] < maxChunksPerFile {
+			filteredHits = append(filteredHits, hit)
+			fileCounts[hit.Path]++
+		}
+	}
+	hits = filteredHits
+
 	if len(hits) > opts.Limit {
 		hits = hits[:opts.Limit]
 	}
@@ -598,6 +619,25 @@ func applyLongChunkPenalty(candidates []candidate) {
 			penalty = maxLongChunkPenalty
 		}
 		addPenalty(&candidates[i].hit, "long_chunk_penalty", penalty)
+	}
+}
+
+func applyTestPenalty(candidates []candidate, query string) {
+	wantsTests := ranking.QueryWantsTests(query)
+	for i := range candidates {
+		if !ranking.IsTestLikePath(candidates[i].hit.Path) {
+			continue
+		}
+		if wantsTests {
+			addReason(&candidates[i].hit, "query_test_intent_detected", 0)
+			continue
+		}
+		if candidates[i].hit.Score <= 0 {
+			continue
+		}
+		before := candidates[i].hit.Score
+		candidates[i].hit.Score = before * 0.72
+		addPenalty(&candidates[i].hit, "test_like_downrank", before-candidates[i].hit.Score)
 	}
 }
 

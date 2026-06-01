@@ -24,6 +24,7 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newAskCmd())
 	root.AddCommand(newPackCmd())
 	root.AddCommand(newTaskCmd())
+	root.AddCommand(newMemoryCmd())
 	root.AddCommand(newStatsCmd())
 	root.AddCommand(newBenchCmd())
 	root.AddCommand(newAuditCmd())

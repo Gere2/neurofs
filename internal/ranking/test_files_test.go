@@ -38,8 +38,8 @@ func TestIsTestLikePath(t *testing.T) {
 		{"", false},
 	}
 	for _, c := range cases {
-		if got := isTestLikePath(c.path); got != c.want {
-			t.Errorf("isTestLikePath(%q) = %v, want %v", c.path, got, c.want)
+		if got := IsTestLikePath(c.path); got != c.want {
+			t.Errorf("IsTestLikePath(%q) = %v, want %v", c.path, got, c.want)
 		}
 	}
 }
@@ -80,8 +80,8 @@ func TestQueryWantsTests(t *testing.T) {
 		{"", false},
 	}
 	for _, c := range cases {
-		if got := queryWantsTests(c.query); got != c.want {
-			t.Errorf("queryWantsTests(%q) = %v, want %v", c.query, got, c.want)
+		if got := QueryWantsTests(c.query); got != c.want {
+			t.Errorf("QueryWantsTests(%q) = %v, want %v", c.query, got, c.want)
 		}
 	}
 }

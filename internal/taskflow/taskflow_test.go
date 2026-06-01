@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 )
 
@@ -228,5 +229,80 @@ func TestGitDiffAndStatus(t *testing.T) {
 	status := GitStatus(tmp)
 	if status != "" {
 		t.Errorf("expected empty status on non-git dir, got: %q", status)
+	}
+}
+
+func TestRunAutoLogsToLedger(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/chunktest\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	source := `package chunktest
+func BuildThing(name string) string {
+	return "build:" + name
+}
+`
+	if err := os.WriteFile(filepath.Join(tmp, "builder.go"), []byte(source), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	// First Run (fresh generation)
+	_, err := Run(Opts{
+		RepoRoot:      tmp,
+		Query:         "Where is BuildThing?",
+		Budget:        1200,
+		Force:         true,
+		DisableChunks: false,
+		Ledger:        memory.New(memory.NewFileStore(tmp)),
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Read ledger
+	ledgerPath := filepath.Join(tmp, ".neurofs", "ledger.jsonl")
+	data, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to read ledger: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 entry in ledger, got %d: %q", len(lines), string(data))
+	}
+
+	if !strings.Contains(lines[0], "Where is BuildThing?") {
+		t.Errorf("expected query in ledger, got %s", lines[0])
+	}
+	if !strings.Contains(lines[0], "fresh generation") {
+		t.Errorf("expected fresh generation note in ledger, got %s", lines[0])
+	}
+
+	// Second Run (cache reused)
+	_, err = Run(Opts{
+		RepoRoot:      tmp,
+		Query:         "Where is BuildThing?",
+		Budget:        1200,
+		Force:         false,
+		DisableChunks: false,
+		Ledger:        memory.New(memory.NewFileStore(tmp)),
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	data2, err := os.ReadFile(ledgerPath)
+	if err != nil {
+		t.Fatalf("failed to read ledger second time: %v", err)
+	}
+
+	lines2 := strings.Split(strings.TrimSpace(string(data2)), "\n")
+	if len(lines2) != 2 {
+		t.Fatalf("expected 2 entries in ledger, got %d: %q", len(lines2), string(data2))
+	}
+	if !strings.Contains(lines2[1], "cache reused") {
+		t.Errorf("expected cache reused note in second ledger entry, got %s", lines2[1])
 	}
 }

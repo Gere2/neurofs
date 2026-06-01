@@ -50,6 +50,7 @@ type Opts struct {
 	Budget        int
 	Force         bool
 	DisableChunks bool
+	Ledger        LedgerWriter // Optional dependency injection; skips if nil
 }
 
 // TopPick is the structured form of each line the CLI prints as
@@ -135,6 +136,26 @@ func Run(opts Opts) (Result, error) {
 	bundle, err := readBundleJSON(bundlePath)
 	if err != nil {
 		return Result{}, fmt.Errorf("taskflow: read bundle: %w", err)
+	}
+
+	// Log run to memory ledger
+	if opts.Ledger != nil {
+		files := make([]string, len(bundle.Fragments))
+		for i, f := range bundle.Fragments {
+			files[i] = f.RelPath
+		}
+		notes := "Auto-logged from taskflow run (fresh generation)"
+		if reused {
+			notes = "Auto-logged from taskflow run (cache reused)"
+		}
+		logTimestamp := time.Now().UTC()
+		_ = opts.Ledger.AppendEntry(context.Background(), models.LedgerEntry{
+			Timestamp:  logTimestamp,
+			Query:      query,
+			BundleHash: bundle.BundleHash,
+			Files:      files,
+			Notes:      notes,
+		})
 	}
 
 	return Result{

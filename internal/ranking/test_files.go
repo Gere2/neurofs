@@ -72,10 +72,10 @@ var metaOverrideTerms = map[string]bool{
 	"implementación": true, "implementacion": true,
 }
 
-// isTestLikePath reports whether relPath looks like a test, fixture, or mock
+// IsTestLikePath reports whether relPath looks like a test, fixture, or mock
 // file. Paths are normalised to forward slashes and lowercased so behaviour
 // is identical on Windows and Unix.
-func isTestLikePath(relPath string) bool {
+func IsTestLikePath(relPath string) bool {
 	rel := strings.ToLower(filepath.ToSlash(relPath))
 	if rel == "" {
 		return false
@@ -94,11 +94,11 @@ func isTestLikePath(relPath string) bool {
 	return false
 }
 
-// queryWantsTests reports whether the query contains a token signalling test
+// QueryWantsTests reports whether the query contains a token signalling test
 // intent. The match is on whole tokens (split on non-alphanumeric chars) so
 // "latest" or "request" do not falsely trigger via substring match against
 // "test".
-func queryWantsTests(query string) bool {
+func QueryWantsTests(query string) bool {
 	if query == "" {
 		return false
 	}
@@ -129,9 +129,9 @@ func queryWantsTests(query string) bool {
 // Files with non-positive scores are skipped: scaling 0 changes nothing, and
 // negative values aren't part of the current scoring contract.
 func applyTestPenalty(scored []models.ScoredFile, query string) {
-	wantsTests := queryWantsTests(query)
+	wantsTests := QueryWantsTests(query)
 	for i := range scored {
-		if !isTestLikePath(scored[i].Record.RelPath) {
+		if !IsTestLikePath(scored[i].Record.RelPath) {
 			continue
 		}
 		if wantsTests {

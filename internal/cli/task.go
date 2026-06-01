@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/quality"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
@@ -96,6 +97,7 @@ Examples:
 				Budget:        budget,
 				Force:         force,
 				DisableChunks: noChunks,
+				Ledger:        memory.New(memory.NewFileStore(repoPath)),
 			})
 			if err != nil {
 				return fmt.Errorf("task: %w", err)

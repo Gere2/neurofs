@@ -405,6 +405,47 @@ func TestSnippetForRange(t *testing.T) {
 	}
 }
 
+func TestApplyTestPenalty(t *testing.T) {
+	t.Run("downranks test files when no test intent", func(t *testing.T) {
+		cands := []candidate{
+			{hit: Hit{Path: "src/auth.go", Score: 10.0}},
+			{hit: Hit{Path: "src/auth_test.go", Score: 10.0}},
+		}
+		applyTestPenalty(cands, "how does authentication work?")
+
+		if cands[0].hit.Score != 10.0 {
+			t.Errorf("production file should not be penalised, got %v", cands[0].hit.Score)
+		}
+		if cands[1].hit.Score >= 10.0 {
+			t.Errorf("test file should be penalised, got %v", cands[1].hit.Score)
+		}
+		if !containsString(cands[1].hit.Reasons, "test_like_downrank") {
+			t.Errorf("expected test_like_downrank reason, got %v", cands[1].hit.Reasons)
+		}
+	})
+
+	t.Run("preserves test files when test intent detected", func(t *testing.T) {
+		cands := []candidate{
+			{hit: Hit{Path: "src/auth.go", Score: 10.0}},
+			{hit: Hit{Path: "src/auth_test.go", Score: 10.0}},
+		}
+		applyTestPenalty(cands, "run the unit tests for auth")
+
+		if cands[0].hit.Score != 10.0 {
+			t.Errorf("production file should not be penalised, got %v", cands[0].hit.Score)
+		}
+		if cands[1].hit.Score != 10.0 {
+			t.Errorf("test file should not be penalised under test intent, got %v", cands[1].hit.Score)
+		}
+		if !containsString(cands[1].hit.Reasons, "query_test_intent_detected") {
+			t.Errorf("expected query_test_intent_detected reason, got %v", cands[1].hit.Reasons)
+		}
+		if containsString(cands[1].hit.Reasons, "test_like_downrank") {
+			t.Errorf("should not downrank under test intent, got reasons %v", cands[1].hit.Reasons)
+		}
+	})
+}
+
 // ---------- end-to-end integration ----------
 
 func TestSearchEndToEnd(t *testing.T) {

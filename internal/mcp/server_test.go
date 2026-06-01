@@ -13,6 +13,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
@@ -83,8 +84,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 8 {
-		t.Fatalf("tools: got %d want 8", len(listResult.Tools))
+	if len(listResult.Tools) != 11 {
+		t.Fatalf("tools: got %d want 11", len(listResult.Tools))
 	}
 	wantNames := map[string]bool{
 		"neurofs_context":         true,
@@ -95,6 +96,9 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_list_signatures": true,
 		"neurofs_get_excerpt":     true,
 		"neurofs_search":          true,
+		"neurofs_log_memory":      true,
+		"neurofs_search_memory":   true,
+		"neurofs_export_memory":   true,
 	}
 	for _, tool := range listResult.Tools {
 		if !wantNames[tool.Name] {
@@ -1001,4 +1005,141 @@ func traceReasonContains(trace []ContextTraceStep, text string) bool {
 		}
 	}
 	return false
+}
+
+func TestMemoryTools(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// 1. Log an entry using the log tool (generic/active session)
+	logArgsRaw, _ := json.Marshal(map[string]any{
+		"query":   "search something",
+		"command": "go run .",
+		"outcome": "success",
+		"notes":   "verified memory tool",
+		"repo":    tmpDir,
+	})
+	logRes := runLogMemoryTool(ctx, logArgsRaw)
+	if logRes.IsError {
+		t.Fatalf("expected log memory tool to succeed, got error: %s", logRes.Content[0].Text)
+	}
+	if !strings.Contains(logRes.Content[0].Text, "Successfully logged entry to session") {
+		t.Errorf("expected success message, got: %q", logRes.Content[0].Text)
+	}
+
+	// 2. Search for the entry using the search tool with "term"
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"term": "verified",
+		"repo": tmpDir,
+	})
+	searchRes := runSearchMemoryTool(ctx, searchArgsRaw)
+	if searchRes.IsError {
+		t.Fatalf("expected search memory tool to succeed, got error: %s", searchRes.Content[0].Text)
+	}
+
+	var results []models.LedgerEntry
+	if err := json.Unmarshal([]byte(searchRes.Content[0].Text), &results); err != nil {
+		t.Fatalf("failed to parse search results: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Notes != "verified memory tool" {
+		t.Errorf("expected notes to be 'verified memory tool', got %q", results[0].Notes)
+	}
+	if results[0].Command != "go run ." {
+		t.Errorf("expected command to be 'go run .', got %q", results[0].Command)
+	}
+
+	// 3. Log a manual entry with a custom session ID and files array
+	customLogArgs, _ := json.Marshal(map[string]any{
+		"query":      "implement feature",
+		"command":    "go build",
+		"outcome":    "success",
+		"notes":      "verified custom session details",
+		"session_id": "sess-custom-1",
+		"files":      []string{"main.go", "helper.go"},
+		"repo":       tmpDir,
+	})
+	logRes2 := runLogMemoryTool(ctx, customLogArgs)
+	if logRes2.IsError {
+		t.Fatalf("expected custom log memory tool to succeed, got error: %s", logRes2.Content[0].Text)
+	}
+	if !strings.Contains(logRes2.Content[0].Text, "sess-custom-1") {
+		t.Errorf("expected success message with session ID, got: %q", logRes2.Content[0].Text)
+	}
+
+	// 4. Search using custom session ID filter
+	customSearchArgs, _ := json.Marshal(map[string]any{
+		"term":       "custom",
+		"session_id": "sess-custom-1",
+		"repo":       tmpDir,
+	})
+	searchRes2 := runSearchMemoryTool(ctx, customSearchArgs)
+	if searchRes2.IsError {
+		t.Fatalf("expected search memory tool with session ID to succeed, got error: %s", searchRes2.Content[0].Text)
+	}
+
+	var results2 []models.LedgerEntry
+	if err := json.Unmarshal([]byte(searchRes2.Content[0].Text), &results2); err != nil {
+		t.Fatalf("failed to parse search results: %v", err)
+	}
+	if len(results2) != 1 {
+		t.Fatalf("expected 1 custom session result, got %d", len(results2))
+	}
+	if results2[0].SessionID != "sess-custom-1" {
+		t.Errorf("expected session ID to be 'sess-custom-1', got %q", results2[0].SessionID)
+	}
+	if len(results2[0].Files) != 2 || results2[0].Files[0] != "main.go" {
+		t.Errorf("expected files array, got %+v", results2[0].Files)
+	}
+
+	// 5. Export memory for the custom session format="session_timeline"
+	exportArgs, _ := json.Marshal(map[string]any{
+		"format":     "session_timeline",
+		"session_id": "sess-custom-1",
+		"repo":       tmpDir,
+	})
+	exportRes := runExportMemoryTool(ctx, exportArgs)
+	if exportRes.IsError {
+		t.Fatalf("expected export memory tool to succeed, got error: %s", exportRes.Content[0].Text)
+	}
+	exportText := exportRes.Content[0].Text
+	if !strings.Contains(exportText, "sess-custom-1") {
+		t.Errorf("expected export to contain session ID, got:\n%s", exportText)
+	}
+	if !strings.Contains(exportText, "main.go") || !strings.Contains(exportText, "helper.go") {
+		t.Errorf("expected export to contain file names, got:\n%s", exportText)
+	}
+
+	// 6. Export memory for the custom session format="agents"
+	exportArgsAgents, _ := json.Marshal(map[string]any{
+		"format":     "agents",
+		"session_id": "sess-custom-1",
+		"repo":       tmpDir,
+	})
+	exportResAgents := runExportMemoryTool(ctx, exportArgsAgents)
+	if exportResAgents.IsError {
+		t.Fatalf("expected agents export memory tool to succeed, got error: %s", exportResAgents.Content[0].Text)
+	}
+	exportTextAgents := exportResAgents.Content[0].Text
+	if !strings.Contains(exportTextAgents, "Agent Handoff Context") {
+		t.Errorf("expected agents header, got:\n%s", exportTextAgents)
+	}
+
+	// 7. Export memory for the custom session format="markdown"
+	exportArgsMD, _ := json.Marshal(map[string]any{
+		"format":     "markdown",
+		"session_id": "sess-custom-1",
+		"repo":       tmpDir,
+	})
+	exportResMD := runExportMemoryTool(ctx, exportArgsMD)
+	if exportResMD.IsError {
+		t.Fatalf("expected markdown export memory tool to succeed, got error: %s", exportResMD.Content[0].Text)
+	}
+	exportTextMD := exportResMD.Content[0].Text
+	if !strings.Contains(exportTextMD, "Session Ledger Log") {
+		t.Errorf("expected markdown header, got:\n%s", exportTextMD)
+	}
 }

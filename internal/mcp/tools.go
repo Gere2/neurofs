@@ -15,6 +15,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
@@ -95,6 +96,38 @@ const contextInputSchema = `{
   }
 }`
 
+const logMemoryInputSchema = `{
+  "type": "object",
+  "properties": {
+    "query":      { "type": "string", "description": "The query or task details to record." },
+    "command":    { "type": "string", "description": "The command executed to record." },
+    "outcome":    { "type": "string", "description": "The outcome or result of the execution." },
+    "notes":      { "type": "string", "description": "Any additional notes or description." },
+    "session_id": { "type": "string", "description": "Optional session ID override for isolation." },
+    "files":      { "type": "array", "items": { "type": "string" }, "description": "List of files involved in this step." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
+const searchMemoryInputSchema = `{
+  "type": "object",
+  "properties": {
+    "term":       { "type": "string", "description": "Search term/keyword to filter ledger entries." },
+    "session_id": { "type": "string", "description": "Optional session ID override to limit search." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  },
+  "required": ["term"]
+}`
+
+const exportMemoryInputSchema = `{
+  "type": "object",
+  "properties": {
+    "format":     { "type": "string", "enum": ["session_timeline", "agents", "markdown"], "default": "agents", "description": "Export format selection." },
+    "session_id": { "type": "string", "description": "Optional session ID override for context retrieval." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
 func toolsList() []Tool {
 	return []Tool{
 		{
@@ -137,6 +170,21 @@ func toolsList() []Tool {
 			Description: "Return ranked code chunks for a query using lexical, exact rg, semantic, graph, and git working-set signals.",
 			InputSchema: json.RawMessage(searchInputSchema),
 		},
+		{
+			Name:        "neurofs_log_memory",
+			Description: "Log a query, executed command, outcome, files array, or notes to the session ledger.",
+			InputSchema: json.RawMessage(logMemoryInputSchema),
+		},
+		{
+			Name:        "neurofs_search_memory",
+			Description: "Search through the local session memory ledger for entries matching a keyword (newest first, max 15).",
+			InputSchema: json.RawMessage(searchMemoryInputSchema),
+		},
+		{
+			Name:        "neurofs_export_memory",
+			Description: "Export the session log formatted as agents (AGENTS.md), session_timeline (NEUROFS_SESSION.md), or markdown.",
+			InputSchema: json.RawMessage(exportMemoryInputSchema),
+		},
 	}
 }
 
@@ -158,6 +206,12 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runGetExcerptTool(ctx, p.Arguments)
 	case "neurofs_search":
 		return runSearchTool(ctx, p.Arguments)
+	case "neurofs_log_memory":
+		return runLogMemoryTool(ctx, p.Arguments)
+	case "neurofs_search_memory":
+		return runSearchMemoryTool(ctx, p.Arguments)
+	case "neurofs_export_memory":
+		return runExportMemoryTool(ctx, p.Arguments)
 	default:
 		return errResult(fmt.Sprintf("unknown tool: %q", p.Name))
 	}
@@ -1273,4 +1327,142 @@ func linesInRange(lines []string, startLine, endLine int) string {
 		return ""
 	}
 	return strings.Join(lines[startLine-1:endLine], "\n")
+}
+
+type logMemoryArgs struct {
+	Query     string   `json:"query"`
+	Command   string   `json:"command"`
+	Outcome   string   `json:"outcome"`
+	Notes     string   `json:"notes"`
+	SessionID string   `json:"session_id"`
+	Files     []string `json:"files"`
+	Repo      string   `json:"repo"`
+}
+
+type searchMemoryArgs struct {
+	Term      string `json:"term"`
+	SessionID string `json:"session_id"`
+	Repo      string `json:"repo"`
+}
+
+type exportMemoryArgs struct {
+	Format    string `json:"format"`
+	SessionID string `json:"session_id"`
+	Repo      string `json:"repo"`
+}
+
+func runLogMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args logMemoryArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	entry := models.LedgerEntry{
+		Query:     strings.TrimSpace(args.Query),
+		Command:   strings.TrimSpace(args.Command),
+		Outcome:   strings.TrimSpace(args.Outcome),
+		Notes:     strings.TrimSpace(args.Notes),
+		SessionID: strings.TrimSpace(args.SessionID),
+		Files:     args.Files,
+	}
+	if entry.Query == "" && entry.Command == "" && entry.Outcome == "" && entry.Notes == "" && len(entry.Files) == 0 {
+		return errResult("at least one of query, command, outcome, notes, or files must be set")
+	}
+
+	m := memory.New(memory.NewFileStore(repo))
+	err = m.AppendEntry(ctx, entry)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	sessionID := entry.SessionID
+	if sessionID == "" {
+		sessionID, _ = m.GetSessionID(ctx)
+	}
+	return textResult(fmt.Sprintf("Successfully logged entry to session ID: %s", sessionID))
+}
+
+func runSearchMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args searchMemoryArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	args.Term = strings.TrimSpace(args.Term)
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	m := memory.New(memory.NewFileStore(repo))
+	results, err := m.SearchEntries(ctx, args.Term)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	var filtered []models.LedgerEntry
+	targetSession := strings.TrimSpace(args.SessionID)
+	for _, r := range results {
+		if targetSession == "" || r.SessionID == targetSession {
+			filtered = append(filtered, r)
+		}
+	}
+
+	// Reverse order (newest first)
+	for i, j := 0, len(filtered)-1; i < j; i, j = i+1, j-1 {
+		filtered[i], filtered[j] = filtered[j], filtered[i]
+	}
+
+	// Paginate at 15 items
+	limit := 15
+	if len(filtered) > limit {
+		filtered = filtered[:limit]
+	}
+
+	payload, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return errResult(fmt.Sprintf("marshal results: %v", err))
+	}
+	return textResult(string(payload))
+}
+
+func runExportMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args exportMemoryArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	format := strings.ToLower(strings.TrimSpace(args.Format))
+	if format == "" {
+		format = "agents"
+	}
+	if format == "claude" {
+		format = "session_timeline"
+	}
+
+	m := memory.New(memory.NewFileStore(repo))
+
+	if args.SessionID != "" {
+		os.Setenv("NEUROFS_SESSION_ID", args.SessionID)
+		defer os.Unsetenv("NEUROFS_SESSION_ID")
+	}
+
+	res, err := m.ExportEntries(ctx, format)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	return textResult(res)
 }

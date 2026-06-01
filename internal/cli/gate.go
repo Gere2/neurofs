@@ -237,6 +237,7 @@ func runFixtures(repoRoot string, fixtures []gate.Fixture, budget int, noChunks 
 			Budget:        budget,
 			Force:         true, // fresh bundle per fixture; cache hits would defeat the measurement
 			DisableChunks: noChunks,
+			Ledger:        nil, // Explicitly disable session ledger side-effects
 		})
 		if err != nil {
 			results = append(results, gate.FactResult{
