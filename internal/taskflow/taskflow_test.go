@@ -1,6 +1,7 @@
 package taskflow
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -248,6 +249,7 @@ func BuildThing(name string) string {
 		t.Fatalf("write source: %v", err)
 	}
 
+	store := memory.NewSqliteStore(tmp)
 	// First Run (fresh generation)
 	_, err := Run(Opts{
 		RepoRoot:      tmp,
@@ -255,29 +257,27 @@ func BuildThing(name string) string {
 		Budget:        1200,
 		Force:         true,
 		DisableChunks: false,
-		Ledger:        memory.New(memory.NewFileStore(tmp)),
+		Ledger:        memory.New(store),
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
 	// Read ledger
-	ledgerPath := filepath.Join(tmp, ".neurofs", "ledger.jsonl")
-	data, err := os.ReadFile(ledgerPath)
+	entries, err := store.Read(context.Background())
 	if err != nil {
 		t.Fatalf("failed to read ledger: %v", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected 1 entry in ledger, got %d: %q", len(lines), string(data))
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry in ledger, got %d", len(entries))
 	}
 
-	if !strings.Contains(lines[0], "Where is BuildThing?") {
-		t.Errorf("expected query in ledger, got %s", lines[0])
+	if entries[0].Query != "Where is BuildThing?" {
+		t.Errorf("expected query in ledger, got %s", entries[0].Query)
 	}
-	if !strings.Contains(lines[0], "fresh generation") {
-		t.Errorf("expected fresh generation note in ledger, got %s", lines[0])
+	if !strings.Contains(entries[0].Notes, "fresh generation") {
+		t.Errorf("expected fresh generation note in ledger, got %s", entries[0].Notes)
 	}
 
 	// Second Run (cache reused)
@@ -287,22 +287,21 @@ func BuildThing(name string) string {
 		Budget:        1200,
 		Force:         false,
 		DisableChunks: false,
-		Ledger:        memory.New(memory.NewFileStore(tmp)),
+		Ledger:        memory.New(store),
 	})
 	if err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 
-	data2, err := os.ReadFile(ledgerPath)
+	entries2, err := store.Read(context.Background())
 	if err != nil {
 		t.Fatalf("failed to read ledger second time: %v", err)
 	}
 
-	lines2 := strings.Split(strings.TrimSpace(string(data2)), "\n")
-	if len(lines2) != 2 {
-		t.Fatalf("expected 2 entries in ledger, got %d: %q", len(lines2), string(data2))
+	if len(entries2) != 2 {
+		t.Fatalf("expected 2 entries in ledger, got %d", len(entries2))
 	}
-	if !strings.Contains(lines2[1], "cache reused") {
-		t.Errorf("expected cache reused note in second ledger entry, got %s", lines2[1])
+	if !strings.Contains(entries2[1].Notes, "cache reused") {
+		t.Errorf("expected cache reused note in second ledger entry, got %s", entries2[1].Notes)
 	}
 }

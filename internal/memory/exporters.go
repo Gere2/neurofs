@@ -12,12 +12,13 @@ import (
 type TimelineExporter struct{}
 
 func (TimelineExporter) Export(sessionID string, entries []models.LedgerEntry) (string, error) {
+	consolidated := consolidateEntries(entries)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Session Summary (NEUROFS_SESSION.md)\n")
 	fmt.Fprintf(&b, "**Active Session ID**: `%s`\n\n", sessionID)
 
 	fmt.Fprintf(&b, "## Chronological Activity\n")
-	for _, e := range entries {
+	for _, e := range consolidated {
 		tStr := e.Timestamp.Format("2006-01-02 15:04:05")
 		var parts []string
 		if e.Query != "" {
@@ -41,7 +42,7 @@ func (TimelineExporter) Export(sessionID string, entries []models.LedgerEntry) (
 
 	// Collect unique files
 	uniqueFiles := make(map[string]bool)
-	for _, e := range entries {
+	for _, e := range consolidated {
 		for _, f := range e.Files {
 			uniqueFiles[f] = true
 		}
@@ -61,7 +62,7 @@ func (TimelineExporter) Export(sessionID string, entries []models.LedgerEntry) (
 
 	// Collect commands
 	var executedCommands []string
-	for _, e := range entries {
+	for _, e := range consolidated {
 		if e.Command != "" {
 			outcomeStr := ""
 			if e.Outcome != "" {
@@ -84,6 +85,7 @@ func (TimelineExporter) Export(sessionID string, entries []models.LedgerEntry) (
 type AgentsExporter struct{}
 
 func (AgentsExporter) Export(sessionID string, entries []models.LedgerEntry) (string, error) {
+	consolidated := consolidateEntries(entries)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Agent Handoff Context (AGENTS.md)\n")
 	fmt.Fprintf(&b, "**Active Session ID**: `%s`\n\n", sessionID)
@@ -92,8 +94,8 @@ func (AgentsExporter) Export(sessionID string, entries []models.LedgerEntry) (st
 	var lastQuery string
 	var lastOutcome string
 	var lastNotes string
-	for i := len(entries) - 1; i >= 0; i-- {
-		e := entries[i]
+	for i := len(consolidated) - 1; i >= 0; i-- {
+		e := consolidated[i]
 		if lastQuery == "" && e.Query != "" {
 			lastQuery = e.Query
 		}
@@ -119,7 +121,7 @@ func (AgentsExporter) Export(sessionID string, entries []models.LedgerEntry) (st
 
 	// Collect unique files
 	uniqueFiles := make(map[string]bool)
-	for _, e := range entries {
+	for _, e := range consolidated {
 		for _, f := range e.Files {
 			uniqueFiles[f] = true
 		}
@@ -139,7 +141,7 @@ func (AgentsExporter) Export(sessionID string, entries []models.LedgerEntry) (st
 
 	// Commands run
 	var executedCommands []string
-	for _, e := range entries {
+	for _, e := range consolidated {
 		if e.Command != "" {
 			outcomeStr := ""
 			if e.Outcome != "" {
@@ -162,11 +164,12 @@ func (AgentsExporter) Export(sessionID string, entries []models.LedgerEntry) (st
 type MarkdownExporter struct{}
 
 func (MarkdownExporter) Export(sessionID string, entries []models.LedgerEntry) (string, error) {
+	consolidated := consolidateEntries(entries)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Session Ledger Log\n")
 	fmt.Fprintf(&b, "**Active Session ID**: `%s`\n\n", sessionID)
 
-	for _, e := range entries {
+	for _, e := range consolidated {
 		tStr := e.Timestamp.Format("2006-01-02 15:04:05")
 		fmt.Fprintf(&b, "---\n")
 		fmt.Fprintf(&b, "### 📅 %s UTC\n", tStr)
@@ -197,4 +200,42 @@ func (MarkdownExporter) Export(sessionID string, entries []models.LedgerEntry) (
 
 func sanitizeMarkdownCode(s string) string {
 	return strings.ReplaceAll(s, "`", "")
+}
+
+func consolidateEntries(entries []models.LedgerEntry) []models.LedgerEntry {
+	var consolidated []models.LedgerEntry
+	for _, e := range entries {
+		if len(consolidated) > 0 {
+			last := &consolidated[len(consolidated)-1]
+			// Consolidate consecutive duplicate logs having identical Query, Command, and Outcome
+			if last.Query == e.Query && last.Command == e.Command && last.Outcome == e.Outcome {
+				if last.Notes != e.Notes && e.Notes != "" {
+					if last.Notes == "" {
+						last.Notes = e.Notes
+					} else if !strings.Contains(last.Notes, e.Notes) {
+						last.Notes = fmt.Sprintf("%s; %s", last.Notes, e.Notes)
+					}
+				}
+				for _, f := range e.Files {
+					found := false
+					for _, lf := range last.Files {
+						if lf == f {
+							found = true
+							break
+						}
+					}
+					if !found {
+						last.Files = append(last.Files, f)
+					}
+				}
+				continue
+			}
+		}
+		// Copy slice to avoid mutating slice backing arrays
+		filesCopy := make([]string, len(e.Files))
+		copy(filesCopy, e.Files)
+		e.Files = filesCopy
+		consolidated = append(consolidated, e)
+	}
+	return consolidated
 }

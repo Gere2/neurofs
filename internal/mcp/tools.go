@@ -1375,7 +1375,7 @@ func runLogMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		return errResult("at least one of query, command, outcome, notes, or files must be set")
 	}
 
-	m := memory.New(memory.NewFileStore(repo))
+	m := memory.New(memory.NewSqliteStore(repo))
 	err = m.AppendEntry(ctx, entry)
 	if err != nil {
 		return errResult(err.Error())
@@ -1401,7 +1401,7 @@ func runSearchMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResul
 		return errResult(err.Error())
 	}
 
-	m := memory.New(memory.NewFileStore(repo))
+	m := memory.New(memory.NewSqliteStore(repo))
 	results, err := m.SearchEntries(ctx, args.Term)
 	if err != nil {
 		return errResult(err.Error())
@@ -1453,7 +1453,7 @@ func runExportMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResul
 		format = "session_timeline"
 	}
 
-	m := memory.New(memory.NewFileStore(repo))
+	m := memory.New(memory.NewSqliteStore(repo))
 
 	if args.SessionID != "" {
 		os.Setenv("NEUROFS_SESSION_ID", args.SessionID)

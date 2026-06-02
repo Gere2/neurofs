@@ -79,7 +79,7 @@ func newMemoryLogCmd(repoPath *string) *cobra.Command {
 				return fmt.Errorf("at least one of --query, --command, --outcome, --notes, or --files must be set")
 			}
 
-			m := memory.New(memory.NewFileStore(*repoPath))
+			m := memory.New(memory.NewSqliteStore(*repoPath))
 			err := m.AppendEntry(context.Background(), entry)
 			if err != nil {
 				return fmt.Errorf("memory log: %w", err)
@@ -111,7 +111,7 @@ func newMemorySearchCmd(repoPath *string) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			term := args[0]
-			m := memory.New(memory.NewFileStore(*repoPath))
+			m := memory.New(memory.NewSqliteStore(*repoPath))
 			results, err := m.SearchEntries(context.Background(), term)
 			if err != nil {
 				return fmt.Errorf("memory search: %w", err)
@@ -166,7 +166,7 @@ func newMemoryExportCmd(repoPath *string) *cobra.Command {
 			if format == "claude" {
 				format = "session_timeline"
 			}
-			m := memory.New(memory.NewFileStore(*repoPath))
+			m := memory.New(memory.NewSqliteStore(*repoPath))
 			res, err := m.ExportEntries(context.Background(), format)
 			if err != nil {
 				return fmt.Errorf("memory export: %w", err)
@@ -197,10 +197,9 @@ func newMemoryListCmd(repoPath *string) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"show"},
 		Short:   "List all ledger entries in the active session",
-		Long:    `Renders a chronological view of all logged developer events inside the current 8-hour session.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			m := memory.New(memory.NewFileStore(*repoPath))
-			entries, err := memory.NewFileStore(*repoPath).Read(context.Background())
+			m := memory.New(memory.NewSqliteStore(*repoPath))
+			entries, err := memory.NewSqliteStore(*repoPath).Read(context.Background())
 			if err != nil {
 				return fmt.Errorf("read entries: %w", err)
 			}

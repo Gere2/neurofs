@@ -13,7 +13,7 @@ import (
 
 func TestGetSessionID(t *testing.T) {
 	tempDir := t.TempDir()
-	fs := NewFileStore(tempDir)
+	fs := NewSqliteStore(tempDir)
 	ctx := context.Background()
 
 	// 1. Env Var override
@@ -68,7 +68,7 @@ func TestGetSessionID(t *testing.T) {
 
 func TestAppendAndReadEntries(t *testing.T) {
 	tempDir := t.TempDir()
-	fs := NewFileStore(tempDir)
+	fs := NewSqliteStore(tempDir)
 	ctx := context.Background()
 	m := New(fs)
 
@@ -143,7 +143,7 @@ func TestMemStoreSearch(t *testing.T) {
 
 func TestExportEntries(t *testing.T) {
 	tempDir := t.TempDir()
-	fs := NewFileStore(tempDir)
+	fs := NewSqliteStore(tempDir)
 	ctx := context.Background()
 	m := New(fs)
 
@@ -197,7 +197,7 @@ func TestExportEntries(t *testing.T) {
 
 func TestSlidingWindowExpiry(t *testing.T) {
 	tempDir := t.TempDir()
-	fs := NewFileStore(tempDir)
+	fs := NewSqliteStore(tempDir)
 	ctx := context.Background()
 
 	// Get initial session ID

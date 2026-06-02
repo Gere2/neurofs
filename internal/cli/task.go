@@ -97,7 +97,7 @@ Examples:
 				Budget:        budget,
 				Force:         force,
 				DisableChunks: noChunks,
-				Ledger:        memory.New(memory.NewFileStore(repoPath)),
+				Ledger:        memory.New(memory.NewSqliteStore(repoPath)),
 			})
 			if err != nil {
 				return fmt.Errorf("task: %w", err)

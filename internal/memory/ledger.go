@@ -95,32 +95,32 @@ func (m *Manager) ExportEntries(ctx context.Context, format string) (string, err
 	return exporter.Export(sessionID, sessionEntries)
 }
 
-// Compatibility package-level APIs (delegating to FileStore automatically)
+// Compatibility package-level APIs (delegating to SqliteStore automatically)
 // This preserves backwards compatibility for any legacy callers.
 
 func GetSessionID(repoRoot string) string {
-	m := New(NewFileStore(repoRoot))
+	m := New(NewSqliteStore(repoRoot))
 	id, _ := m.GetSessionID(context.Background())
 	return id
 }
 
 func AppendEntry(repoRoot string, entry models.LedgerEntry) error {
-	m := New(NewFileStore(repoRoot))
+	m := New(NewSqliteStore(repoRoot))
 	return m.AppendEntry(context.Background(), entry)
 }
 
 func ReadEntries(repoRoot string) ([]models.LedgerEntry, error) {
-	fs := NewFileStore(repoRoot)
+	fs := NewSqliteStore(repoRoot)
 	return fs.Read(context.Background())
 }
 
 func SearchEntries(repoRoot string, term string) ([]models.LedgerEntry, error) {
-	m := New(NewFileStore(repoRoot))
+	m := New(NewSqliteStore(repoRoot))
 	return m.SearchEntries(context.Background(), term)
 }
 
 func ExportEntries(repoRoot string, format string) (string, error) {
-	m := New(NewFileStore(repoRoot))
+	m := New(NewSqliteStore(repoRoot))
 	if format == "claude" {
 		format = "session_timeline"
 	}
