@@ -1,0 +1,9 @@
+{
+  "question": "How does storage open the database with WAL mode and what parameters are set?",
+  "expects_facts": [
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA busy_timeout",
+    "Open",
+    "sqlite"
+  ]
+}

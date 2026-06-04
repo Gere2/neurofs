@@ -1,0 +1,9 @@
+{
+  "question": "How does the session ledger manage timelines and cognitive histories?",
+  "expects_facts": [
+    "MemStore",
+    "FileStore",
+    "SqliteStore",
+    "Session"
+  ]
+}

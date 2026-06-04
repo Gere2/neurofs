@@ -70,7 +70,7 @@ flow as MCP tools so a host LLM can call NeuroFS directly. The lower-level
 
 ## Installation
 
-**Requirements:** Go 1.22+
+**Requirements:** Go 1.22+ and optionally [ripgrep (rg)](https://github.com/BurntSushi/ripgrep) (highly recommended for fast regex-based retrieval).
 
 ```bash
 # From source

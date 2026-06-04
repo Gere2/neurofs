@@ -1,0 +1,9 @@
+{
+  "question": "What tools does the MCP server expose to the client?",
+  "expects_facts": [
+    "neurofs_context",
+    "neurofs_task",
+    "neurofs_scan",
+    "neurofs_view_file"
+  ]
+}

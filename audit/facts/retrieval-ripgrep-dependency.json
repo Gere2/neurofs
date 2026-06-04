@@ -1,0 +1,9 @@
+{
+  "question": "How does the search retrieval use ripgrep and what is the timeout value?",
+  "expects_facts": [
+    "LookPath",
+    "rg",
+    "exec.CommandContext",
+    "normalizeRGPath"
+  ]
+}
