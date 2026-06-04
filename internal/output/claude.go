@@ -39,9 +39,35 @@ type RepoSummary struct {
 //
 // The summary argument is optional; pass a zero RepoSummary to skip the
 // repo-orientation block entirely.
+// WriteClaude renders a prompt-shaped view of the bundle.
 func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
+	return WriteClaudeWithOptions(w, b, summary, Options{})
+}
+
+// WriteClaudeWithOptions renders a prompt-shaped view of the bundle with options.
+func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, opts Options) error {
 	p := func(format string, args ...any) {
 		fmt.Fprintf(w, format, args...)
+	}
+
+	if opts.Machine {
+		p("<context>\n")
+		for i, frag := range b.Fragments {
+			p("<file path=%q>\n", filepath.ToSlash(frag.RelPath))
+			p("%s\n", strings.TrimRight(frag.Content, "\n"))
+			p("</file>\n")
+			if i < len(b.Fragments)-1 {
+				p("\n")
+			}
+		}
+		p("</context>\n\n")
+
+		p("<task>\n%s\n</task>\n", strings.TrimSpace(b.Query))
+
+		if len(b.Fragments) == 0 {
+			p("\n(no context available — the bundle is empty)\n")
+		}
+		return nil
 	}
 
 	if hasSummary(summary) {

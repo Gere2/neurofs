@@ -8,8 +8,11 @@ import (
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/quality"
+	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
@@ -27,11 +30,13 @@ import (
 // clipboard) goes to stderr and stays out of pipes.
 func newTaskCmd() *cobra.Command {
 	var (
-		repoPath string
-		budget   int
-		force    bool
-		rate     bool
-		noChunks bool
+		repoPath  string
+		budget    int
+		force     bool
+		rate      bool
+		noChunks  bool
+		filesOnly bool
+		machine   bool
 	)
 
 	cmd := &cobra.Command{
@@ -91,6 +96,45 @@ Examples:
 				}
 			}
 
+			// Ensure the index is fresh (auto-scans if empty or older than 24h)
+			if err := taskflow.EnsureFreshIndex(cfg); err != nil {
+				return fmt.Errorf("task: auto-scan: %w", err)
+			}
+
+			if filesOnly {
+				db, err := storage.Open(cfg.DBPath)
+				if err != nil {
+					return fmt.Errorf("task: open index: %w", err)
+				}
+				defer db.Close()
+
+				files, err := db.AllFiles()
+				if err != nil {
+					return fmt.Errorf("task: load index: %w", err)
+				}
+
+				embClient := embeddings.NewClient(cfg.HybridMode)
+				queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
+				fileEmbs, _ := db.AllEmbeddings()
+				rels, _ := db.AllRelations()
+
+				ranked := ranking.RankWithOptions(files, query, ranking.Options{
+					Project:        taskflow.LoadProjectInfo(db),
+					QueryEmbedding: queryEmb,
+					Embeddings:     fileEmbs,
+					Relations:      rels,
+				})
+
+				for _, sf := range ranked {
+					if sf.Score <= 0 {
+						break
+					}
+					reasonsStr := formatReasonsSingleLine(sf.Reasons)
+					fmt.Printf("%s (score=%.2f) - Reasons: %s\n", sf.Record.RelPath, sf.Score, reasonsStr)
+				}
+				return nil
+			}
+
 			result, err := taskflow.Run(taskflow.Opts{
 				RepoRoot:      repoPath,
 				Query:         query,
@@ -98,6 +142,7 @@ Examples:
 				Force:         force,
 				DisableChunks: noChunks,
 				Ledger:        memory.New(memory.NewSqliteStore(repoPath)),
+				Machine:       machine,
 			})
 			if err != nil {
 				return fmt.Errorf("task: %w", err)
@@ -171,6 +216,8 @@ Examples:
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore the cache and regenerate")
 	cmd.Flags().BoolVar(&rate, "rate", false, "After generating, ask y/n + comment and append to .neurofs/quality.jsonl")
 	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the prompt from ranked whole files instead of code chunks")
+	cmd.Flags().BoolVarP(&filesOnly, "files-only", "o", false, "Only list the ranked files and their reasons, without printing the prompt content")
+	cmd.Flags().BoolVar(&machine, "machine", false, "Omit human explanations and scaffolding to save context tokens")
 
 	return cmd
 }

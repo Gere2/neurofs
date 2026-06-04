@@ -238,19 +238,102 @@ func looksLikeSecretFile(base string) bool {
 	return false
 }
 
+// IgnoreMatcher holds rules parsed from .neurofsignore to skip files/directories.
+type IgnoreMatcher struct {
+	patterns []string
+}
+
+// LoadIgnoreMatcher loads patterns from .neurofsignore in the repo root.
+func LoadIgnoreMatcher(repoRoot string) *IgnoreMatcher {
+	data, err := os.ReadFile(filepath.Join(repoRoot, ".neurofsignore"))
+	if err != nil {
+		return &IgnoreMatcher{}
+	}
+	var patterns []string
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Normalize to forward slashes for cross-platform matches
+		patterns = append(patterns, filepath.ToSlash(line))
+	}
+	return &IgnoreMatcher{patterns: patterns}
+}
+
+// Match returns true if the relative path matches any ignore patterns.
+func (m *IgnoreMatcher) Match(relPath string, isDir bool) bool {
+	relPath = filepath.ToSlash(relPath)
+	parts := strings.Split(relPath, "/")
+
+	for _, pat := range m.patterns {
+		isDirPattern := strings.HasSuffix(pat, "/")
+		cleanPat := strings.TrimSuffix(pat, "/")
+
+		if isDirPattern && !isDir {
+			continue
+		}
+
+		// Case 1: Simple pattern with no slashes (e.g., "node_modules", "*_backup")
+		if !strings.Contains(cleanPat, "/") {
+			for _, part := range parts {
+				matched, err := filepath.Match(cleanPat, part)
+				if err == nil && matched {
+					return true
+				}
+			}
+			continue
+		}
+
+		// Case 2: Pattern contains slashes. Match against relative path.
+		hasRootSlash := strings.HasPrefix(cleanPat, "/")
+		matchPat := strings.TrimPrefix(cleanPat, "/")
+
+		if hasRootSlash {
+			matched, err := filepath.Match(matchPat, relPath)
+			if err == nil && matched {
+				return true
+			}
+			if strings.HasPrefix(relPath, matchPat+"/") {
+				return true
+			}
+		} else {
+			if strings.Contains(relPath, matchPat) {
+				idx := strings.Index(relPath, matchPat)
+				if idx >= 0 {
+					leftOk := idx == 0 || relPath[idx-1] == '/'
+					rightOk := idx+len(matchPat) == len(relPath) || relPath[idx+len(matchPat)] == '/'
+					if leftOk && rightOk {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Walk visits every file under root that NeuroFS should index,
-// calling fn for each. It respects the ignore rules in this package
-// using the path-aware ShouldSkipDirAt so that names like "audit" only
-// blanket-skip when they sit at root.
+// calling fn for each. It respects the ignore rules in this package,
+// including .neurofsignore rules.
 func Walk(root string, fn func(path string, info os.FileInfo) error) error {
+	matcher := LoadIgnoreMatcher(root)
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil // skip inaccessible paths
 		}
+		relPath := RelPath(root, path)
 		if info.IsDir() {
+			if relPath != "." && matcher.Match(relPath, true) {
+				return filepath.SkipDir
+			}
 			if ShouldSkipDirAt(root, path) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		if matcher.Match(relPath, false) {
 			return nil
 		}
 		if ShouldSkipFile(path) {

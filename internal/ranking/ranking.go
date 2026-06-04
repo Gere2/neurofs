@@ -213,7 +213,7 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 				score += weightSymbol
 				reasons = append(reasons, models.InclusionReason{
 					Signal: "symbol_match",
-					Detail: sym.Name,
+					Detail: fmt.Sprintf("%s (L%d)", sym.Name, sym.Line),
 					Weight: weightSymbol,
 				})
 				break // one bonus per term per file

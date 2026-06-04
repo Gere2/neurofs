@@ -51,6 +51,7 @@ type Opts struct {
 	Force         bool
 	DisableChunks bool
 	Ledger        LedgerWriter // Optional dependency injection; skips if nil
+	Machine       bool         // New field!
 }
 
 // TopPick is the structured form of each line the CLI prints as
@@ -117,6 +118,9 @@ func Run(opts Opts) (Result, error) {
 	if !opts.DisableChunks {
 		base = "chunks-" + base
 	}
+	if opts.Machine {
+		base = "machine-" + base
+	}
 	promptPath := filepath.Join(taskDir, base+".prompt.txt")
 	bundlePath := filepath.Join(taskDir, base+".bundle.json")
 
@@ -124,7 +128,7 @@ func Run(opts Opts) (Result, error) {
 	if !opts.Force && IsCacheFresh(cfg.DBPath, promptPath, bundlePath) {
 		reused = true
 	} else {
-		if err := generate(cfg, query, opts.Budget, !opts.DisableChunks, promptPath, bundlePath); err != nil {
+		if err := generate(cfg, query, opts.Budget, !opts.DisableChunks, opts.Machine, promptPath, bundlePath); err != nil {
 			return Result{}, fmt.Errorf("taskflow: %w", err)
 		}
 	}
@@ -175,14 +179,33 @@ func Run(opts Opts) (Result, error) {
 }
 
 // needsScan returns true when there is no index file yet, or the file
-// exists but is empty. We do not peek inside — an existing non-empty
-// DB is trusted and autoScan is idempotent anyway.
+// exists but is empty, or the index file is older than 24 hours.
 func needsScan(dbPath string) bool {
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		return true
 	}
-	return info.Size() == 0
+	if info.Size() == 0 {
+		return true
+	}
+	// Trigger scan if index is older than 24 hours
+	if time.Since(info.ModTime()) > 24*time.Hour {
+		return true
+	}
+	return false
+}
+
+// EnsureFreshIndex checks if the index database is missing, empty, or older
+// than 24 hours. If it is, it triggers an incremental scan inline.
+func EnsureFreshIndex(cfg *config.Config) error {
+	if needsScan(cfg.DBPath) {
+		if err := autoScan(cfg); err != nil {
+			return err
+		}
+		now := time.Now()
+		_ = os.Chtimes(cfg.DBPath, now, now)
+	}
+	return nil
 }
 
 // autoScan runs the indexer inline so task is usable in a fresh repo.
@@ -250,7 +273,7 @@ func IsCacheFresh(dbPath, promptPath, bundlePath string) bool {
 // prompt and the bundle JSON. We write to disk first, then the
 // caller re-reads from the file so cache-hit and cache-miss paths
 // share the same return values.
-func generate(cfg *config.Config, query string, budget int, useChunks bool, promptPath, bundlePath string) error {
+func generate(cfg *config.Config, query string, budget int, useChunks bool, useMachine bool, promptPath, bundlePath string) error {
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("open index: %w", err)
@@ -330,7 +353,7 @@ func generate(cfg *config.Config, query string, budget int, useChunks bool, prom
 	if err != nil {
 		return fmt.Errorf("create prompt: %w", err)
 	}
-	if err := output.WriteClaude(pf, bundle, BuildRepoSummary(cfg.RepoRoot, files, info)); err != nil {
+	if err := output.WriteClaudeWithOptions(pf, bundle, BuildRepoSummary(cfg.RepoRoot, files, info), output.Options{Machine: useMachine}); err != nil {
 		pf.Close()
 		return fmt.Errorf("write prompt: %w", err)
 	}

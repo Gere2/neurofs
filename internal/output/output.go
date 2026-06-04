@@ -23,21 +23,27 @@ const (
 	FormatClaude Format = "claude"
 )
 
-// Write serialises bundle to w in the given format. For FormatClaude with
-// no repo summary available, pass a zero RepoSummary to WriteClaude
-// directly; this dispatcher uses an empty one. Unknown formats return an
-// explicit error rather than silently rendering as markdown — the QA
-// agent caught `--format zzz` falling through to markdown unnoticed.
+// Options tunes the output formatting (e.g., machine-oriented minimal output).
+type Options struct {
+	Machine bool
+}
+
+// Write serialises bundle to w in the given format.
 func Write(w io.Writer, bundle models.Bundle, format Format) error {
+	return WriteWithOptions(w, bundle, format, Options{})
+}
+
+// WriteWithOptions serialises bundle to w with configuration options.
+func WriteWithOptions(w io.Writer, bundle models.Bundle, format Format, opts Options) error {
 	switch format {
 	case "", FormatMarkdown:
-		return writeMarkdown(w, bundle)
+		return writeMarkdown(w, bundle, opts)
 	case FormatJSON:
-		return writeJSON(w, bundle)
+		return writeJSON(w, bundle, opts)
 	case FormatText:
-		return writeText(w, bundle)
+		return writeText(w, bundle, opts)
 	case FormatClaude:
-		return WriteClaude(w, bundle, RepoSummary{})
+		return WriteClaudeWithOptions(w, bundle, RepoSummary{}, opts)
 	default:
 		return fmt.Errorf("output: unknown format %q (want one of: markdown, json, text, claude)", format)
 	}
@@ -45,9 +51,24 @@ func Write(w io.Writer, bundle models.Bundle, format Format) error {
 
 // ─── Markdown ────────────────────────────────────────────────────────────────
 
-func writeMarkdown(w io.Writer, b models.Bundle) error {
+func writeMarkdown(w io.Writer, b models.Bundle, opts Options) error {
 	p := func(format string, args ...any) {
 		fmt.Fprintf(w, format, args...)
+	}
+
+	if opts.Machine {
+		for i, frag := range b.Fragments {
+			p("## `%s`\n\n", frag.RelPath)
+			lang := langFence(frag.Lang)
+			p("```%s\n%s\n```\n\n", lang, strings.TrimRight(frag.Content, "\n"))
+			if i < len(b.Fragments)-1 {
+				p("---\n\n")
+			}
+		}
+		if len(b.Fragments) == 0 {
+			p("_No relevant context found._\n")
+		}
+		return nil
 	}
 
 	p("# NeuroFS Context Bundle\n\n")
@@ -72,7 +93,6 @@ func writeMarkdown(w io.Writer, b models.Bundle) error {
 
 		if len(frag.Reasons) > 0 {
 			p("**Included because:**\n")
-			// De-duplicate reasons by signal+detail before printing.
 			seen := make(map[string]bool)
 			for _, r := range frag.Reasons {
 				key := r.Signal + ":" + r.Detail
@@ -102,7 +122,7 @@ func writeMarkdown(w io.Writer, b models.Bundle) error {
 
 // ─── JSON ────────────────────────────────────────────────────────────────────
 
-func writeJSON(w io.Writer, b models.Bundle) error {
+func writeJSON(w io.Writer, b models.Bundle, opts Options) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(b)
@@ -110,9 +130,20 @@ func writeJSON(w io.Writer, b models.Bundle) error {
 
 // ─── Plain text ──────────────────────────────────────────────────────────────
 
-func writeText(w io.Writer, b models.Bundle) error {
+func writeText(w io.Writer, b models.Bundle, opts Options) error {
 	p := func(format string, args ...any) {
 		fmt.Fprintf(w, format, args...)
+	}
+
+	if opts.Machine {
+		for _, frag := range b.Fragments {
+			p("%s\n", frag.RelPath)
+			p("%s\n\n", frag.Content)
+		}
+		if len(b.Fragments) == 0 {
+			p("No relevant context found.\n")
+		}
+		return nil
 	}
 
 	p("NEUROFS CONTEXT BUNDLE\n")

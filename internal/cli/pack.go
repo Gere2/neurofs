@@ -32,6 +32,7 @@ func newPackCmd() *cobra.Command {
 		stripComments   bool
 		stripBlankLines bool
 		noChunks        bool
+		machine         bool
 	)
 
 	cmd := &cobra.Command{
@@ -155,7 +156,7 @@ Examples:
 			}
 			defer dest.Close()
 
-			if err := writeBundle(cfg.RepoRoot, dest, bundle, format, forTarget, files, info); err != nil {
+			if err := writeBundle(cfg.RepoRoot, dest, bundle, format, forTarget, files, info, machine); err != nil {
 				return fmt.Errorf("pack: write: %w", err)
 			}
 
@@ -194,6 +195,7 @@ Examples:
 	cmd.Flags().BoolVar(&stripComments, "strip-comments", false, "Strip all comments from source files to optimize token budget")
 	cmd.Flags().BoolVar(&stripBlankLines, "strip-blank-lines", false, "Strip all blank lines from source files to optimize token budget")
 	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the bundle from ranked whole files instead of code chunks")
+	cmd.Flags().BoolVar(&machine, "machine", false, "Omit human explanations and scaffolding to save context tokens")
 	_ = cmd.MarkFlagRequired("out")
 
 	return cmd
@@ -226,12 +228,12 @@ func chunkHitsFromSearch(searchRes retrieval.Response, files []models.FileRecord
 // writeBundle dispatches to the correct serialiser. The Claude path takes a
 // RepoSummary derived from the already-loaded index, so the prompt gets
 // repo orientation for free without another DB query.
-func writeBundle(repoRoot string, dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info) error {
+func writeBundle(repoRoot string, dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info, machine bool) error {
 	eff := effectiveFormat(format, forTarget)
 	if eff == string(output.FormatClaude) {
-		return output.WriteClaude(dest, b, taskflow.BuildRepoSummary(repoRoot, files, info))
+		return output.WriteClaudeWithOptions(dest, b, taskflow.BuildRepoSummary(repoRoot, files, info), output.Options{Machine: machine})
 	}
-	return output.Write(dest, b, output.Format(eff))
+	return output.WriteWithOptions(dest, b, output.Format(eff), output.Options{Machine: machine})
 }
 
 // effectiveFormat collapses --format and --for into a single value. --for

@@ -14,15 +14,18 @@ import (
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
 func newAskCmd() *cobra.Command {
 	var (
-		budget   int
-		repoPath string
-		format   string
-		explain  bool
+		budget    int
+		repoPath  string
+		format    string
+		explain   bool
+		filesOnly bool
+		machine   bool
 	)
 
 	cmd := &cobra.Command{
@@ -52,19 +55,16 @@ Run 'neurofs scan' first to build the index.`,
 				return fmt.Errorf("ask: config: %w", err)
 			}
 
+			// Ensure the index is fresh (auto-scans if empty or older than 24h)
+			if err := taskflow.EnsureFreshIndex(cfg); err != nil {
+				return fmt.Errorf("ask: auto-scan: %w", err)
+			}
+
 			db, err := storage.Open(cfg.DBPath)
 			if err != nil {
-				return fmt.Errorf("ask: open index (did you run 'neurofs scan'?): %w", err)
+				return fmt.Errorf("ask: open index: %w", err)
 			}
 			defer db.Close()
-
-			count, err := db.FileCount()
-			if err != nil {
-				return fmt.Errorf("ask: %w", err)
-			}
-			if count == 0 {
-				return fmt.Errorf("ask: index is empty — run 'neurofs scan' first")
-			}
 
 			files, err := db.AllFiles()
 			if err != nil {
@@ -88,15 +88,21 @@ Run 'neurofs scan' first to build the index.`,
 				Relations:      rels,
 			})
 
+			if filesOnly {
+				for _, sf := range ranked {
+					if sf.Score <= 0 {
+						break
+					}
+					reasonsStr := formatReasonsSingleLine(sf.Reasons)
+					fmt.Printf("%s (score=%.2f) - Reasons: %s\n", sf.Record.RelPath, sf.Score, reasonsStr)
+				}
+				return nil
+			}
+
 			bundle, err := packager.Pack(ranked, query, packager.Options{
-				Budget: budget,
-				// ask is the inspection surface — slack-fill never hurts
-				// readability and prevents the "10 % budget used" surprise.
+				Budget:           budget,
 				UpgradeWithSlack: true,
-				// Excerpts on top-ranked TS/JS/Python files when the query
-				// names symbols. ask shows representations explicitly so
-				// the new "excerpt" rep is visible in the breakdown.
-				QueryTerms: ranking.Tokenise(query),
+				QueryTerms:       ranking.Tokenise(query),
 			})
 			if err != nil {
 				return fmt.Errorf("ask: pack: %w", err)
@@ -137,7 +143,7 @@ Run 'neurofs scan' first to build the index.`,
 			fmt.Fprintf(os.Stderr, "\n")
 
 			// Write bundle to stdout.
-			return output.Write(os.Stdout, bundle, output.Format(format))
+			return output.WriteWithOptions(os.Stdout, bundle, output.Format(format), output.Options{Machine: machine})
 		},
 	}
 
@@ -145,6 +151,8 @@ Run 'neurofs scan' first to build the index.`,
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (defaults to current directory)")
 	cmd.Flags().StringVar(&format, "format", "markdown", "Output format: markdown | json | text")
 	cmd.Flags().BoolVar(&explain, "explain", false, "Print the full scoring table (tokens, signals, per-file breakdown)")
+	cmd.Flags().BoolVarP(&filesOnly, "files-only", "o", false, "Only list the ranked files and their reasons, without printing the bundle/prompt content")
+	cmd.Flags().BoolVar(&machine, "machine", false, "Omit human explanations and scaffolding to save context tokens")
 
 	return cmd
 }
@@ -225,4 +233,25 @@ func truncate(s string, n int) string {
 		return s[:n]
 	}
 	return s[:n-3] + "..."
+}
+
+func formatReasonsSingleLine(reasons []models.InclusionReason) string {
+	if len(reasons) == 0 {
+		return "no signals fired"
+	}
+	type key struct{ signal, detail string }
+	agg := make(map[key]float64)
+	var order []key
+	for _, r := range reasons {
+		k := key{r.Signal, r.Detail}
+		if _, ok := agg[k]; !ok {
+			order = append(order, k)
+		}
+		agg[k] += r.Weight
+	}
+	var parts []string
+	for _, k := range order {
+		parts = append(parts, fmt.Sprintf("%s: %s (+%.1f)", k.signal, k.detail, agg[k]))
+	}
+	return strings.Join(parts, ", ")
 }

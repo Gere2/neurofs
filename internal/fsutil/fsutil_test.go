@@ -1,6 +1,7 @@
 package fsutil_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -157,3 +158,45 @@ func TestCountLines(t *testing.T) {
 		}
 	}
 }
+
+func TestIgnoreMatcher(t *testing.T) {
+	tempDir := t.TempDir()
+
+	ignoreContent := `
+# ignore pos backup and next
+*_backup/
+.next
+apps/noise.py
+`
+	err := os.WriteFile(filepath.Join(tempDir, ".neurofsignore"), []byte(ignoreContent), 0o644)
+	if err != nil {
+		t.Fatalf("failed to write ignore file: %v", err)
+	}
+
+	matcher := fsutil.LoadIgnoreMatcher(tempDir)
+
+	// Test directory patterns
+	if !matcher.Match("pos_v0_backup", true) {
+		t.Error("expected pos_v0_backup directory to match")
+	}
+	if matcher.Match("pos_v0_backup", false) {
+		t.Error("expected pos_v0_backup file not to match (directory-only pattern)")
+	}
+
+	// Test simple patterns
+	if !matcher.Match(".next", true) {
+		t.Error("expected .next directory to match")
+	}
+	if !matcher.Match(".next", false) {
+		t.Error("expected .next file to match")
+	}
+
+	// Test slash patterns
+	if !matcher.Match("apps/noise.py", false) {
+		t.Error("expected apps/noise.py to match")
+	}
+	if matcher.Match("other/noise.py", false) {
+		t.Error("expected other/noise.py NOT to match")
+	}
+}
+

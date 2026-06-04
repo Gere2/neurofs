@@ -242,3 +242,77 @@ func TestWriteClaudeGitStatusAndDiff(t *testing.T) {
 		t.Errorf("expected <git_diff> tags with content, got:\n%s", got)
 	}
 }
+
+func TestMachineOutput(t *testing.T) {
+	b := models.Bundle{
+		Query:  "why does ranking pick utils.py",
+		Budget: 3000,
+		Fragments: []models.ContextFragment{{
+			RelPath:        "internal/ranking/ranking.go",
+			Lang:           models.LangGo,
+			Representation: models.RepSignature,
+			Tokens:         42,
+			Content:        "func Rank(files, query) []ScoredFile",
+		}},
+	}
+	summary := output.RepoSummary{
+		Name:    "neurofs",
+		Files:   42,
+		Symbols: 200,
+	}
+
+	t.Run("Claude Machine Mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := output.WriteClaudeWithOptions(&buf, b, summary, output.Options{Machine: true})
+		if err != nil {
+			t.Fatalf("WriteClaudeWithOptions: %v", err)
+		}
+		got := buf.String()
+
+		// Under machine mode, <repo> and <instructions> and human scaffolding should be omitted.
+		if strings.Contains(got, "<repo>") || strings.Contains(got, "<instructions>") {
+			t.Errorf("expected machine mode to omit <repo>/<instructions>, got:\n%s", got)
+		}
+		// But it must contain the minimized context and task
+		if !strings.Contains(got, `<file path="internal/ranking/ranking.go">`) {
+			t.Errorf("missing path tag, got:\n%s", got)
+		}
+		if !strings.Contains(got, "func Rank(files, query) []ScoredFile") {
+			t.Errorf("missing content, got:\n%s", got)
+		}
+		if !strings.Contains(got, "<task>\nwhy does ranking pick utils.py\n</task>") {
+			t.Errorf("missing task tags/query, got:\n%s", got)
+		}
+	})
+
+	t.Run("Markdown Machine Mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := output.WriteWithOptions(&buf, b, output.FormatMarkdown, output.Options{Machine: true})
+		if err != nil {
+			t.Fatalf("WriteWithOptions: %v", err)
+		}
+		got := buf.String()
+
+		if !strings.Contains(got, "## `internal/ranking/ranking.go`\n\n```go\nfunc Rank(files, query) []ScoredFile\n```") {
+			t.Errorf("unexpected markdown machine output shape, got:\n%s", got)
+		}
+		if strings.Contains(got, "# NeuroFS Context Bundle") {
+			t.Errorf("markdown machine output should omit header, got:\n%s", got)
+		}
+	})
+
+	t.Run("Text Machine Mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		err := output.WriteWithOptions(&buf, b, output.FormatText, output.Options{Machine: true})
+		if err != nil {
+			t.Fatalf("WriteWithOptions: %v", err)
+		}
+		got := buf.String()
+
+		expected := "internal/ranking/ranking.go\nfunc Rank(files, query) []ScoredFile\n\n"
+		if got != expected {
+			t.Errorf("expected text machine output to be %q, got %q", expected, got)
+		}
+	})
+}
+

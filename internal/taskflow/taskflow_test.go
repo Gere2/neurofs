@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 )
@@ -305,3 +306,73 @@ func BuildThing(name string) string {
 		t.Errorf("expected cache reused note in second ledger entry, got %s", entries2[1].Notes)
 	}
 }
+
+func TestEnsureFreshIndex(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+
+	// Create a dummy go.mod so that the scanner has something to do and doesn't skip
+	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), []byte("module example.com/freshindex\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte("package main\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	dbPath := filepath.Join(tmp, "index.db")
+	cfg := &config.Config{
+		RepoRoot: tmp,
+		DBPath:   dbPath,
+		Budget:   8000,
+	}
+
+	// 1. Initial run: DB doesn't exist, EnsureFreshIndex must scan and create it.
+	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
+		t.Fatalf("db should not exist yet")
+	}
+
+	err := EnsureFreshIndex(cfg)
+	if err != nil {
+		t.Fatalf("EnsureFreshIndex failed: %v", err)
+	}
+
+	stat, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("db was not created: %v", err)
+	}
+	initialMtime := stat.ModTime()
+
+	// 2. Second run: DB exists and is fresh, EnsureFreshIndex should do nothing (no re-scan).
+	err = EnsureFreshIndex(cfg)
+	if err != nil {
+		t.Fatalf("EnsureFreshIndex failed on second run: %v", err)
+	}
+
+	stat, err = os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("db disappeared: %v", err)
+	}
+	if stat.ModTime() != initialMtime {
+		t.Errorf("expected DB mtime to remain unchanged when fresh")
+	}
+
+	// 3. Stale index run: modify mtime of DB to be older than 24 hours. EnsureFreshIndex should re-scan.
+	staleTime := time.Now().Add(-25 * time.Hour)
+	if err := os.Chtimes(dbPath, staleTime, staleTime); err != nil {
+		t.Fatalf("failed to change mtime: %v", err)
+	}
+
+	err = EnsureFreshIndex(cfg)
+	if err != nil {
+		t.Fatalf("EnsureFreshIndex failed on stale run: %v", err)
+	}
+
+	stat, err = os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("db disappeared: %v", err)
+	}
+	if stat.ModTime().Before(time.Now().Add(-1 * time.Minute)) {
+		t.Errorf("expected DB to be re-scanned, but mtime remains stale: %v", stat.ModTime())
+	}
+}
+
