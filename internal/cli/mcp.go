@@ -17,7 +17,7 @@ import (
 func newMcpCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "mcp",
-		Short: "Run an MCP server over stdio (exposes 11 neurofs_* tools)",
+		Short: "Run an MCP server over stdio (exposes 12 neurofs_* tools)",
 		Long: `mcp starts a Model Context Protocol server speaking JSON-RPC 2.0
 on stdin/stdout. It exposes these tools:
 
@@ -33,6 +33,7 @@ on stdin/stdout. It exposes these tools:
   neurofs_log_memory       — log an entry to the session ledger
   neurofs_search_memory    — search the local session memory ledger
   neurofs_export_memory    — export the session log in various formats
+  neurofs_prune_memory     — prune old task session memory ledger entries
 
 Wire it into any MCP host by configuring it as a stdio server that runs
 ` + "`neurofs mcp`" + `. Stdout is reserved for protocol traffic; logs go to stderr.`,

@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"time"
+
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/spf13/cobra"
@@ -39,6 +41,7 @@ under .neurofs/ledger.jsonl, and supports context exports for external AI agents
 	cmd.AddCommand(newMemorySearchCmd(&repoPath))
 	cmd.AddCommand(newMemoryExportCmd(&repoPath))
 	cmd.AddCommand(newMemoryListCmd(&repoPath))
+	cmd.AddCommand(newMemoryPruneCmd(&repoPath))
 
 	return cmd
 }
@@ -154,8 +157,9 @@ func newMemorySearchCmd(repoPath *string) *cobra.Command {
 
 func newMemoryExportCmd(repoPath *string) *cobra.Command {
 	var (
-		format  string
-		outPath string
+		format    string
+		outPath   string
+		sessionID string
 	)
 
 	cmd := &cobra.Command{
@@ -167,7 +171,7 @@ func newMemoryExportCmd(repoPath *string) *cobra.Command {
 				format = "session_timeline"
 			}
 			m := memory.New(memory.NewSqliteStore(*repoPath))
-			res, err := m.ExportEntries(context.Background(), format)
+			res, err := m.ExportEntries(context.Background(), sessionID, format)
 			if err != nil {
 				return fmt.Errorf("memory export: %w", err)
 			}
@@ -188,60 +192,96 @@ func newMemoryExportCmd(repoPath *string) *cobra.Command {
 
 	cmd.Flags().StringVar(&format, "format", "session_timeline", "Export format: session_timeline (NEUROFS_SESSION.md), agents (AGENTS.md), or markdown")
 	cmd.Flags().StringVar(&outPath, "out", "", "File path to write the output to (stdout if empty)")
+	cmd.Flags().StringVar(&sessionID, "session", "", "Session ID to export (defaults to active session)")
 
 	return cmd
 }
 
 func newMemoryListCmd(repoPath *string) *cobra.Command {
+	var targetSessionID string
+
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"show"},
 		Short:   "List all ledger entries in the active session",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := memory.New(memory.NewSqliteStore(*repoPath))
-			entries, err := memory.NewSqliteStore(*repoPath).Read(context.Background())
+			sessionID := targetSessionID
+			if sessionID == "" {
+				var err error
+				sessionID, err = m.GetSessionID(context.Background())
+				if err != nil {
+					return fmt.Errorf("resolve session: %w", err)
+				}
+			}
+
+			entries, err := memory.NewSqliteStore(*repoPath).Read(context.Background(), sessionID)
 			if err != nil {
 				return fmt.Errorf("read entries: %w", err)
 			}
 
-			sessionID, err := m.GetSessionID(context.Background())
-			if err != nil {
-				return fmt.Errorf("resolve session: %w", err)
-			}
-
 			found := false
 			for _, e := range entries {
-				if e.SessionID == sessionID {
-					found = true
-					tStr := e.Timestamp.Format("2006-01-02 15:04:05")
-					fmt.Fprintf(cmd.OutOrStdout(), "--- [%s] ---\n", tStr)
-					if e.Query != "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Query:   %s\n", e.Query)
-					}
-					if e.BundleHash != "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Bundle:  %s\n", e.BundleHash)
-					}
-					if len(e.Files) > 0 {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Files:   %s\n", strings.Join(e.Files, ", "))
-					}
-					if e.Command != "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Command: %s\n", e.Command)
-					}
-					if e.Outcome != "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Outcome: %s\n", e.Outcome)
-					}
-					if e.Notes != "" {
-						fmt.Fprintf(cmd.OutOrStdout(), "  Notes:   %s\n", e.Notes)
-					}
+				found = true
+				tStr := e.Timestamp.Format("2006-01-02 15:04:05")
+				fmt.Fprintf(cmd.OutOrStdout(), "--- [%s] ---\n", tStr)
+				if e.Query != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Query:   %s\n", e.Query)
+				}
+				if e.BundleHash != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Bundle:  %s\n", e.BundleHash)
+				}
+				if len(e.Files) > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Files:   %s\n", strings.Join(e.Files, ", "))
+				}
+				if e.Command != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Command: %s\n", e.Command)
+				}
+				if e.Outcome != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Outcome: %s\n", e.Outcome)
+				}
+				if e.Notes != "" {
+					fmt.Fprintf(cmd.OutOrStdout(), "  Notes:   %s\n", e.Notes)
 				}
 			}
 
 			if !found {
-				fmt.Fprintf(cmd.OutOrStdout(), "No entries found for active session ID: %s\n", sessionID)
+				fmt.Fprintf(cmd.OutOrStdout(), "No entries found for session ID: %s\n", sessionID)
 			}
 			return nil
 		},
 	}
 
+	cmd.Flags().StringVar(&targetSessionID, "session", "", "Filter entries by session ID (defaults to active session)")
+
+	return cmd
+}
+
+func newMemoryPruneCmd(repoPath *string) *cobra.Command {
+	var days int
+
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Prune old session ledger entries to reclaim space",
+		Long:  `Deletes entries older than the specified number of days from the session ledger and vacuums the database.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if days <= 0 {
+				return fmt.Errorf("--days must be a positive integer")
+			}
+
+			m := memory.New(memory.NewSqliteStore(*repoPath))
+			olderThan := time.Duration(days) * 24 * time.Hour
+
+			count, err := m.Prune(context.Background(), olderThan)
+			if err != nil {
+				return fmt.Errorf("memory prune: %w", err)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Successfully pruned %d entries older than %d days.\n", count, days)
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&days, "days", 30, "Prune entries older than this many days")
 	return cmd
 }

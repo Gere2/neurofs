@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"time"
 
 	"github.com/neuromfs/neuromfs/internal/models"
 )
@@ -11,8 +12,9 @@ type Store interface {
 	GetSessionID(ctx context.Context) (string, error)
 	SaveSessionID(ctx context.Context, id string) error
 	Append(ctx context.Context, entry models.LedgerEntry) error
-	Read(ctx context.Context) ([]models.LedgerEntry, error)
+	Read(ctx context.Context, sessionID string) ([]models.LedgerEntry, error)
 	Search(ctx context.Context, term string) ([]models.LedgerEntry, error)
+	Prune(ctx context.Context, olderThan time.Duration) (int64, error)
 }
 
 // Exporter formats session ledger entries into a portable file representation.

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -169,22 +170,31 @@ func (s *SqliteStore) Append(ctx context.Context, entry models.LedgerEntry) erro
 	if err != nil {
 		return fmt.Errorf("insert ledger entry: %w", err)
 	}
+
+	s.checkAutoPrune(ctx)
 	return nil
 }
 
-// Read parses all entries from SQLite.
-func (s *SqliteStore) Read(ctx context.Context) ([]models.LedgerEntry, error) {
+// Read parses entries from SQLite, optionally filtered by sessionID.
+func (s *SqliteStore) Read(ctx context.Context, sessionID string) ([]models.LedgerEntry, error) {
 	db, err := s.openDB(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	rows, err := db.QueryContext(ctx, `
+	query := `
 		SELECT timestamp, session_id, query, bundle_hash, files, command, outcome, notes
 		FROM session_ledger
-		ORDER BY timestamp ASC
-	`)
+	`
+	var args []any
+	if sessionID != "" {
+		query += " WHERE session_id = ?"
+		args = append(args, sessionID)
+	}
+	query += " ORDER BY timestamp ASC"
+
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query ledger entries: %w", err)
 	}
@@ -231,7 +241,7 @@ func (s *SqliteStore) Search(ctx context.Context, term string) ([]models.LedgerE
 
 	term = strings.ToLower(strings.TrimSpace(term))
 	if term == "" {
-		return s.Read(ctx)
+		return s.Read(ctx, "")
 	}
 
 	likeTerm := "%" + term + "%"
@@ -280,4 +290,52 @@ func (s *SqliteStore) Search(ctx context.Context, term string) ([]models.LedgerE
 		entries = append(entries, entry)
 	}
 	return entries, rows.Err()
+}
+
+// Prune removes entries older than olderThan from SQLite and runs VACUUM.
+func (s *SqliteStore) Prune(ctx context.Context, olderThan time.Duration) (int64, error) {
+	db, err := s.openDB(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer db.Close()
+
+	cutoff := time.Now().Add(-olderThan).UTC().Format(time.RFC3339)
+	res, err := db.ExecContext(ctx, `
+		DELETE FROM session_ledger
+		WHERE timestamp < ?
+	`, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("delete old ledger entries: %w", err)
+	}
+
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("get rows affected: %w", err)
+	}
+
+	if rowsAffected > 0 {
+		_, _ = db.ExecContext(ctx, "VACUUM")
+	}
+
+	return rowsAffected, nil
+}
+
+// checkAutoPrune performs a non-blocking background check for pruning logs older than 30 days.
+func (s *SqliteStore) checkAutoPrune(ctx context.Context) {
+	if flag.Lookup("test.v") != nil {
+		return
+	}
+	pruneFile := filepath.Join(s.repoRoot, ".neurofs", "last_prune_sqlite.txt")
+	if info, err := os.Stat(pruneFile); err == nil {
+		if time.Since(info.ModTime()) < 24*time.Hour {
+			return
+		}
+	}
+
+	go func() {
+		_, _ = s.Prune(context.Background(), 30*24*time.Hour)
+		_ = os.MkdirAll(filepath.Dir(pruneFile), 0755)
+		_ = os.WriteFile(pruneFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+	}()
 }

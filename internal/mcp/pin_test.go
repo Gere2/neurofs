@@ -125,3 +125,52 @@ func TestPinned_ViewFileRejectsForeignRepoEndToEnd(t *testing.T) {
 		t.Fatal("server did not exit after ctx cancel")
 	}
 }
+
+// TestPinned_SearchRejectsForeignRepoEndToEnd verifies that
+// a malicious search call targeting /etc is rejected when the server is pinned.
+func TestPinned_SearchRejectsForeignRepoEndToEnd(t *testing.T) {
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+
+	srv := NewServer(inR, outW, io.Discard, "test")
+	pinned := t.TempDir()
+	srv.SetRepoRoot(pinned)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		err := srv.Run(ctx)
+		outW.Close()
+		done <- err
+	}()
+
+	go func() {
+		defer inW.Close()
+		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neurofs_search","arguments":{"repo":"/etc","query":"passwd"}}}` + "\n"))
+	}()
+
+	var resp Response
+	if err := json.NewDecoder(outR).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error != nil {
+		t.Fatalf("call-level jsonrpc error (want tool-level isError): %+v", resp.Error)
+	}
+	var result ToolCallResult
+	mustReencode(t, resp.Result, &result)
+	if !result.IsError {
+		t.Fatalf("attacker repo=/etc must be refused with IsError=true; got %+v", result)
+	}
+	if len(result.Content) == 0 || !strings.Contains(result.Content[0].Text, "pinned") {
+		t.Fatalf("error must explain pin; got %+v", result.Content)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not exit after ctx cancel")
+	}
+}

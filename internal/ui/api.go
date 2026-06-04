@@ -121,6 +121,20 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+var (
+	pinnedRepo    string
+	sandboxActive bool
+)
+
+func sameDir(a, b string) bool {
+	aa, err1 := filepath.EvalSymlinks(a)
+	bb, err2 := filepath.EvalSymlinks(b)
+	if err1 == nil && err2 == nil {
+		return filepath.Clean(aa) == filepath.Clean(bb)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
 // mustRepo validates the repo path and returns a Config. Empty or relative
 // paths are rejected so we never accidentally operate against the server's
 // own working directory — this is a local tool, but still a web surface.
@@ -133,6 +147,13 @@ func mustRepo(w http.ResponseWriter, repo string) (*config.Config, bool) {
 	if !filepath.IsAbs(repo) {
 		writeErr(w, http.StatusBadRequest, "repo must be an absolute path")
 		return nil, false
+	}
+	if sandboxActive && pinnedRepo != "" {
+		absRepo, err := filepath.Abs(repo)
+		if err != nil || !sameDir(absRepo, pinnedRepo) {
+			writeErr(w, http.StatusForbidden, fmt.Sprintf("access denied: server is sandboxed to %q", pinnedRepo))
+			return nil, false
+		}
 	}
 	cfg, err := config.New(repo)
 	if err != nil {

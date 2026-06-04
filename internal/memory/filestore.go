@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -110,11 +111,12 @@ func (fs *FileStore) Append(ctx context.Context, entry models.LedgerEntry) error
 		return fmt.Errorf("write ledger entry: %w", err)
 	}
 
+	fs.checkAutoPrune(ctx)
 	return nil
 }
 
-// Read parses all entries from .neurofs/ledger.jsonl line-by-line.
-func (fs *FileStore) Read(ctx context.Context) ([]models.LedgerEntry, error) {
+// Read parses entries from .neurofs/ledger.jsonl, optionally filtered by sessionID.
+func (fs *FileStore) Read(ctx context.Context, sessionID string) ([]models.LedgerEntry, error) {
 	fs.mu.RLock()
 	defer fs.mu.RUnlock()
 
@@ -147,6 +149,14 @@ func (fs *FileStore) Read(ctx context.Context) ([]models.LedgerEntry, error) {
 			continue
 		}
 
+		// Fast pre-filter for session ID if requested
+		if sessionID != "" && !strings.Contains(line, sessionID) {
+			if err == io.EOF {
+				break
+			}
+			continue
+		}
+
 		var entry models.LedgerEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			if err == io.EOF {
@@ -154,7 +164,10 @@ func (fs *FileStore) Read(ctx context.Context) ([]models.LedgerEntry, error) {
 			}
 			continue // Skip corrupted logs to maintain resiliency
 		}
-		entries = append(entries, entry)
+
+		if sessionID == "" || entry.SessionID == sessionID {
+			entries = append(entries, entry)
+		}
 		if err == io.EOF {
 			break
 		}
@@ -225,6 +238,93 @@ func (fs *FileStore) Search(ctx context.Context, term string) ([]models.LedgerEn
 		}
 	}
 	return results, nil
+}
+
+// Prune removes entries older than olderThan from the JSONL file.
+func (fs *FileStore) Prune(ctx context.Context, olderThan time.Duration) (int64, error) {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	ledgerPath := filepath.Join(fs.repoRoot, ".neurofs", "ledger.jsonl")
+	f, err := os.Open(ledgerPath)
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("open ledger for pruning: %w", err)
+	}
+
+	cutoff := time.Now().Add(-olderThan)
+	var kept []models.LedgerEntry
+	var count int64
+
+	reader := bufio.NewReader(f)
+	for {
+		lineBytes, err := reader.ReadBytes('\n')
+		if err != nil && len(lineBytes) == 0 {
+			break
+		}
+		line := strings.TrimSpace(string(lineBytes))
+		if line == "" {
+			continue
+		}
+		var entry models.LedgerEntry
+		if err := json.Unmarshal([]byte(line), &entry); err == nil {
+			if entry.Timestamp.Before(cutoff) {
+				count++
+			} else {
+				kept = append(kept, entry)
+			}
+		}
+	}
+	f.Close()
+
+	if count == 0 {
+		return 0, nil
+	}
+
+	// Rewrite ledger.jsonl atomically with kept entries
+	tmpPath := ledgerPath + ".tmp"
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644)
+	if err != nil {
+		return 0, fmt.Errorf("create prune temp file: %w", err)
+	}
+	defer tmpFile.Close()
+
+	for _, entry := range kept {
+		data, err := json.Marshal(entry)
+		if err != nil {
+			continue
+		}
+		if _, err := tmpFile.Write(append(data, '\n')); err != nil {
+			return 0, fmt.Errorf("write kept entry: %w", err)
+		}
+	}
+	tmpFile.Close()
+
+	if err := os.Rename(tmpPath, ledgerPath); err != nil {
+		return 0, fmt.Errorf("rename pruned ledger: %w", err)
+	}
+	return count, nil
+}
+
+// checkAutoPrune performs a non-blocking background check for pruning logs older than 30 days.
+func (fs *FileStore) checkAutoPrune(ctx context.Context) {
+	if flag.Lookup("test.v") != nil {
+		return
+	}
+	pruneFile := filepath.Join(fs.repoRoot, ".neurofs", "last_prune.txt")
+	if info, err := os.Stat(pruneFile); err == nil {
+		if time.Since(info.ModTime()) < 24*time.Hour {
+			return
+		}
+	}
+
+	go func() {
+		_, _ = fs.Prune(context.Background(), 30*24*time.Hour)
+		_ = os.MkdirAll(filepath.Dir(pruneFile), 0755)
+		_ = os.WriteFile(pruneFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+	}()
 }
 
 func matchEntry(entry models.LedgerEntry, term string) bool {

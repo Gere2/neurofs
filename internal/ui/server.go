@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"time"
 )
@@ -24,6 +25,8 @@ var startupDir string
 type Options struct {
 	Addr        string
 	OpenBrowser bool
+	RepoRoot    string
+	Sandbox     bool
 }
 
 // Run starts the local UI server and blocks until the process is interrupted
@@ -36,6 +39,18 @@ type Options struct {
 func Run(opts Options) error {
 	if opts.Addr == "" {
 		opts.Addr = "127.0.0.1:7777"
+	}
+
+	if opts.Sandbox {
+		sandboxActive = true
+		if abs, err := filepath.Abs(opts.RepoRoot); err == nil {
+			pinnedRepo = abs
+		} else {
+			pinnedRepo = opts.RepoRoot
+		}
+	} else {
+		sandboxActive = false
+		pinnedRepo = ""
 	}
 
 	// Capture cwd once at startup. Later os.Chdir calls (none today, but
@@ -131,6 +146,18 @@ func buildMux(addr string) (*http.ServeMux, error) {
 func RunProxy(opts Options) error {
 	if opts.Addr == "" {
 		opts.Addr = "127.0.0.1:7777"
+	}
+
+	if opts.Sandbox {
+		sandboxActive = true
+		if abs, err := filepath.Abs(opts.RepoRoot); err == nil {
+			pinnedRepo = abs
+		} else {
+			pinnedRepo = opts.RepoRoot
+		}
+	} else {
+		sandboxActive = false
+		pinnedRepo = ""
 	}
 
 	if cwd, err := os.Getwd(); err == nil {

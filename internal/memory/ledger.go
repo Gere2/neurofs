@@ -65,23 +65,19 @@ func (m *Manager) SearchEntries(ctx context.Context, term string) ([]models.Ledg
 	return m.store.Search(ctx, term)
 }
 
-// ExportEntries produces a formatted markdown export for the active session.
-func (m *Manager) ExportEntries(ctx context.Context, format string) (string, error) {
-	entries, err := m.store.Read(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	sessionID, err := m.store.GetSessionID(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	var sessionEntries []models.LedgerEntry
-	for _, entry := range entries {
-		if entry.SessionID == sessionID {
-			sessionEntries = append(sessionEntries, entry)
+// ExportEntries produces a formatted markdown export for the specified session (or active session if sessionID is empty).
+func (m *Manager) ExportEntries(ctx context.Context, sessionID string, format string) (string, error) {
+	if sessionID == "" {
+		var err error
+		sessionID, err = m.store.GetSessionID(ctx)
+		if err != nil {
+			return "", err
 		}
+	}
+
+	sessionEntries, err := m.store.Read(ctx, sessionID)
+	if err != nil {
+		return "", err
 	}
 
 	m.mu.RLock()
@@ -93,6 +89,11 @@ func (m *Manager) ExportEntries(ctx context.Context, format string) (string, err
 	}
 
 	return exporter.Export(sessionID, sessionEntries)
+}
+
+// Prune removes entries older than olderThan from the store.
+func (m *Manager) Prune(ctx context.Context, olderThan time.Duration) (int64, error) {
+	return m.store.Prune(ctx, olderThan)
 }
 
 // Compatibility package-level APIs (delegating to SqliteStore automatically)
@@ -111,7 +112,7 @@ func AppendEntry(repoRoot string, entry models.LedgerEntry) error {
 
 func ReadEntries(repoRoot string) ([]models.LedgerEntry, error) {
 	fs := NewSqliteStore(repoRoot)
-	return fs.Read(context.Background())
+	return fs.Read(context.Background(), "")
 }
 
 func SearchEntries(repoRoot string, term string) ([]models.LedgerEntry, error) {
@@ -124,5 +125,5 @@ func ExportEntries(repoRoot string, format string) (string, error) {
 	if format == "claude" {
 		format = "session_timeline"
 	}
-	return m.ExportEntries(context.Background(), format)
+	return m.ExportEntries(context.Background(), "", format)
 }

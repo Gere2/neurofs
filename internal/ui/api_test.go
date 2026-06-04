@@ -2,6 +2,7 @@ package ui
 
 import (
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -197,5 +198,53 @@ func TestDecode_TrailingWhitespaceIsFine(t *testing.T) {
 	var got scanReq
 	if err := decode(r, &got); err != nil && err != io.EOF {
 		t.Fatalf("trailing whitespace should decode cleanly, got: %v", err)
+	}
+}
+
+func TestMustRepo_SandboxEnforcement(t *testing.T) {
+	tempDir1 := t.TempDir()
+	tempDir2 := t.TempDir()
+
+	// Create .neurofs directories to pass validation
+	if err := os.MkdirAll(filepath.Join(tempDir1, ".neurofs"), 0755); err != nil {
+		t.Fatalf("failed to create db dir 1: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tempDir2, ".neurofs"), 0755); err != nil {
+		t.Fatalf("failed to create db dir 2: %v", err)
+	}
+
+	// Ensure they are canonicalized
+	repo1 := canonicalRoot(t, tempDir1)
+	repo2 := canonicalRoot(t, tempDir2)
+
+	// Enable sandboxing
+	sandboxActive = true
+	pinnedRepo = repo1
+	defer func() {
+		sandboxActive = false
+		pinnedRepo = ""
+	}()
+
+	// Case 1: repo parameter matches pinnedRepo -> should succeed
+	rr := httptest.NewRecorder()
+	cfg, ok := mustRepo(rr, repo1)
+	if !ok {
+		t.Fatalf("expected mustRepo to succeed for pinned directory, got error: %s", rr.Body.String())
+	}
+	if cfg.RepoRoot != repo1 {
+		t.Errorf("expected RepoRoot to be %q, got %q", repo1, cfg.RepoRoot)
+	}
+
+	// Case 2: repo parameter is different -> should fail with 403
+	rr2 := httptest.NewRecorder()
+	_, ok2 := mustRepo(rr2, repo2)
+	if ok2 {
+		t.Fatalf("expected mustRepo to fail for non-pinned directory")
+	}
+	if rr2.Code != http.StatusForbidden {
+		t.Errorf("expected status 403 Forbidden, got %d", rr2.Code)
+	}
+	if !strings.Contains(rr2.Body.String(), "access denied") {
+		t.Errorf("expected error message to contain 'access denied', got: %s", rr2.Body.String())
 	}
 }

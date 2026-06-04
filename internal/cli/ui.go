@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+
 	"github.com/neuromfs/neuromfs/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -10,8 +12,10 @@ import (
 // simple dispatcher.
 func newUICmd() *cobra.Command {
 	var (
-		addr   string
-		noOpen bool
+		addr     string
+		noOpen   bool
+		repoPath string
+		sandbox  bool
 	)
 	cmd := &cobra.Command{
 		Use:   "ui",
@@ -22,13 +26,22 @@ Nothing leaves loopback: the UI is just another client of the same internals.
 The default address is 127.0.0.1:7777. The browser is opened automatically
 unless --no-open is set (useful when running over SSH with port-forwarding).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if repoPath == "" {
+				if cwd, err := os.Getwd(); err == nil {
+					repoPath = cwd
+				}
+			}
 			return ui.Run(ui.Options{
 				Addr:        addr,
 				OpenBrowser: !noOpen,
+				RepoRoot:    repoPath,
+				Sandbox:     sandbox,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:7777", "Address to bind (loopback by default)")
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Skip the automatic browser launch")
+	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root to pin/sandbox the UI server to (defaults to current directory)")
+	cmd.Flags().BoolVar(&sandbox, "sandbox", true, "Sandbox/pin the UI server to the repository root to prevent path traversal")
 	return cmd
 }

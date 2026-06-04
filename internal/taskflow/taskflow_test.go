@@ -264,7 +264,7 @@ func BuildThing(name string) string {
 	}
 
 	// Read ledger
-	entries, err := store.Read(context.Background())
+	entries, err := store.Read(context.Background(), "")
 	if err != nil {
 		t.Fatalf("failed to read ledger: %v", err)
 	}
@@ -293,7 +293,7 @@ func BuildThing(name string) string {
 		t.Fatalf("Run failed: %v", err)
 	}
 
-	entries2, err := store.Read(context.Background())
+	entries2, err := store.Read(context.Background(), "")
 	if err != nil {
 		t.Fatalf("failed to read ledger second time: %v", err)
 	}

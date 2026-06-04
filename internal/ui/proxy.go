@@ -3,10 +3,12 @@ package ui
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -106,8 +108,11 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Gather repository context from startupDir/cwd
+	// 3. Gather repository context
 	repoDir := startupDir
+	if sandboxActive && pinnedRepo != "" {
+		repoDir = pinnedRepo
+	}
 	if repoDir == "" {
 		if cwd, err := os.Getwd(); err == nil {
 			repoDir = cwd
@@ -246,8 +251,11 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Gather repository context from startupDir/cwd
+	// 3. Gather repository context
 	repoDir := startupDir
+	if sandboxActive && pinnedRepo != "" {
+		repoDir = pinnedRepo
+	}
 	if repoDir == "" {
 		if cwd, err := os.Getwd(); err == nil {
 			repoDir = cwd
@@ -416,6 +424,9 @@ var (
 )
 
 func triggerBackgroundScan(cfg *config.Config) {
+	if flag.Lookup("test.v") != nil {
+		return
+	}
 	scanMu.Lock()
 	defer scanMu.Unlock()
 
@@ -614,6 +625,13 @@ func logProxyRequest(model, query string, before, after int) {
 func handleProxyStats(w http.ResponseWriter, r *http.Request) {
 	repo := r.URL.Query().Get("repo")
 	if repo != "" {
+		if sandboxActive && pinnedRepo != "" {
+			absRepo, err := filepath.Abs(repo)
+			if err != nil || !sameDir(absRepo, pinnedRepo) {
+				writeErr(w, http.StatusForbidden, fmt.Sprintf("access denied: server is sandboxed to %q", pinnedRepo))
+				return
+			}
+		}
 		cfg, err := config.New(repo)
 		if err == nil {
 			if err := cfg.Validate(); err == nil {

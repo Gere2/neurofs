@@ -13,6 +13,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/storage"
 )
@@ -84,8 +85,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 11 {
-		t.Fatalf("tools: got %d want 11", len(listResult.Tools))
+	if len(listResult.Tools) != 12 {
+		t.Fatalf("tools: got %d want 12", len(listResult.Tools))
 	}
 	wantNames := map[string]bool{
 		"neurofs_context":         true,
@@ -99,6 +100,7 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_log_memory":      true,
 		"neurofs_search_memory":   true,
 		"neurofs_export_memory":   true,
+		"neurofs_prune_memory":    true,
 	}
 	for _, tool := range listResult.Tools {
 		if !wantNames[tool.Name] {
@@ -1143,3 +1145,55 @@ func TestMemoryTools(t *testing.T) {
 		t.Errorf("expected markdown header, got:\n%s", exportTextMD)
 	}
 }
+
+func TestPruneMemoryTool(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	// Touch last_prune_sqlite.txt to prevent background auto-prune during test appends
+	pruneFileSql := filepath.Join(tmpDir, ".neurofs", "last_prune_sqlite.txt")
+	_ = os.MkdirAll(filepath.Dir(pruneFileSql), 0755)
+	_ = os.WriteFile(pruneFileSql, []byte(time.Now().Format(time.RFC3339)), 0644)
+
+	// 1. Log an entry that will be pruned (older than 30 days)
+	m := memory.New(memory.NewSqliteStore(tmpDir))
+	err := m.AppendEntry(ctx, models.LedgerEntry{
+		Query:     "old query",
+		Timestamp: time.Now().Add(-60 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Log an entry that will be kept (recent)
+	err = m.AppendEntry(ctx, models.LedgerEntry{
+		Query:     "new query",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Call neurofs_prune_memory tool
+	pruneArgsRaw, _ := json.Marshal(map[string]any{
+		"days": 30,
+		"repo": tmpDir,
+	})
+	pruneRes := runPruneMemoryTool(ctx, pruneArgsRaw)
+	if pruneRes.IsError {
+		t.Fatalf("expected prune memory tool to succeed, got error: %s", pruneRes.Content[0].Text)
+	}
+	if !strings.Contains(pruneRes.Content[0].Text, "Successfully pruned 1 entries") {
+		t.Errorf("expected pruned message, got: %q", pruneRes.Content[0].Text)
+	}
+
+	// 4. Verify sqlite contents
+	entries, err := memory.NewSqliteStore(tmpDir).Read(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Query != "new query" {
+		t.Errorf("expected 1 entry left ('new query'), got %d entries: %+v", len(entries), entries)
+	}
+}
+

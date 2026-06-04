@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"time"
+
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/indexer"
@@ -128,6 +130,14 @@ const exportMemoryInputSchema = `{
   }
 }`
 
+const pruneMemoryInputSchema = `{
+  "type": "object",
+  "properties": {
+    "days": { "type": "integer", "default": 30, "description": "Prune entries older than this many days." },
+    "repo": { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
 func toolsList() []Tool {
 	return []Tool{
 		{
@@ -185,6 +195,11 @@ func toolsList() []Tool {
 			Description: "Export the session log formatted as agents (AGENTS.md), session_timeline (NEUROFS_SESSION.md), or markdown.",
 			InputSchema: json.RawMessage(exportMemoryInputSchema),
 		},
+		{
+			Name:        "neurofs_prune_memory",
+			Description: "Prune old task session memory ledger entries to reclaim space.",
+			InputSchema: json.RawMessage(pruneMemoryInputSchema),
+		},
 	}
 }
 
@@ -212,6 +227,8 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runSearchMemoryTool(ctx, p.Arguments)
 	case "neurofs_export_memory":
 		return runExportMemoryTool(ctx, p.Arguments)
+	case "neurofs_prune_memory":
+		return runPruneMemoryTool(ctx, p.Arguments)
 	default:
 		return errResult(fmt.Sprintf("unknown tool: %q", p.Name))
 	}
@@ -1114,9 +1131,14 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		args.Limit = 50
 	}
 
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
 	response, err := Search(ctx, SearchOptions{
 		Query: args.Query,
-		Repo:  args.Repo,
+		Repo:  repo,
 		Limit: args.Limit,
 		Mode:  args.Mode,
 	})
@@ -1454,15 +1476,40 @@ func runExportMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResul
 	}
 
 	m := memory.New(memory.NewSqliteStore(repo))
-
-	if args.SessionID != "" {
-		os.Setenv("NEUROFS_SESSION_ID", args.SessionID)
-		defer os.Unsetenv("NEUROFS_SESSION_ID")
-	}
-
-	res, err := m.ExportEntries(ctx, format)
+	res, err := m.ExportEntries(ctx, args.SessionID, format)
 	if err != nil {
 		return errResult(err.Error())
 	}
 	return textResult(res)
 }
+
+type pruneMemoryArgs struct {
+	Days int    `json:"days"`
+	Repo string `json:"repo"`
+}
+
+func runPruneMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args pruneMemoryArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	if args.Days <= 0 {
+		args.Days = 30
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	m := memory.New(memory.NewSqliteStore(repo))
+	olderThan := time.Duration(args.Days) * 24 * time.Hour
+	count, err := m.Prune(ctx, olderThan)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	return textResult(fmt.Sprintf("Successfully pruned %d entries older than %d days.", count, args.Days))
+}
+

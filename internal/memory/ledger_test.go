@@ -85,7 +85,7 @@ func TestAppendAndReadEntries(t *testing.T) {
 		t.Fatalf("failed to append entry: %v", err)
 	}
 
-	entries, err := fs.Read(ctx)
+	entries, err := fs.Read(ctx, "")
 	if err != nil {
 		t.Fatalf("failed to read entries: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestExportEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	timelineExport, err := m.ExportEntries(ctx, "session_timeline")
+	timelineExport, err := m.ExportEntries(ctx, "", "session_timeline")
 	if err != nil {
 		t.Fatalf("session_timeline export failed: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestExportEntries(t *testing.T) {
 		t.Errorf("timeline export format invalid: %s", timelineExport)
 	}
 
-	agentsExport, err := m.ExportEntries(ctx, "agents")
+	agentsExport, err := m.ExportEntries(ctx, "", "agents")
 	if err != nil {
 		t.Fatalf("agents export failed: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestExportEntries(t *testing.T) {
 		t.Errorf("agents export format invalid: %s", agentsExport)
 	}
 
-	mdExport, err := m.ExportEntries(ctx, "markdown")
+	mdExport, err := m.ExportEntries(ctx, "", "markdown")
 	if err != nil {
 		t.Fatalf("markdown export failed: %v", err)
 	}
@@ -238,3 +238,118 @@ func TestSlidingWindowExpiry(t *testing.T) {
 		t.Errorf("expected session ID to persist after sliding touch; got %s vs %s", id1, id2)
 	}
 }
+
+func TestPrune(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. MemStore Prune
+	ms := NewMemStore()
+	err := ms.Append(ctx, models.LedgerEntry{
+		Query:     "old query",
+		Timestamp: time.Now().Add(-60 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = ms.Append(ctx, models.LedgerEntry{
+		Query:     "new query",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := ms.Prune(ctx, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected to prune 1 entry from memstore, got %d", count)
+	}
+	kept, err := ms.Read(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 || kept[0].Query != "new query" {
+		t.Errorf("expected to keep only 'new query', got: %+v", kept)
+	}
+
+	// 2. SqliteStore Prune
+	tempDir := t.TempDir()
+	sqlStore := NewSqliteStore(tempDir)
+
+	// Touch last_prune_sqlite.txt to prevent background auto-prune during test appends
+	pruneFileSql := filepath.Join(tempDir, ".neurofs", "last_prune_sqlite.txt")
+	_ = os.MkdirAll(filepath.Dir(pruneFileSql), 0755)
+	_ = os.WriteFile(pruneFileSql, []byte(time.Now().Format(time.RFC3339)), 0644)
+
+	err = sqlStore.Append(ctx, models.LedgerEntry{
+		Query:     "old query",
+		Timestamp: time.Now().Add(-60 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = sqlStore.Append(ctx, models.LedgerEntry{
+		Query:     "new query",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err = sqlStore.Prune(ctx, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected to prune 1 entry from sqlite, got %d", count)
+	}
+	keptSql, err := sqlStore.Read(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keptSql) != 1 || keptSql[0].Query != "new query" {
+		t.Errorf("expected to keep only 'new query' in sqlite, got: %+v", keptSql)
+	}
+
+	// 3. FileStore Prune
+	tempDirFile := t.TempDir()
+	fileStore := NewFileStore(tempDirFile)
+
+	// Touch last_prune.txt to prevent background auto-prune during test appends
+	pruneFileFile := filepath.Join(tempDirFile, ".neurofs", "last_prune.txt")
+	_ = os.MkdirAll(filepath.Dir(pruneFileFile), 0755)
+	_ = os.WriteFile(pruneFileFile, []byte(time.Now().Format(time.RFC3339)), 0644)
+
+	err = fileStore.Append(ctx, models.LedgerEntry{
+		Query:     "old query",
+		Timestamp: time.Now().Add(-60 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = fileStore.Append(ctx, models.LedgerEntry{
+		Query:     "new query",
+		Timestamp: time.Now().Add(-1 * time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	count, err = fileStore.Prune(ctx, 30*24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Errorf("expected to prune 1 entry from filestore, got %d", count)
+	}
+	keptFile, err := fileStore.Read(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keptFile) != 1 || keptFile[0].Query != "new query" {
+		t.Errorf("expected to keep only 'new query' in filestore, got: %+v", keptFile)
+	}
+}
+

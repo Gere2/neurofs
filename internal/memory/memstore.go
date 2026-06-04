@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/neuromfs/neuromfs/internal/models"
 )
@@ -45,15 +46,18 @@ func (ms *MemStore) Append(ctx context.Context, entry models.LedgerEntry) error 
 	return nil
 }
 
-// Read returns all logged in-memory entries.
-func (ms *MemStore) Read(ctx context.Context) ([]models.LedgerEntry, error) {
+// Read returns logged in-memory entries, optionally filtered by sessionID.
+func (ms *MemStore) Read(ctx context.Context, sessionID string) ([]models.LedgerEntry, error) {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	// Return a copy to prevent mutation issues
-	copied := make([]models.LedgerEntry, len(ms.entries))
-	copy(copied, ms.entries)
-	return copied, nil
+	var filtered []models.LedgerEntry
+	for _, entry := range ms.entries {
+		if sessionID == "" || entry.SessionID == sessionID {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered, nil
 }
 
 // Search filters in-memory entries containing term (case-insensitive).
@@ -92,4 +96,23 @@ func (ms *MemStore) Search(ctx context.Context, term string) ([]models.LedgerEnt
 		}
 	}
 	return results, nil
+}
+
+// Prune removes entries older than olderThan from memory.
+func (ms *MemStore) Prune(ctx context.Context, olderThan time.Duration) (int64, error) {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+
+	cutoff := time.Now().Add(-olderThan)
+	var kept []models.LedgerEntry
+	var count int64
+	for _, entry := range ms.entries {
+		if entry.Timestamp.Before(cutoff) {
+			count++
+		} else {
+			kept = append(kept, entry)
+		}
+	}
+	ms.entries = kept
+	return count, nil
 }
