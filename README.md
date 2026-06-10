@@ -462,6 +462,34 @@ aggregates whatever is there:
 Commit the records if you want the history to travel with the repo; they
 are plain JSON and small.
 
+### Continuous grounding for loops (`neurofs ground`)
+
+The replay flow above is manual — you paste an answer and inspect one verdict.
+In an autonomous loop that does not scale: nobody pastes 200 answers. `neurofs
+ground` automates it as a **Claude Code hook** so grounding accumulates on its
+own, and a supervisor reads the rolling aggregate instead of every diff.
+
+```
+# Print the .claude/settings.json snippet to wire the hook
+neurofs ground --print-hook
+
+# What Claude Code runs after each action (reads the event JSON on stdin):
+#   PostToolUse Edit/Write → did the edit land on a file the agent had context
+#                            for, and is the added code anchored there?
+#   Stop                   → pull the final message and run the same
+#                            citation + drift grounding as `audit replay`.
+
+# Supervisor feed — the signal you watch instead of reading diffs
+neurofs ground --feed
+neurofs ground --feed --json
+```
+
+Each event is appended to `audit/grounding.jsonl` with its origin, timestamp,
+session, and files — auditable, never a black box. `neurofs stats` surfaces a
+one-line rollup (edits-in-context %, response grounding, concerning count), and
+`--feed` lists the recent events that did not clear the bar. This is the "CI of
+grounding" the loop layer is built around.
+
 ### Bench as a CI gate
 
 `neurofs bench --bundle` now reports mean/p50/p95 bundle token counts.
