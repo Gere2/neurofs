@@ -88,8 +88,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 14 {
-		t.Fatalf("tools: got %d want 14", len(listResult.Tools))
+	if len(listResult.Tools) != 15 {
+		t.Fatalf("tools: got %d want 15", len(listResult.Tools))
 	}
 	wantNames := map[string]bool{
 		"neurofs_context":         true,
@@ -106,6 +106,7 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_search_memory":   true,
 		"neurofs_export_memory":   true,
 		"neurofs_prune_memory":    true,
+		"neurofs_recall_state":    true,
 	}
 	for _, tool := range listResult.Tools {
 		if !wantNames[tool.Name] {

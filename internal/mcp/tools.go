@@ -17,6 +17,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/contextusage"
 	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/indexer"
+	"github.com/neuromfs/neuromfs/internal/loopstate"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/packager"
@@ -166,6 +167,14 @@ const pruneMemoryInputSchema = `{
   }
 }`
 
+const recallStateInputSchema = `{
+  "type": "object",
+  "properties": {
+    "session_id": { "type": "string", "description": "Optional session ID; defaults to the active session." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
 func toolsList() []Tool {
 	return []Tool{
 		{
@@ -238,6 +247,11 @@ func toolsList() []Tool {
 			Description: "Prune old task session memory ledger entries to reclaim space.",
 			InputSchema: json.RawMessage(pruneMemoryInputSchema),
 		},
+		{
+			Name:        "neurofs_recall_state",
+			Description: "Read the session state a restarting loop needs: what was tried, what failed, what was decided, the pending NextActions to continue, and the rolling grounding signal.",
+			InputSchema: json.RawMessage(recallStateInputSchema),
+		},
 	}
 }
 
@@ -271,6 +285,8 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runExportMemoryTool(ctx, p.Arguments)
 	case "neurofs_prune_memory":
 		return runPruneMemoryTool(ctx, p.Arguments)
+	case "neurofs_recall_state":
+		return runRecallStateTool(ctx, p.Arguments)
 	default:
 		return errResult(fmt.Sprintf("unknown tool: %q", p.Name))
 	}
@@ -797,6 +813,9 @@ func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 			Tokens:         agentPrompt.InitialTokens,
 			BaselineTokens: agentPrompt.BaselineTokens,
 		})
+		// Persist the next actions so a restarting loop can consume them via
+		// `neurofs recall` / neurofs_recall_state.
+		_ = loopstate.RecordNextActions(result.RepoRoot, sessionID, args.Query, agentPrompt.NextActions)
 		return jsonTextResult(taskAgentResponse{
 			Query:          result.Query,
 			RepoRoot:       result.RepoRoot,
@@ -1674,6 +1693,31 @@ func runLogMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		sessionID, _ = m.GetSessionID(ctx)
 	}
 	return textResult(fmt.Sprintf("Successfully logged entry to session ID: %s", sessionID))
+}
+
+type recallStateArgs struct {
+	SessionID string `json:"session_id"`
+	Repo      string `json:"repo"`
+}
+
+// runRecallStateTool returns the loopstate digest a restarting loop reads to
+// resume mid-task without relearning what it already tried.
+func runRecallStateTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args recallStateArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	state, err := loopstate.Digest(repo, strings.TrimSpace(args.SessionID))
+	if err != nil {
+		return errResult(err.Error())
+	}
+	return jsonTextResult(state)
 }
 
 func runSearchMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {

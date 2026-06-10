@@ -234,6 +234,11 @@ The server exposes these tools to any MCP host:
 - **`neurofs_search`** — return ranked code chunks with line ranges,
   snippets, scores, reasons, content hashes, exact `rg` matches, semantic
   matches, and graph dependency/working-set bridges.
+- **`neurofs_log_memory`** / **`neurofs_search_memory`** /
+  **`neurofs_export_memory`** — write and read the session ledger.
+- **`neurofs_recall_state`** — the "where am I" digest a restarting loop reads:
+  what was tried, what failed, what was decided, the pending NextActions to
+  continue, and the rolling grounding signal. See [`neurofs recall`](#neurofs-recall).
 
 ### `neurofs watch [path]`
 
@@ -489,6 +494,26 @@ session, and files — auditable, never a black box. `neurofs stats` surfaces a
 one-line rollup (edits-in-context %, response grounding, concerning count), and
 `--feed` lists the recent events that did not clear the bar. This is the "CI of
 grounding" the loop layer is built around.
+
+### `neurofs recall`
+
+Memory between iterations. A loop that restarts mid-task should not relearn what
+it already tried. `neurofs recall` distills the session ledger and the grounding
+feed into one "where am I" digest:
+
+```
+neurofs recall            # human-readable
+neurofs recall --json     # machine-readable (also via the neurofs_recall_state MCP tool)
+```
+
+It reports **attempts** (task runs, edits, grounding events), **failures**
+(outcomes that regressed or were flagged), **decisions** (logged with
+`neurofs memory log --command decide --notes "…"`), the **pending NextActions**
+NeuroFS suggested that have not yet been addressed, and the rolling **grounding**
+signal. The NextActions the agent context emits are persisted automatically, so
+on restart the loop reads its open steps back. Every line is derived from
+artefacts already on disk — inspect them with `neurofs memory list` and
+`neurofs ground --feed`; nothing is a black box.
 
 ### Bench as a CI gate
 

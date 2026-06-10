@@ -15,6 +15,7 @@ func TestSubcommandsHelp(t *testing.T) {
 		"task",
 		"measure",
 		"memory",
+		"recall",
 		"stats",
 		"bench",
 		"economy",
