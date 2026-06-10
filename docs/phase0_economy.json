@@ -1,0 +1,254 @@
+{
+  "repo": "/Users/gere/NeuroMFS",
+  "search_limit": 8,
+  "summary": {
+    "tasks": 7,
+    "scored": 7,
+    "search_miss": 0,
+    "mean_tokens_neurofs": 1938,
+    "mean_tokens_native": 5096,
+    "mean_recall_neurofs": 0.8571428571428571,
+    "mean_recall_native": 0.8928571428571429,
+    "mean_token_reduction": 0.5766565346804117,
+    "median_token_reduction": 0.7136279926335175,
+    "threshold": 0.25,
+    "verdict": "PASS",
+    "detail": "mean iso-recall token reduction 57.7% \u003e= 25% (B 1938 tok vs native 5096 tok at 86% recall)"
+  },
+  "tasks": [
+    {
+      "question": "What tools does the MCP server expose to the client?",
+      "source": "mcp-tools-list.json",
+      "neurofs": {
+        "tokens": 2264,
+        "recall": 0.5,
+        "files": [
+          "internal/mcp/server.go",
+          "internal/cli/mcp_claude.go",
+          "internal/mcp/tools.go"
+        ],
+        "facts_hit": [
+          "neurofs_task",
+          "neurofs_view_file"
+        ]
+      },
+      "native_iso": {
+        "tokens": 4868,
+        "recall": 0.5,
+        "files": [
+          "internal/mcp/server.go",
+          "internal/cli/mcp_claude.go"
+        ],
+        "facts_hit": [
+          "neurofs_task",
+          "neurofs_view_file"
+        ]
+      },
+      "token_reduction": 0.5349219391947412,
+      "scored": true
+    },
+    {
+      "question": "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?",
+      "source": "packager-excerpt-vs-signature.json",
+      "neurofs": {
+        "tokens": 1274,
+        "recall": 0.75,
+        "files": [
+          "internal/packager/excerpt.go",
+          "internal/packager/packager.go",
+          "internal/mcp/tools.go"
+        ],
+        "facts_hit": [
+          "RepExcerpt",
+          "excerptTopN",
+          "PreferSignatures"
+        ]
+      },
+      "native_iso": {
+        "tokens": 7002,
+        "recall": 1,
+        "files": [
+          "internal/packager/excerpt.go",
+          "internal/packager/packager.go"
+        ],
+        "facts_hit": [
+          "RepExcerpt",
+          "selectFragment",
+          "excerptTopN",
+          "PreferSignatures"
+        ]
+      },
+      "token_reduction": 0.8180519851471009,
+      "scored": true
+    },
+    {
+      "question": "What does UpgradeWithSlack do in the packager and what is the upgrade cap?",
+      "source": "packager-slack-upgrade.json",
+      "neurofs": {
+        "tokens": 2552,
+        "recall": 1,
+        "files": [
+          "internal/packager/packager.go",
+          "internal/packager/packager_test.go",
+          "internal/packager/excerpt.go",
+          "internal/packager/excerpt_go.go"
+        ],
+        "facts_hit": [
+          "UpgradeWithSlack",
+          "upgradeCandidate",
+          "fullCodeMaxTokens"
+        ]
+      },
+      "native_iso": {
+        "tokens": 2862,
+        "recall": 1,
+        "files": [
+          "internal/packager/packager.go"
+        ],
+        "facts_hit": [
+          "UpgradeWithSlack",
+          "upgradeCandidate",
+          "fullCodeMaxTokens"
+        ]
+      },
+      "token_reduction": 0.10831586303284413,
+      "scored": true
+    },
+    {
+      "question": "How does the ranker score filename matches and how is that weight defined?",
+      "source": "ranking-filename-match.json",
+      "neurofs": {
+        "tokens": 1714,
+        "recall": 1,
+        "files": [
+          "internal/ranking/ranking.go",
+          "internal/retrieval/search.go",
+          "internal/mcp/tools.go"
+        ],
+        "facts_hit": [
+          "weightFilename",
+          "filename_match",
+          "scoreFile"
+        ]
+      },
+      "native_iso": {
+        "tokens": 6096,
+        "recall": 1,
+        "files": [
+          "internal/ranking/ranking.go"
+        ],
+        "facts_hit": [
+          "weightFilename",
+          "filename_match",
+          "scoreFile"
+        ]
+      },
+      "token_reduction": 0.7188320209973753,
+      "scored": true
+    },
+    {
+      "question": "How does the search retrieval use ripgrep and what is the timeout value?",
+      "source": "retrieval-ripgrep-dependency.json",
+      "neurofs": {
+        "tokens": 3069,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/search.go",
+          "internal/cli/bench.go",
+          "internal/mcp/tools.go"
+        ],
+        "facts_hit": [
+          "LookPath",
+          "rg",
+          "exec.CommandContext",
+          "normalizeRGPath"
+        ]
+      },
+      "native_iso": {
+        "tokens": 5119,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/search.go"
+        ],
+        "facts_hit": [
+          "LookPath",
+          "rg",
+          "exec.CommandContext",
+          "normalizeRGPath"
+        ]
+      },
+      "token_reduction": 0.40046884157061924,
+      "scored": true
+    },
+    {
+      "question": "How does the session ledger manage timelines and cognitive histories?",
+      "source": "session-ledger-timeline.json",
+      "neurofs": {
+        "tokens": 828,
+        "recall": 0.75,
+        "files": [
+          "internal/memory/ledger.go",
+          "internal/models/ledger.go",
+          "internal/memory/filestore.go",
+          "internal/memory/memstore.go"
+        ],
+        "facts_hit": [
+          "MemStore",
+          "FileStore",
+          "Session"
+        ]
+      },
+      "native_iso": {
+        "tokens": 3214,
+        "recall": 0.75,
+        "files": [
+          "internal/memory/ledger.go",
+          "internal/models/ledger.go",
+          "internal/memory/filestore.go"
+        ],
+        "facts_hit": [
+          "FileStore",
+          "SqliteStore",
+          "Session"
+        ]
+      },
+      "token_reduction": 0.7423771001866832,
+      "scored": true
+    },
+    {
+      "question": "How does storage open the database with WAL mode and what parameters are set?",
+      "source": "storage-schema-wal.json",
+      "neurofs": {
+        "tokens": 1866,
+        "recall": 1,
+        "files": [
+          "internal/storage/storage.go",
+          "internal/contextladder/contextladder.go",
+          "internal/ui/proxy.go",
+          "internal/retrieval/search.go"
+        ],
+        "facts_hit": [
+          "PRAGMA journal_mode = WAL",
+          "PRAGMA busy_timeout",
+          "Open",
+          "sqlite"
+        ]
+      },
+      "native_iso": {
+        "tokens": 6516,
+        "recall": 1,
+        "files": [
+          "internal/storage/storage.go"
+        ],
+        "facts_hit": [
+          "PRAGMA journal_mode = WAL",
+          "PRAGMA busy_timeout",
+          "Open",
+          "sqlite"
+        ]
+      },
+      "token_reduction": 0.7136279926335175,
+      "scored": true
+    }
+  ]
+}
