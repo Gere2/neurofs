@@ -111,6 +111,10 @@ This is an honest proxy with explicit limits:
 5. **Retrieval mixes live FS and index.** `neurofs_search`'s exact-content arm
    reads the working tree via ripgrep while symbol/graph signals come from the
    SQLite index; results reflect the repo state at run time.
+6. **Shape-dependent.** The advantage scales with file size. On real repos it
+   holds (Go 58.9%, Python 72.5%); on a toy 10-file repo of tiny files it
+   inverts (whole-file reading is cheaper). See
+   [`phase_g5_cross_shape.md`](phase_g5_cross_shape.md).
 
 ## Decision
 
