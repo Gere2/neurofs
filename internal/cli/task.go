@@ -6,12 +6,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/neuromfs/neuromfs/internal/agentcontext"
 	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/neuromfs/neuromfs/internal/contextusage"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/quality"
-	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
@@ -37,6 +38,11 @@ func newTaskCmd() *cobra.Command {
 		noChunks  bool
 		filesOnly bool
 		machine   bool
+		limit     int
+		minScore  float64
+		jsonOut   bool
+		noEmb     bool
+		agent     bool
 	)
 
 	cmd := &cobra.Command{
@@ -101,7 +107,21 @@ Examples:
 				return fmt.Errorf("task: auto-scan: %w", err)
 			}
 
+			if !filesOnly && (limit != 0 || minScore != 0 || jsonOut || noEmb) {
+				return fmt.Errorf("task: --limit, --min-score, --json, and --no-embeddings require --files-only")
+			}
+
 			if filesOnly {
+				filesOpts := filesOnlyOptions{
+					Limit:        limit,
+					MinScore:     minScore,
+					JSON:         jsonOut,
+					NoEmbeddings: noEmb,
+				}
+				if err := validateFilesOnlyOptions(filesOpts); err != nil {
+					return fmt.Errorf("task: %w", err)
+				}
+
 				db, err := storage.Open(cfg.DBPath)
 				if err != nil {
 					return fmt.Errorf("task: open index: %w", err)
@@ -113,26 +133,8 @@ Examples:
 					return fmt.Errorf("task: load index: %w", err)
 				}
 
-				embClient := embeddings.NewClient(cfg.HybridMode)
-				queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
-				fileEmbs, _ := db.AllEmbeddings()
-				rels, _ := db.AllRelations()
-
-				ranked := ranking.RankWithOptions(files, query, ranking.Options{
-					Project:        taskflow.LoadProjectInfo(db),
-					QueryEmbedding: queryEmb,
-					Embeddings:     fileEmbs,
-					Relations:      rels,
-				})
-
-				for _, sf := range ranked {
-					if sf.Score <= 0 {
-						break
-					}
-					reasonsStr := formatReasonsSingleLine(sf.Reasons)
-					fmt.Printf("%s (score=%.2f) - Reasons: %s\n", sf.Record.RelPath, sf.Score, reasonsStr)
-				}
-				return nil
+				ranked := rankFilesForCLI(cmd.Context(), cfg, db, query, files, filesOpts.NoEmbeddings)
+				return writeFilesOnly(cmd.OutOrStdout(), ranked, filesOpts)
 			}
 
 			result, err := taskflow.Run(taskflow.Opts{
@@ -148,13 +150,32 @@ Examples:
 				return fmt.Errorf("task: %w", err)
 			}
 
+			outputPrompt := result.Prompt
+			agentSession := ""
+			if agent {
+				agentSession = contextusage.NewSessionID(query, time.Now())
+				agentPrompt, err := agentcontext.BuildPatchPrompt(repoPath, agentSession, result, agentcontext.Options{Transport: agentcontext.TransportCLI})
+				if err != nil {
+					return fmt.Errorf("task: agent context: %w", err)
+				}
+				outputPrompt = agentPrompt.Text
+				_ = contextusage.Append(result.RepoRoot, contextusage.Entry{
+					SessionID:      agentSession,
+					Phase:          "initial_bundle",
+					Command:        "task --agent",
+					Query:          query,
+					Tokens:         agentPrompt.InitialTokens,
+					BaselineTokens: agentPrompt.BaselineTokens,
+				})
+			}
+
 			// Stdout: the prompt, for pipes.
-			if _, err := os.Stdout.WriteString(result.Prompt); err != nil {
+			if _, err := os.Stdout.WriteString(outputPrompt); err != nil {
 				return fmt.Errorf("task: write stdout: %w", err)
 			}
 
 			// Clipboard: best effort, status reported in the summary.
-			clipStatus := taskflow.Clipboard([]byte(result.Prompt))
+			clipStatus := taskflow.Clipboard([]byte(outputPrompt))
 
 			// Stderr: the summary, for humans.
 			cacheLabel := "fresh"
@@ -165,6 +186,9 @@ Examples:
 			fmt.Fprintf(os.Stderr, "  query     : %q\n", truncate(query, 70))
 			if result.ChunkMode {
 				fmt.Fprintf(os.Stderr, "  mode      : chunks\n")
+			}
+			if agentSession != "" {
+				fmt.Fprintf(os.Stderr, "  agent     : %s\n", agentSession)
 			}
 			fmt.Fprintf(os.Stderr, "  cache     : %s\n", cacheLabel)
 			fmt.Fprintf(os.Stderr, "  tokens    : %d / %d\n",
@@ -218,6 +242,11 @@ Examples:
 	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the prompt from ranked whole files instead of code chunks")
 	cmd.Flags().BoolVarP(&filesOnly, "files-only", "o", false, "Only list the ranked files and their reasons, without printing the prompt content")
 	cmd.Flags().BoolVar(&machine, "machine", false, "Omit human explanations and scaffolding to save context tokens")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit files printed by --files-only (0 = all positive scores)")
+	cmd.Flags().Float64Var(&minScore, "min-score", 0, "Minimum score printed by --files-only")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print --files-only results as JSON with symbols/imports metadata")
+	cmd.Flags().BoolVar(&noEmb, "no-embeddings", false, "Skip embedding lookups in --files-only ranking")
+	cmd.Flags().BoolVar(&agent, "agent", false, "Append patch context, expansion commands, and context usage measurement for coding agents")
 
 	return cmd
 }

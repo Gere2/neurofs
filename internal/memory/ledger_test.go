@@ -352,4 +352,3 @@ func TestPrune(t *testing.T) {
 		t.Errorf("expected to keep only 'new query' in filestore, got: %+v", keptFile)
 	}
 }
-

@@ -101,8 +101,41 @@ func TestPackChunksProducesLineRangedExcerpts(t *testing.T) {
 	if !strings.Contains(frag.Content, "// lines: 10-14") || !strings.Contains(frag.Content, "VerifyJWT") {
 		t.Fatalf("expected line ranged chunk content, got:\n%s", frag.Content)
 	}
+	if frag.StartLine != 10 || frag.EndLine != 14 || frag.ContentHash != "abc123" {
+		t.Fatalf("expected structured line/hash metadata, got start=%d end=%d hash=%q",
+			frag.StartLine, frag.EndLine, frag.ContentHash)
+	}
 	if len(frag.Reasons) != 2 || frag.Reasons[0].Signal != "exact_content" {
 		t.Fatalf("expected chunk reasons, got %+v", frag.Reasons)
+	}
+}
+
+func TestPackFullCodeCarriesFileMetadata(t *testing.T) {
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:     writeTempFile(t, "small.go", "package main\nfunc main() {}\n"),
+			RelPath:  "cmd/small.go",
+			Lang:     models.LangGo,
+			Lines:    2,
+			Checksum: "file123",
+		},
+		Score: 5.0,
+	}}
+
+	b, err := packager.Pack(ranked, "main", packager.Options{Budget: 4000})
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if len(b.Fragments) != 1 {
+		t.Fatalf("expected one fragment, got %d", len(b.Fragments))
+	}
+	frag := b.Fragments[0]
+	if frag.Representation != models.RepFullCode {
+		t.Fatalf("expected full_code, got %s", frag.Representation)
+	}
+	if frag.StartLine != 1 || frag.EndLine != 2 || frag.ContentHash != "file123" {
+		t.Fatalf("expected full-code metadata, got start=%d end=%d hash=%q",
+			frag.StartLine, frag.EndLine, frag.ContentHash)
 	}
 }
 

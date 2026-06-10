@@ -88,8 +88,8 @@ type Report struct {
 // from recall=1.0 to recall=0.5 is below the absolute threshold but is a
 // real regression compared to main.
 type Regression struct {
-	Kind   string `json:"kind"`   // verdict_downgrade | fixture_failed | recall_dropped
-	Where  string `json:"where"`  // criterion ID or fixture identifier
+	Kind   string `json:"kind"`  // verdict_downgrade | fixture_failed | recall_dropped
+	Where  string `json:"where"` // criterion ID or fixture identifier
 	Before string `json:"before"`
 	After  string `json:"after"`
 	Detail string `json:"detail"`

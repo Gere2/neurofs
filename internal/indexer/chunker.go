@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/contextmap"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	codeParser "github.com/neuromfs/neuromfs/internal/parser"
@@ -181,6 +182,7 @@ func newChunk(filePath, kind, symbol string, startLine, endLine int, content str
 		Content:       content,
 		ContentHash:   contentHash,
 		ASTHash:       astHash,
+		Calls:         contextmap.CallsIn(content),
 		TokenEstimate: tokenbudget.EstimateTokens(content),
 		IndexedAt:     indexedAt,
 	}

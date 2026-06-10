@@ -53,7 +53,7 @@ func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, o
 	if opts.Machine {
 		p("<context>\n")
 		for i, frag := range b.Fragments {
-			p("<file path=%q>\n", filepath.ToSlash(frag.RelPath))
+			p("<file %s>\n", fragmentLocationAttrs(frag))
 			p("%s\n", strings.TrimRight(frag.Content, "\n"))
 			p("</file>\n")
 			if i < len(b.Fragments)-1 {
@@ -102,8 +102,8 @@ func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, o
 	p("<context>\n")
 	for i, frag := range b.Fragments {
 		reasons := summariseReasons(frag.Reasons)
-		p("<file path=%q rep=%q tokens=%d%s>\n",
-			filepath.ToSlash(frag.RelPath),
+		p("<file %s rep=%q tokens=%d%s>\n",
+			fragmentLocationAttrs(frag),
 			string(frag.Representation),
 			frag.Tokens,
 			reasonsAttr(reasons),
@@ -145,6 +145,20 @@ func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, o
 		p("\n(no context available — the bundle is empty)\n")
 	}
 	return nil
+}
+
+func fragmentLocationAttrs(frag models.ContextFragment) string {
+	attrs := []string{fmt.Sprintf("path=%q", filepath.ToSlash(frag.RelPath))}
+	if frag.StartLine > 0 && frag.EndLine >= frag.StartLine {
+		attrs = append(attrs,
+			fmt.Sprintf("start=%d", frag.StartLine),
+			fmt.Sprintf("end=%d", frag.EndLine),
+		)
+	}
+	if frag.ContentHash != "" {
+		attrs = append(attrs, fmt.Sprintf("hash=%q", frag.ContentHash))
+	}
+	return strings.Join(attrs, " ")
 }
 
 // hasSummary reports whether a RepoSummary carries any printable data.

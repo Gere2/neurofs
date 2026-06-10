@@ -362,4 +362,3 @@ func stripAllComments(lang models.Lang, content string) string {
 
 	return sb.String()
 }
-

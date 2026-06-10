@@ -33,10 +33,10 @@ const x = 5;
 		start int
 		end   int
 	}{
-		"export_class-user":             {kind: "export_class", start: 3, end: 9},
-		"method-user.constructor":       {kind: "method", start: 4, end: 4},
-		"method-user.sayhello":          {kind: "method", start: 6, end: 8},
-		"export_func-helper":            {kind: "export_func", start: 11, end: 13},
+		"export_class-user":       {kind: "export_class", start: 3, end: 9},
+		"method-user.constructor": {kind: "method", start: 4, end: 4},
+		"method-user.sayhello":    {kind: "method", start: 6, end: 8},
+		"export_func-helper":      {kind: "export_func", start: 11, end: 13},
 	}
 
 	if len(chunks) != len(expected) {
@@ -77,14 +77,13 @@ def helper():
 	indexedAt := time.Now()
 	chunks := BuildChunks("calc.py", "calc.py", models.LangPython, code, indexedAt)
 
-
 	expectedPython := map[string]struct {
 		kind  string
 		start int
 		end   int
 	}{
 		"class-calculator": {kind: "class", start: 1, end: 7},
-		"func-helper":       {kind: "func", start: 9, end: 10},
+		"func-helper":      {kind: "func", start: 9, end: 10},
 	}
 
 	if len(chunks) != len(expectedPython) {

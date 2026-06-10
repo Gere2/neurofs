@@ -76,6 +76,9 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 			Tokens:         tokens,
 			Score:          hit.Score,
 			Reasons:        chunkReasons(hit),
+			StartLine:      hit.StartLine,
+			EndLine:        hit.EndLine,
+			ContentHash:    hit.ContentHash,
 		})
 	}
 

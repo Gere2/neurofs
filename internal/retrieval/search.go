@@ -261,7 +261,7 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		}
 		return hits[i].Symbol < hits[j].Symbol
 	})
-	
+
 	// Enforce diversity: allow at most 3 chunks per file in the final search results
 	const maxChunksPerFile = 3
 	filteredHits := make([]Hit, 0, len(hits))

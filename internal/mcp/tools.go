@@ -8,16 +8,19 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/agentcontext"
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/contextladder"
+	"github.com/neuromfs/neuromfs/internal/contextmap"
+	"github.com/neuromfs/neuromfs/internal/contextusage"
 	"github.com/neuromfs/neuromfs/internal/fsutil"
 	"github.com/neuromfs/neuromfs/internal/indexer"
+	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/packager"
 	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
@@ -29,7 +32,11 @@ const taskInputSchema = `{
     "query":          { "type": "string",  "description": "What you're trying to do (a sentence)." },
     "repo":           { "type": "string",  "description": "Absolute path to repo. Default: cwd." },
     "budget":         { "type": "integer", "description": "Token budget. Default: 3000." },
-    "disable_chunks": { "type": "boolean", "description": "Disable chunk-based packing and build the prompt from ranked whole files instead." }
+    "disable_chunks": { "type": "boolean", "description": "Disable chunk-based packing and build the prompt from ranked whole files instead." },
+    "force":          { "type": "boolean", "description": "Ignore cached task prompts and regenerate." },
+    "machine":        { "type": "boolean", "description": "Use minimal machine-oriented prompt formatting." },
+    "agent":          { "type": "boolean", "description": "Return a JSON thin patch prompt with session_id, next_actions, MCP expansion instructions, and token measurement metadata." },
+    "session_id":     { "type": "string",  "description": "Optional session id used when agent=true. Generated when omitted." }
   },
   "required": ["query"]
 }`
@@ -53,7 +60,28 @@ const viewFileInputSchema = `{
 const outlineInputSchema = `{
   "type": "object",
   "properties": {
+    "path": { "type": "string", "description": "Optional relative file path. When provided, returns a file logic map instead of the repo file list." },
     "repo": { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
+const expandInputSchema = `{
+  "type": "object",
+  "properties": {
+    "target":     { "type": "string", "description": "Relative path, path:start-end, or indexed chunk hash to expand." },
+    "path":       { "type": "string", "description": "Alias for target, for hosts that prefer path-shaped arguments." },
+    "mode":       { "type": "string", "enum": ["auto", "outline", "excerpt", "full"], "description": "Expansion mode. Default: auto." },
+    "hash":       { "type": "string", "description": "Require a matching current file/chunk content hash." },
+    "session_id": { "type": "string", "description": "Optional context usage session id for token measurement." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
+  }
+}`
+
+const measureInputSchema = `{
+  "type": "object",
+  "properties": {
+    "session_id": { "type": "string", "description": "Optional session id to summarize." },
+    "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
   }
 }`
 
@@ -147,7 +175,7 @@ func toolsList() []Tool {
 		},
 		{
 			Name:        "neurofs_task",
-			Description: "Pack a Claude-ready prompt for a given intention against a repo. Returns the prompt text.",
+			Description: "Pack a Claude-ready prompt for a given intention. With agent=true, returns JSON with a thin patch prompt, session_id, next_actions, and measurement metadata.",
 			InputSchema: json.RawMessage(taskInputSchema),
 		},
 		{
@@ -162,8 +190,18 @@ func toolsList() []Tool {
 		},
 		{
 			Name:        "neurofs_get_outline",
-			Description: "List all indexed files and their sizes to outline the codebase structure.",
+			Description: "List indexed files, or return a file-level logic map when path is provided.",
 			InputSchema: json.RawMessage(outlineInputSchema),
+		},
+		{
+			Name:        "neurofs_expand",
+			Description: "Expand an indexed file target one step up the agent context ladder: outline, excerpt, or full file with hash validation.",
+			InputSchema: json.RawMessage(expandInputSchema),
+		},
+		{
+			Name:        "neurofs_measure",
+			Description: "Summarize actual context tokens consumed by a measured agent session.",
+			InputSchema: json.RawMessage(measureInputSchema),
 		},
 		{
 			Name:        "neurofs_list_signatures",
@@ -215,6 +253,10 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runViewFileTool(ctx, p.Arguments)
 	case "neurofs_get_outline":
 		return runGetOutlineTool(ctx, p.Arguments)
+	case "neurofs_expand":
+		return runExpandTool(ctx, p.Arguments)
+	case "neurofs_measure":
+		return runMeasureTool(ctx, p.Arguments)
 	case "neurofs_list_signatures":
 		return runListSignaturesTool(ctx, p.Arguments)
 	case "neurofs_get_excerpt":
@@ -239,6 +281,28 @@ type taskArgs struct {
 	Repo          string `json:"repo"`
 	Budget        int    `json:"budget"`
 	DisableChunks bool   `json:"disable_chunks"`
+	Force         bool   `json:"force"`
+	Machine       bool   `json:"machine"`
+	Agent         bool   `json:"agent"`
+	SessionID     string `json:"session_id"`
+}
+
+type taskAgentResponse struct {
+	Query          string                    `json:"query"`
+	RepoRoot       string                    `json:"repo_root"`
+	SessionID      string                    `json:"session_id"`
+	Prompt         string                    `json:"prompt"`
+	ThinPrompt     bool                      `json:"thin_prompt"`
+	NextActions    []agentcontext.NextAction `json:"next_actions"`
+	PromptPath     string                    `json:"prompt_path"`
+	BundlePath     string                    `json:"bundle_path"`
+	Stats          models.BundleStats        `json:"stats"`
+	TopPicks       []taskflow.TopPick        `json:"top_picks"`
+	Reused         bool                      `json:"reused"`
+	AutoScanned    bool                      `json:"auto_scanned"`
+	ChunkMode      bool                      `json:"chunk_mode"`
+	InitialTokens  int                       `json:"initial_tokens"`
+	BaselineTokens int                       `json:"baseline_tokens"`
 }
 
 // ContextOptions configures the high-level broker used by neurofs_context.
@@ -572,7 +636,6 @@ func shouldRouteContextToExcerpt(rawIntent, currentIntent string, hints []Contex
 	return len(hints[0].SymbolMatches) > 0 && hints[0].Score >= 6.0
 }
 
-
 func normalizeContextIntent(intent, query string) string {
 	intent = strings.ToLower(strings.TrimSpace(intent))
 	switch intent {
@@ -706,10 +769,51 @@ func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		RepoRoot:      repo,
 		Query:         args.Query,
 		Budget:        args.Budget,
+		Force:         args.Force,
 		DisableChunks: args.DisableChunks,
+		Ledger:        memory.New(memory.NewSqliteStore(repo)),
+		Machine:       args.Machine,
 	})
 	if err != nil {
 		return errResult(err.Error())
+	}
+	if args.Agent {
+		sessionID := strings.TrimSpace(args.SessionID)
+		if sessionID == "" {
+			sessionID = contextusage.NewSessionID(args.Query, time.Now())
+		}
+		agentPrompt, err := agentcontext.BuildPatchPrompt(repo, sessionID, result, agentcontext.Options{
+			Transport: agentcontext.TransportMCP,
+			Thin:      true,
+		})
+		if err != nil {
+			return errResult(fmt.Sprintf("agent context: %v", err))
+		}
+		_ = contextusage.Append(result.RepoRoot, contextusage.Entry{
+			SessionID:      sessionID,
+			Phase:          "initial_bundle",
+			Command:        "mcp.neurofs_task --agent",
+			Query:          args.Query,
+			Tokens:         agentPrompt.InitialTokens,
+			BaselineTokens: agentPrompt.BaselineTokens,
+		})
+		return jsonTextResult(taskAgentResponse{
+			Query:          result.Query,
+			RepoRoot:       result.RepoRoot,
+			SessionID:      sessionID,
+			Prompt:         agentPrompt.Text,
+			ThinPrompt:     agentPrompt.Thin,
+			NextActions:    agentPrompt.NextActions,
+			PromptPath:     result.PromptPath,
+			BundlePath:     result.BundlePath,
+			Stats:          result.Stats,
+			TopPicks:       result.TopPicks,
+			Reused:         result.Reused,
+			AutoScanned:    result.AutoScanned,
+			ChunkMode:      result.ChunkMode,
+			InitialTokens:  agentPrompt.InitialTokens,
+			BaselineTokens: agentPrompt.BaselineTokens,
+		})
 	}
 	return textResult(result.Prompt)
 }
@@ -913,6 +1017,7 @@ func runViewFileTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 }
 
 type outlineArgs struct {
+	Path string `json:"path"`
 	Repo string `json:"repo"`
 }
 
@@ -923,6 +1028,7 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 			return errResult(fmt.Sprintf("invalid arguments: %v", err))
 		}
 	}
+	args.Path = strings.TrimSpace(args.Path)
 	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {
 		return errResult(err.Error())
@@ -931,6 +1037,9 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 	cfg, err := config.New(repo)
 	if err != nil {
 		return errResult(err.Error())
+	}
+	if err := taskflow.EnsureFreshIndex(cfg); err != nil {
+		return errResult(fmt.Sprintf("auto-scan: %v", err))
 	}
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
@@ -943,12 +1052,169 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 		return errResult(err.Error())
 	}
 
+	if args.Path != "" {
+		rec, ok := contextladder.FindFile(files, args.Path)
+		if !ok {
+			return errResult(fmt.Sprintf("indexed file not found: %s", args.Path))
+		}
+		chunks, err := db.GetChunksForFile(rec.Path)
+		if err != nil {
+			return errResult(fmt.Sprintf("load chunks: %v", err))
+		}
+		rels, _ := db.AllRelations()
+		contentBytes, err := os.ReadFile(rec.Path)
+		if err != nil {
+			return errResult(fmt.Sprintf("read %s: %v", rec.RelPath, err))
+		}
+		logic := contextmap.Build(rec, files, chunks, rels, string(contentBytes))
+		return jsonTextResult(logic)
+	}
+
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "neurofs outline — %d files indexed in %s\n\n", len(files), repo)
 	for _, f := range files {
 		fmt.Fprintf(&sb, "- %s (%s)\n", f.RelPath, humanBytes(f.Size))
 	}
 	return textResult(sb.String())
+}
+
+type expandArgs struct {
+	Target    string `json:"target"`
+	Path      string `json:"path"`
+	Mode      string `json:"mode"`
+	Hash      string `json:"hash"`
+	SessionID string `json:"session_id"`
+	Repo      string `json:"repo"`
+}
+
+func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args expandArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	target := strings.TrimSpace(args.Target)
+	if target == "" {
+		target = strings.TrimSpace(args.Path)
+	}
+	if target == "" && strings.TrimSpace(args.Hash) == "" {
+		return errResult("target must not be empty")
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	cfg, err := config.New(repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	if err := cfg.Validate(); err != nil {
+		return errResult(fmt.Sprintf("config: %v", err))
+	}
+	if err := taskflow.EnsureFreshIndex(cfg); err != nil {
+		return errResult(fmt.Sprintf("auto-scan: %v", err))
+	}
+
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	defer db.Close()
+
+	files, err := db.AllFiles()
+	if err != nil {
+		return errResult(fmt.Sprintf("load files: %v", err))
+	}
+	rels, _ := db.AllRelations()
+
+	spec := contextladder.ParseSpec(target)
+	if args.Hash != "" {
+		spec.Hash = strings.TrimSpace(args.Hash)
+	}
+	rec, spec, err := contextladder.ResolveSpec(db, files, spec)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	chunks, err := db.GetChunksForFile(rec.Path)
+	if err != nil {
+		return errResult(fmt.Sprintf("load chunks: %v", err))
+	}
+	contentBytes, err := os.ReadFile(rec.Path)
+	if err != nil {
+		return errResult(fmt.Sprintf("read %s: %v", rec.RelPath, err))
+	}
+	content := string(contentBytes)
+
+	effMode, err := contextladder.EffectiveMode(args.Mode, spec)
+	if err != nil {
+		return errResult(err.Error())
+	}
+
+	var loggedTokens int
+	var response any
+	switch effMode {
+	case contextladder.ModeOutline:
+		logic := contextmap.Build(rec, files, chunks, rels, content)
+		loggedTokens = contextladder.EstimateOutlineTokens(logic)
+		response = logic
+	case contextladder.ModeExcerpt:
+		out, err := contextladder.BuildExcerpt(rec, chunks, content, spec)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		loggedTokens = out.Tokens
+		response = out
+	case contextladder.ModeFull:
+		out, err := contextladder.BuildFull(rec, content, spec)
+		if err != nil {
+			return errResult(err.Error())
+		}
+		loggedTokens = out.Tokens
+		response = out
+	default:
+		return errResult(fmt.Sprintf("unsupported expansion mode: %s", effMode))
+	}
+
+	if strings.TrimSpace(args.SessionID) != "" {
+		_ = contextusage.Append(cfg.RepoRoot, contextusage.Entry{
+			SessionID: strings.TrimSpace(args.SessionID),
+			Phase:     "expansion",
+			Command:   "mcp.neurofs_expand",
+			Path:      rec.RelPath,
+			Mode:      string(effMode),
+			StartLine: spec.StartLine,
+			EndLine:   spec.EndLine,
+			Hash:      spec.Hash,
+			Tokens:    loggedTokens,
+			Bytes:     len(contentBytes),
+		})
+	}
+	return jsonTextResult(response)
+}
+
+type measureArgs struct {
+	SessionID string `json:"session_id"`
+	Repo      string `json:"repo"`
+}
+
+func runMeasureTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	var args measureArgs
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return errResult(fmt.Sprintf("invalid arguments: %v", err))
+		}
+	}
+	repo, err := resolveRepo(ctx, args.Repo)
+	if err != nil {
+		return errResult(err.Error())
+	}
+	entries, err := contextusage.Read(repo, strings.TrimSpace(args.SessionID))
+	if err != nil {
+		return errResult(fmt.Sprintf("read usage: %v", err))
+	}
+	return jsonTextResult(contextusage.Summarise(strings.TrimSpace(args.SessionID), entries, 0))
 }
 
 type listSignaturesArgs struct {
@@ -1512,4 +1778,3 @@ func runPruneMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult
 
 	return textResult(fmt.Sprintf("Successfully pruned %d entries older than %d days.", count, args.Days))
 }
-
