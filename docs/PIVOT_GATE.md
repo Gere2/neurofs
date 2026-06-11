@@ -142,22 +142,41 @@ elided (excerpt-extractor issue)?
 
 ## G4 — Replay drift
 
-**Source.** Saved bundles + their corresponding model responses
-(`audit/bundles/*.json` + `audit/responses/*`).
+**Sources.** Pooled automatically from every drift observation available:
 
-**Question.** Does the bundle still produce the same recoveries it did
-when it was first saved? Have we regressed against history?
+1. **Records** — persisted replay verdicts under `audit/records/*.json`
+   (written by `audit replay` and the UI).
+2. **Pairs** — saved responses under `audit/responses/*` stem-paired with
+   their bundle snapshot in `audit/bundles/` (`responses/x.md` ↔
+   `bundles/x.json`). Each pair is **re-scored** with `audit.DetectDrift`
+   against the bundle bytes on disk, so the gate measures the history
+   itself rather than trusting a verdict persisted earlier. The recompute
+   agrees exactly with `audit replay` (validated on the seed pair: 88.0%
+   both ways). Orphan responses without a bundle are skipped.
+3. **Grounding ledger** — response-kind events from the continuous
+   grounding hook (`audit/grounding.jsonl`, see `neurofs ground`).
+   Edit-kind events are deliberately excluded: drift over an edit can be
+   legitimate new code.
 
-**Status.** Currently emitted as `SKIP` with a manual instruction:
+**Question.** Across everything we can replay, do model responses stay
+grounded in the bundles they were given?
 
-```
-audit replay --bundle X --response Y
-```
+**Verdict.**
+- `SKIP` if no samples exist in any source.
+- `FAIL` if mean drift rate > `MaxMeanDrift` (default 0.15). The detail
+  names the worst sample and the per-source counts.
+- `PASS` otherwise.
 
-**Why deferred.** Automating G4 requires walking pairs of bundle + response
-files and running `audit.DetectDrift` with consistent thresholds across
-the whole history. Worth doing in a follow-up iteration once the bundle
-catalogue grows past ~10 entries.
+**Known limitation.** Drift measures grounding discipline, not
+hallucination alone: a *design-plan* response legitimately names files and
+symbols that do not exist yet, and will read as high drift (the seed pair,
+a plan for `audit diff`, scores 88%). Feed G4 with implementation- and
+review-shaped responses, or expect plan-heavy histories to need a higher
+threshold. Small-n verdicts are honest but noisy — accumulate samples
+before acting on a single FAIL.
+
+**How to move it.** Every `audit replay`, every saved bundle+response pair,
+and every loop turn with the grounding hook enabled adds a sample for free.
 
 ---
 
