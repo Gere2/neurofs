@@ -39,10 +39,11 @@ The thesis is falsifiable, so it was measured first. On this repository,
 delivering context with `neurofs_search` costs **58.9% fewer tokens (median
 71.4%) than native whole-file reading, at equal fact recall**, with 0 search
 misses — against a 25% decision threshold, stable across runs. It is an honest
-result, not a universal one: on a large Python repo the same measurement
-*fails* (the AST-chunking gap), and the harness now says so rather than
-flattering itself. Method, per-task numbers, the cross-shape verdicts, and the
-proxy limits are in [`docs/phase0_economy.md`](docs/phase0_economy.md) and
+result, not a universal one: on a large Python repo the savings hold (82.9% at
+iso-recall, after method-level chunking landed) but retrieval still misses 40%
+of fact tasks there, and the harness says WARN rather than flattering itself.
+Method, per-task numbers, the cross-shape verdicts, and the proxy limits are in
+[`docs/phase0_economy.md`](docs/phase0_economy.md) and
 [`docs/phase_g5_cross_shape.md`](docs/phase_g5_cross_shape.md); reproduce on any
 indexed repo with:
 
@@ -711,7 +712,10 @@ working-set boosts. Exact identifier and filename matches now add
 rank when smaller alternatives match. `neurofs pack` (or `neurofs task`) now uses
 chunk-based retrieval by default to build bundles from those chunk hits (opt out with
 `--no-chunks`), carrying the same line-ranged retrieval into the one-shot prompt flow.
-Next: AST-backed chunking for TS/JS/Python.
+Python chunking is method-level (qualified `Class.method` symbols, class chunks
+capped at their header), mirroring the JS extractor — on pallets/click this took
+the iso-recall economy from −21.9% to +82.9%.
+Next: sharper intra-file chunk selection (retrieval recall on cold large repos).
 
 **Strategic planning**
 Current competitive radar and implementation direction live in

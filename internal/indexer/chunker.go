@@ -416,8 +416,16 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 	}
 
 	lines := logicalLines(content)
-	var chunks []models.Chunk
 
+	// First pass: indentation-scoped range per symbol. The parser emits
+	// methods as their own symbols (Class.method), so ranges nest: a class
+	// range covers its whole body, each method covers its own block.
+	type symRange struct {
+		sym   models.Symbol
+		start int
+		end   int
+	}
+	ranges := make([]symRange, 0, len(res.Symbols))
 	for _, sym := range res.Symbols {
 		if sym.Line <= 0 || sym.Line > len(lines) {
 			continue
@@ -436,18 +444,44 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 				break
 			}
 		}
+		ranges = append(ranges, symRange{sym: sym, start: sym.Line, end: endLine})
+	}
 
-		// strip trailing blank/comment lines
-		for endLine > sym.Line {
+	// Second pass: cap each class at its first child symbol so the class
+	// chunk carries the header — class line, docstring, class-level
+	// attributes — instead of duplicating every method body. Without the cap
+	// a large class (click's Context is ~1000 lines) becomes one chunk that
+	// is too big to be cheap and too blunt to target.
+	for i := range ranges {
+		if ranges[i].sym.Kind != "class" {
+			continue
+		}
+		for j := range ranges {
+			if j == i {
+				continue
+			}
+			if ranges[j].start > ranges[i].start && ranges[j].start <= ranges[i].end {
+				if headerEnd := ranges[j].start - 1; headerEnd < ranges[i].end {
+					ranges[i].end = headerEnd
+				}
+			}
+		}
+	}
+
+	var chunks []models.Chunk
+	for _, r := range ranges {
+		endLine := r.end
+		// strip trailing blank/comment/decorator lines (a decorator above the
+		// first method belongs to the method, not the class header)
+		for endLine > r.start {
 			trimmed := strings.TrimSpace(lines[endLine-1])
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "@") {
 				endLine--
 			} else {
 				break
 			}
 		}
-
-		chunks = append(chunks, newChunkFromLines(filePath, sym.Kind, sym.Name, sym.Line, endLine, lines, indexedAt))
+		chunks = append(chunks, newChunkFromLines(filePath, r.sym.Kind, r.sym.Name, r.start, endLine, lines, indexedAt))
 	}
 
 	sort.SliceStable(chunks, func(i, j int) bool {

@@ -8,8 +8,14 @@ once the measurement was made honest and reproducible.
 | Shape | Repo | files | `economy` (iso-recall) | overall recall / miss | `bench` top-3 | `gate` G2 / G3 |
 |---|---|---:|---|---|---:|---|
 | Go service | NeuroFS (this repo) | 143 | **PASS · 58.9%** | 86% / 0% | 83.3% | PASS / PASS (96%) |
-| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **FAIL · −21.9%** | 20% / 60% | 66.7% | PASS / **FAIL (13%)** |
+| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **WARN · 82.9%** | 20% / 40% | 66.7% | PASS / **FAIL (20%)** |
 | TS/JS frontend | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
+
+> The Python row improved from **FAIL · −21.9% / 60% miss / G3 13%** after
+> method-level chunking landed for Python (see "Closing the chunking gap"
+> below). The token economy now holds on the answerable subset (82.9% fewer
+> tokens at iso-recall); retrieval recall is the remaining gap, which is why
+> the verdict is `WARN`, not `PASS`.
 
 Go uses the committed `audit/facts/*.json`; Python uses the committed
 [`g5_fixtures/click/`](g5_fixtures/click) (15 grep-verified identifiers across 5
@@ -45,14 +51,42 @@ fooling ourselves. We were, briefly; the corrected result is below.
 (143 files), `neurofs_search` delivers equal recall for **58.9% fewer tokens**
 with **0 search misses**. That is the firm result the pivot rests on.
 
-**It breaks on large Python files.** On click, `neurofs_search` returns
-oversized, line-based chunks (≈12.5k tokens for the scored subset) that *lose*
-to whole-file reading (**−21.9%**) and miss **60%** of facts (overall recall
-20%). This is not a toy-repo artefact — it is the **AST-chunking gap** the
-roadmap already names ("Next: AST-backed chunking for TS/JS/Python"). Without
-syntactic chunk boundaries, a Python "chunk" is a coarse line window: too big to
-be cheap, too blunt to reliably contain the asked-for symbol. Budget is not the
-lever — G3 plateaus at 20% from an 8k → 24k budget sweep.
+**It used to break on large Python files — the chunking half is now closed.**
+Originally the Python parser only extracted column-0 symbols, so methods inside
+classes were invisible and `class Context` (~1,000 lines in click) became one
+chunk: too big to be cheap, too blunt to target. Result: `neurofs_search`
+returned ≈12.5k tokens for the scored subset, *lost* to whole-file reading
+(−21.9%) and missed 60% of facts. Budget was not the lever — G3 plateaued at
+20% across an 8k → 24k sweep.
+
+## Closing the chunking gap
+
+The fix mirrors what the JS path already did: the Python parser now extracts
+methods at every nesting level (qualified `Class.method`, closures and
+docstring example code excluded), and the chunker emits per-method chunks
+while capping each class chunk at its header (class line, docstring,
+class-level attributes). On click this took symbols from 1,130 → 1,642 and
+chunk sizes from class-sized to method-sized. Measured before/after on the
+same committed fixtures:
+
+| metric (click) | before | after |
+|---|---:|---:|
+| economy verdict | FAIL | **WARN** |
+| iso-recall token reduction | −21.9% | **+82.9%** |
+| arm B tokens (scored subset) | 12,469 | 1,964 |
+| search miss rate | 60% | 40% |
+| overall recall | 20% | 20% |
+| gate G3 (default bundle) | 13% | 20% |
+
+The token economy now holds wherever retrieval grounds at all — the remaining
+gap is **retrieval recall** (which chunks surface), not chunk economics. One
+follow-up was tried and **reverted** after measurement: scaling `symbol_match`
+by the number of matching query terms dropped recall on *both* shapes (click
+20% → 13%, NeuroFS 86% → 75%) because the substring-based term matcher lets
+generic question words stack onto irrelevant symbols. The honest conclusion:
+intra-file chunk *selection* needs a sharper signal than lexical term
+counting — likely exact-identifier awareness — and is the next measurable
+engine investment.
 
 **The toy repo inverts for the opposite reason.** On the 10-file TS sample,
 files are ~150–300 tokens each, so any excerpt overhead loses to just reading
@@ -60,17 +94,17 @@ the whole (tiny) file. Recall is 100% — there is simply nothing to compress.
 
 **Ranking is healthy cross-shape.** `bench` top-3 precision is 83% / 67% / 100%
 (Go / Python / TS); the ranker surfaces an expected file in the top 3 on every
-shape. The Python failure is in *chunking and excerpt size*, not in which files
-rank.
+shape. The Python gap is in *which chunks* surface within the right files, not
+in which files rank.
 
 ## Verdicts
 
 - **Go service** — `economy` PASS (58.9%, 0 miss), `gate` G2/G3 PASS. The result
-  that justifies the pivot.
-- **Python lib** — `economy` **FAIL** (−21.9%, 60% miss); `gate` G2 PASS, **G3
-  FAIL (13%)**. A real, reproducible engine gap: AST-backed chunking for
-  large-file languages is the highest-value next investment, now with a number
-  attached.
+  that justifies the pivot. Unchanged by the Python chunking fix (verified).
+- **Python lib** — `economy` **WARN** (82.9% reduction on the answerable
+  subset, 40% miss); `gate` G2 PASS, **G3 FAIL (20%)**. The chunk-economics
+  half of the gap is closed; retrieval recall on cold large repos is the
+  remaining, measured gap.
 - **TS/JS toy** — `economy` FAIL (small-file inversion), `gate` G2/G3 PASS.
 
 ## Note on G1 (real-use signal)

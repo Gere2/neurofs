@@ -121,14 +121,14 @@ This is an honest proxy with explicit limits:
 5. **Retrieval mixes live FS and index.** `neurofs_search`'s exact-content arm
    reads the working tree via ripgrep while symbol/graph signals come from the
    SQLite index; results reflect the repo state at run time.
-6. **Shape-dependent — and it does NOT hold everywhere.** The advantage is
-   proven on this Go service (58.9%). It does **not** generalise to a large
-   Python repo (pallets/click): there `neurofs_search` returns oversized,
-   line-based chunks and *loses* to whole-file reading (−21.9%) while missing
-   60% of facts — the AST-chunking gap, not a measurement artefact. On a toy
-   10-file repo it inverts for the opposite reason (files already tiny). The
-   reproducible cross-shape verdicts and the honest correction of an earlier
-   over-optimistic number are in
+6. **Shape-dependent — and recall does NOT hold everywhere.** The advantage is
+   proven on this Go service (58.9%, 0 misses). On a large Python repo
+   (pallets/click) the chunk *economics* now hold too (82.9% reduction on the
+   answerable subset, after method-level Python chunking landed), but
+   retrieval still misses 40% of fact tasks there, so the verdict is WARN, not
+   PASS. On a toy 10-file repo the economy inverts (files already tiny). The
+   reproducible cross-shape verdicts, the before/after of the chunking fix,
+   and the honest correction of an earlier over-optimistic number are in
    [`phase_g5_cross_shape.md`](phase_g5_cross_shape.md).
 
 ## Decision
