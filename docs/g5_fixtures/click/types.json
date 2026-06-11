@@ -1,0 +1,1 @@
+{"question":"How are option parameter types defined and converted in click?","expects_facts":["class Option","def get_default","class ParamType"]}

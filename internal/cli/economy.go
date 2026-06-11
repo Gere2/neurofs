@@ -199,9 +199,14 @@ func printEconomyReport(w interface{ Write([]byte) (int, error) }, r economyRepo
 	}
 
 	s := r.Summary
-	p("  summary (%d task%s, %d scored, %d search miss):\n", s.Tasks, plural(s.Tasks), s.Scored, s.SearchMiss)
-	p("    mean tokens     : neurofs_search %d | native whole %d\n", s.MeanTokensNeurofs, s.MeanTokensNative)
-	p("    mean recall     : neurofs_search %.0f%% | native %.0f%% (matched)\n", s.MeanRecallNeurofs*100, s.MeanRecallNative*100)
+	p("  summary (%d task%s, %d fact, %d scored, %d search miss):\n", s.Tasks, plural(s.Tasks), s.FactTasks, s.Scored, s.SearchMiss)
+	p("    overall recall  : neurofs_search %.0f%% over %d fact task%s (misses count as 0)\n",
+		s.OverallRecallNeurofs*100, s.FactTasks, plural(s.FactTasks))
+	if s.MissRate > 0 {
+		p("    miss rate       : %.0f%% (savings below cover only the answerable subset)\n", s.MissRate*100)
+	}
+	p("    mean tokens     : neurofs_search %d | native whole %d  (scored subset)\n", s.MeanTokensNeurofs, s.MeanTokensNative)
+	p("    iso recall      : neurofs_search %.0f%% | native %.0f%% (matched, scored subset)\n", s.MeanRecallNeurofs*100, s.MeanRecallNative*100)
 	p("    token reduction : mean %.1f%% (median %.1f%%) at iso-recall\n", s.MeanTokenReduction*100, s.MedianTokenReduction*100)
 	p("    threshold       : %.0f%%\n", s.Threshold*100)
 	p("    VERDICT         : %s — %s\n", s.Verdict, s.Detail)

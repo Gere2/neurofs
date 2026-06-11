@@ -149,6 +149,29 @@ func TestSummariseVerdictThreshold(t *testing.T) {
 	}
 }
 
+func TestSummariseOverallRecallCountsMisses(t *testing.T) {
+	// 3 fact tasks: one B grounded fully (and saved tokens), two search misses.
+	// Scored-subset recall is 100%, but the honest overall recall is 1/3, and a
+	// 67% miss rate must downgrade the verdict to WARN, not PASS.
+	hit := TaskResult{HasFacts: true, Scored: true, TokenReduction: 0.6,
+		Neurofs: Arm{Tokens: 100, Recall: 1}, NativeIso: Arm{Tokens: 300, Recall: 1}}
+	miss := TaskResult{HasFacts: true, Note: "neurofs_search recovered no facts (search miss)"}
+	s := summarise([]TaskResult{hit, miss, miss}, Options{}.withDefaults())
+
+	if s.FactTasks != 3 || s.SearchMiss != 2 || s.Scored != 1 {
+		t.Fatalf("FactTasks/SearchMiss/Scored = %d/%d/%d, want 3/2/1", s.FactTasks, s.SearchMiss, s.Scored)
+	}
+	if s.MeanRecallNeurofs < 0.999 {
+		t.Fatalf("scored-subset recall = %.2f, want 1.0", s.MeanRecallNeurofs)
+	}
+	if s.OverallRecallNeurofs < 0.33 || s.OverallRecallNeurofs > 0.34 {
+		t.Fatalf("overall recall = %.3f, want ~0.333 (misses count as 0)", s.OverallRecallNeurofs)
+	}
+	if s.Verdict != "WARN" {
+		t.Fatalf("verdict = %q, want WARN (high miss rate masks the savings) — %s", s.Verdict, s.Detail)
+	}
+}
+
 func TestMedian(t *testing.T) {
 	if got := median([]float64{0.1, 0.3, 0.2}); got != 0.2 {
 		t.Fatalf("median odd = %v, want 0.2", got)

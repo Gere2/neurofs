@@ -1,18 +1,28 @@
 # Phase 0 — Proving the token economy
 
-**Verdict: PASS.** Delivering context with `neurofs_search` costs **57.7% fewer
+**Verdict: PASS.** Delivering context with `neurofs_search` costs **58.9% fewer
 tokens on average (median 71.4%)** than native whole-file reading **at equal
-fact recall** — more than double the 25% decision threshold. Phase 0 clears the
-gate; the pivot to a context-and-verification plane for autonomous loops is
-justified on the economics, not just the narrative.
+fact recall** — more than double the 25% decision threshold, with **0 search
+misses** (every fact task grounded). Phase 0 clears the gate; the pivot to a
+context-and-verification plane for autonomous loops is justified on the
+economics, not just the narrative.
 
 | metric | NeuroFS (`neurofs_search`) | native (whole files) |
 |---|---|---|
-| mean context tokens / task | **1,938** | 5,096 |
-| mean fact recall | 86% | 89% (matched, ≥ B by construction) |
-| mean token reduction at iso-recall | **57.7%** | — |
+| mean context tokens / task (scored subset) | **1,878** | 5,096 |
+| overall fact recall (all 7 tasks, misses = 0) | **86%** | — |
+| iso-recall (scored subset) | 86% | 89% (matched, ≥ B by construction) |
+| mean token reduction at iso-recall | **58.9%** | — |
 | median token reduction at iso-recall | **71.4%** | — |
-| tasks scored / search misses | 7 / 0 | — |
+| fact tasks / scored / search misses | 7 / 7 / **0** | — |
+
+> Honest-recall note: the harness reports recall two ways. **Overall recall**
+> averages over *all* fact tasks, counting a search miss as 0 — the "how often
+> does it ground at all" number. **Iso-recall** is the scored subset used for
+> the token comparison (you cannot compute a token ratio for a 0-recall task).
+> A high miss rate (≥ 1/3 of fact tasks) downgrades the verdict to `WARN` so a
+> flattering scored-subset number can never stand alone. Here misses are 0, so
+> the two coincide and the PASS is unqualified.
 
 Reproduce:
 
@@ -77,11 +87,11 @@ defensible baseline so it does not gate.)
 
 | task | B tokens | B recall | native tokens | native recall | reduction |
 |---|---:|---:|---:|---:|---:|
-| MCP tools exposed | 2,264 | 50% | 4,868 | 50% | 53.5% |
+| MCP tools exposed | 1,690 | 50% | 4,868 | 50% | 65.3% |
 | packager excerpt vs signature | 1,274 | 75% | 7,002 | 100% | 81.8% |
 | packager UpgradeWithSlack | 2,552 | 100% | 2,862 | 100% | 10.8% |
-| ranker filename match | 1,714 | 100% | 6,096 | 100% | 71.9% |
-| retrieval ripgrep dependency | 3,069 | 100% | 5,119 | 100% | 40.0% |
+| ranker filename match | 1,672 | 100% | 6,096 | 100% | 72.6% |
+| retrieval ripgrep dependency | 3,267 | 100% | 5,119 | 100% | 36.2% |
 | session ledger timelines | 828 | 75% | 3,214 | 75% | 74.2% |
 | storage WAL pragma | 1,866 | 100% | 6,516 | 100% | 71.4% |
 
@@ -111,9 +121,14 @@ This is an honest proxy with explicit limits:
 5. **Retrieval mixes live FS and index.** `neurofs_search`'s exact-content arm
    reads the working tree via ripgrep while symbol/graph signals come from the
    SQLite index; results reflect the repo state at run time.
-6. **Shape-dependent.** The advantage scales with file size. On real repos it
-   holds (Go 58.9%, Python 72.5%); on a toy 10-file repo of tiny files it
-   inverts (whole-file reading is cheaper). See
+6. **Shape-dependent — and it does NOT hold everywhere.** The advantage is
+   proven on this Go service (58.9%). It does **not** generalise to a large
+   Python repo (pallets/click): there `neurofs_search` returns oversized,
+   line-based chunks and *loses* to whole-file reading (−21.9%) while missing
+   60% of facts — the AST-chunking gap, not a measurement artefact. On a toy
+   10-file repo it inverts for the opposite reason (files already tiny). The
+   reproducible cross-shape verdicts and the honest correction of an earlier
+   over-optimistic number are in
    [`phase_g5_cross_shape.md`](phase_g5_cross_shape.md).
 
 ## Decision

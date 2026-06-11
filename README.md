@@ -36,11 +36,15 @@ real code, with the reason for every included fragment on the record.
 ## The economy, measured
 
 The thesis is falsifiable, so it was measured first. On this repository,
-delivering context with `neurofs_search` costs **57.7% fewer tokens (median
-71.4%) than native whole-file reading, at equal fact recall** — against a 25%
-decision threshold, stable across runs. Method, per-task numbers, and the proxy
-limits are in [`docs/phase0_economy.md`](docs/phase0_economy.md); reproduce on
-any indexed repo with:
+delivering context with `neurofs_search` costs **58.9% fewer tokens (median
+71.4%) than native whole-file reading, at equal fact recall**, with 0 search
+misses — against a 25% decision threshold, stable across runs. It is an honest
+result, not a universal one: on a large Python repo the same measurement
+*fails* (the AST-chunking gap), and the harness now says so rather than
+flattering itself. Method, per-task numbers, the cross-shape verdicts, and the
+proxy limits are in [`docs/phase0_economy.md`](docs/phase0_economy.md) and
+[`docs/phase_g5_cross_shape.md`](docs/phase_g5_cross_shape.md); reproduce on any
+indexed repo with:
 
 ```
 neurofs economy            # human-readable A/B report

@@ -1,0 +1,1 @@
+{"question":"How does click create and manage the Context object during command invocation?","expects_facts":["make_context","resilient_parsing","class Context"]}

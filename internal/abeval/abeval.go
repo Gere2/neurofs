@@ -85,6 +85,7 @@ type TaskResult struct {
 	NativeIso Arm `json:"native_iso"` // arm A: whole files to match B's recall
 
 	TokenReduction float64 `json:"token_reduction"` // 1 - B/A, iso-recall
+	HasFacts       bool    `json:"has_facts"`       // task carried at least one real fact
 	Scored         bool    `json:"scored"`          // false if no facts or B recovered nothing
 	Note           string  `json:"note,omitempty"`
 }
@@ -92,16 +93,27 @@ type TaskResult struct {
 // Summary rolls the per-task results into headline metrics and a verdict.
 type Summary struct {
 	Tasks      int `json:"tasks"`
-	Scored     int `json:"scored"`      // tasks that contributed to the aggregate
-	SearchMiss int `json:"search_miss"` // tasks where arm B recovered no facts (recall 0)
+	FactTasks  int `json:"fact_tasks"`  // tasks carrying at least one real fact
+	Scored     int `json:"scored"`      // fact tasks B recovered something on (iso-recall subset)
+	SearchMiss int `json:"search_miss"` // fact tasks where arm B recovered no facts (recall 0)
 
 	MeanTokensNeurofs int `json:"mean_tokens_neurofs"`
 	MeanTokensNative  int `json:"mean_tokens_native"`
 
-	// MeanRecallNeurofs is arm B's absolute recall (a quality signal). The
-	// native arm is compared at this recall, so its recall equals or exceeds it.
+	// MeanRecallNeurofs is arm B's recall over the SCORED subset (the iso-recall
+	// comparison set). The native arm is compared at this recall, so its recall
+	// equals or exceeds it. Reported alongside, never instead of, the honest
+	// OverallRecallNeurofs below.
 	MeanRecallNeurofs float64 `json:"mean_recall_neurofs"`
 	MeanRecallNative  float64 `json:"mean_recall_native"`
+
+	// OverallRecallNeurofs is arm B's recall over ALL fact tasks, counting
+	// search misses as 0. This is the honest "how often does it ground at all"
+	// number; MeanRecallNeurofs only describes the subset it did ground.
+	OverallRecallNeurofs float64 `json:"overall_recall_neurofs"`
+	// MissRate is SearchMiss / FactTasks — high values mean the headline token
+	// savings only apply to a minority of tasks.
+	MissRate float64 `json:"miss_rate"`
 
 	MeanTokenReduction   float64 `json:"mean_token_reduction"`
 	MedianTokenReduction float64 `json:"median_token_reduction"`
@@ -200,8 +212,10 @@ func evalTask(ctx context.Context, t Task, search SearchFn, absByRel map[string]
 		res.NativeIso.FactsHit, res.NativeIso.Recall = audit.ScoreFacts(wholeBuf.String(), t.ExpectsFacts)
 	}
 
+	res.HasFacts = len(validFacts(t.ExpectsFacts)) > 0
+
 	switch {
-	case len(validFacts(t.ExpectsFacts)) == 0:
+	case !res.HasFacts:
 		res.Note = "no facts to score"
 	case res.Neurofs.Recall <= 1e-9:
 		res.Note = "neurofs_search recovered no facts (search miss)"
@@ -221,8 +235,13 @@ func summarise(results []TaskResult, opts Options) Summary {
 		sumTokB, sumTokA int
 		sumRecB, sumRecA float64
 		reductions       []float64
+		overallRecallSum float64 // arm B recall over ALL fact tasks (misses = 0)
 	)
 	for _, r := range results {
+		if r.HasFacts {
+			s.FactTasks++
+			overallRecallSum += r.Neurofs.Recall
+		}
 		if !r.Scored {
 			if strings.Contains(r.Note, "search miss") {
 				s.SearchMiss++
@@ -235,6 +254,11 @@ func summarise(results []TaskResult, opts Options) Summary {
 		sumRecB += r.Neurofs.Recall
 		sumRecA += r.NativeIso.Recall
 		reductions = append(reductions, r.TokenReduction)
+	}
+
+	if s.FactTasks > 0 {
+		s.OverallRecallNeurofs = overallRecallSum / float64(s.FactTasks)
+		s.MissRate = float64(s.SearchMiss) / float64(s.FactTasks)
 	}
 
 	if s.Scored == 0 {
@@ -251,11 +275,24 @@ func summarise(results []TaskResult, opts Options) Summary {
 	s.MeanTokenReduction = mean(reductions)
 	s.MedianTokenReduction = median(reductions)
 
-	if s.MeanTokenReduction >= opts.Threshold {
+	// A high miss rate means the headline savings cover only a minority of
+	// tasks — the token economy is real but retrieval is leaving facts on the
+	// floor. Flag it rather than letting a flattering scored-subset number stand
+	// alone. One third is the line: below it, misses are noise; at or above it,
+	// they dominate the story.
+	missHeavy := s.MissRate >= 1.0/3.0
+
+	switch {
+	case s.MeanTokenReduction >= opts.Threshold && !missHeavy:
 		s.Verdict = "PASS"
-		s.Detail = fmt.Sprintf("mean iso-recall token reduction %.1f%% >= %.0f%% (B %d tok vs native %d tok at %.0f%% recall)",
-			s.MeanTokenReduction*100, opts.Threshold*100, s.MeanTokensNeurofs, s.MeanTokensNative, s.MeanRecallNeurofs*100)
-	} else {
+		s.Detail = fmt.Sprintf("mean iso-recall token reduction %.1f%% >= %.0f%% (B %d tok vs native %d tok); overall recall %.0f%% over %d fact tasks, %d miss",
+			s.MeanTokenReduction*100, opts.Threshold*100, s.MeanTokensNeurofs, s.MeanTokensNative,
+			s.OverallRecallNeurofs*100, s.FactTasks, s.SearchMiss)
+	case s.MeanTokenReduction >= opts.Threshold && missHeavy:
+		s.Verdict = "WARN"
+		s.Detail = fmt.Sprintf("savings hold on the answerable subset (%.1f%% reduction) but %.0f%% of fact tasks are search misses — retrieval recall, not the economy, is the gap",
+			s.MeanTokenReduction*100, s.MissRate*100)
+	default:
 		s.Verdict = "FAIL"
 		s.Detail = fmt.Sprintf("mean iso-recall token reduction %.1f%% below threshold %.0f%%",
 			s.MeanTokenReduction*100, opts.Threshold*100)

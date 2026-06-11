@@ -3,24 +3,27 @@
   "search_limit": 8,
   "summary": {
     "tasks": 7,
+    "fact_tasks": 7,
     "scored": 7,
     "search_miss": 0,
-    "mean_tokens_neurofs": 1938,
+    "mean_tokens_neurofs": 1878,
     "mean_tokens_native": 5096,
     "mean_recall_neurofs": 0.8571428571428571,
     "mean_recall_native": 0.8928571428571429,
-    "mean_token_reduction": 0.5766565346804117,
+    "overall_recall_neurofs": 0.8571428571428571,
+    "miss_rate": 0,
+    "mean_token_reduction": 0.5889598539345007,
     "median_token_reduction": 0.7136279926335175,
     "threshold": 0.25,
     "verdict": "PASS",
-    "detail": "mean iso-recall token reduction 57.7% \u003e= 25% (B 1938 tok vs native 5096 tok at 86% recall)"
+    "detail": "mean iso-recall token reduction 58.9% \u003e= 25% (B 1878 tok vs native 5096 tok); overall recall 86% over 7 fact tasks, 0 miss"
   },
   "tasks": [
     {
       "question": "What tools does the MCP server expose to the client?",
       "source": "mcp-tools-list.json",
       "neurofs": {
-        "tokens": 2264,
+        "tokens": 1690,
         "recall": 0.5,
         "files": [
           "internal/mcp/server.go",
@@ -44,7 +47,8 @@
           "neurofs_view_file"
         ]
       },
-      "token_reduction": 0.5349219391947412,
+      "token_reduction": 0.6528348397699261,
+      "has_facts": true,
       "scored": true
     },
     {
@@ -79,6 +83,7 @@
         ]
       },
       "token_reduction": 0.8180519851471009,
+      "has_facts": true,
       "scored": true
     },
     {
@@ -112,13 +117,14 @@
         ]
       },
       "token_reduction": 0.10831586303284413,
+      "has_facts": true,
       "scored": true
     },
     {
       "question": "How does the ranker score filename matches and how is that weight defined?",
       "source": "ranking-filename-match.json",
       "neurofs": {
-        "tokens": 1714,
+        "tokens": 1672,
         "recall": 1,
         "files": [
           "internal/ranking/ranking.go",
@@ -143,14 +149,15 @@
           "scoreFile"
         ]
       },
-      "token_reduction": 0.7188320209973753,
+      "token_reduction": 0.7257217847769029,
+      "has_facts": true,
       "scored": true
     },
     {
       "question": "How does the search retrieval use ripgrep and what is the timeout value?",
       "source": "retrieval-ripgrep-dependency.json",
       "neurofs": {
-        "tokens": 3069,
+        "tokens": 3267,
         "recall": 1,
         "files": [
           "internal/retrieval/search.go",
@@ -177,7 +184,8 @@
           "normalizeRGPath"
         ]
       },
-      "token_reduction": 0.40046884157061924,
+      "token_reduction": 0.3617894119945302,
+      "has_facts": true,
       "scored": true
     },
     {
@@ -213,6 +221,7 @@
         ]
       },
       "token_reduction": 0.7423771001866832,
+      "has_facts": true,
       "scored": true
     },
     {
@@ -248,6 +257,7 @@
         ]
       },
       "token_reduction": 0.7136279926335175,
+      "has_facts": true,
       "scored": true
     }
   ]
