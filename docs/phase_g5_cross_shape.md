@@ -102,9 +102,26 @@ follow-ups were measured; two were reverted, one landed:
   Go, weaker click gains (47%, 1 miss) — 6.0 kept.
 
 The remaining recall gap on click (53% vs the 80% bar) is concentrated in
-fact-bearing chunks whose names the question does *not* speak verbatim —
-the next signal has to come from structure (callers/callees of the named
-symbols), not from more lexical weight tuning.
+fact-bearing chunks whose names the question does *not* speak verbatim. Two
+follow-up hypotheses for reaching them were then measured and **falsified**:
+
+- **Component equality** (`symbol_component` +4.0: query term equal to one
+  snake/camel component of the name — "parse" vs `parse_args`, "runner" vs
+  `CliRunner`). Miss-level analysis said it reaches 4 of the 6 missing facts;
+  measured, it reaches everything else too: click recall **53% → 27%**,
+  misses back to 40%, main 82% → 79%. At a fixed result limit, precision
+  beats reach.
+- **Callee boost** (`called_by_named` +4.0: chunks that an exactly-named
+  chunk calls, same file — the structural "callers/callees" idea this doc
+  previously recommended). Null on click (53% → 53%; the predicted
+  `isolation` recovery did not materialise) and regressed main 82% → 75% by
+  displacement. The hypothesis is falsified as stated.
+
+Five scoring experiments, one keeper (`symbol_exact`): static lexical and
+shallow structural signals are at a local optimum at limit 8. The remaining
+recall likely needs either real (non-mock) embeddings on cold repos or a
+wider candidate surface for the bundle path — both measurable, neither a
+weight tweak.
 
 **The toy repo inverts for the opposite reason.** On the 10-file TS sample,
 files are ~150–300 tokens each, so any excerpt overhead loses to just reading
