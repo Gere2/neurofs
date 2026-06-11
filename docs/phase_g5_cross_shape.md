@@ -7,15 +7,17 @@ once the measurement was made honest and reproducible.
 
 | Shape | Repo | files | `economy` (iso-recall) | overall recall / miss | `bench` top-3 | `gate` G2 / G3 |
 |---|---|---:|---|---|---:|---|
-| Go service | NeuroFS (this repo) | 143 | **PASS · 58.9%** | 86% / 0% | 83.3% | PASS / PASS (96%) |
-| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **WARN · 82.9%** | 20% / 40% | 66.7% | PASS / **FAIL (20%)** |
+| Go service | NeuroFS (this repo) | 143 | **PASS · 48.2%** | 82% / 0% | 83.3% | PASS / PASS (96%) |
+| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **PASS · 88.6%** | 53% / 0% | 66.7% | PASS / **FAIL (53%)** |
 | TS/JS frontend | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
 
-> The Python row improved from **FAIL · −21.9% / 60% miss / G3 13%** after
-> method-level chunking landed for Python (see "Closing the chunking gap"
-> below). The token economy now holds on the answerable subset (82.9% fewer
-> tokens at iso-recall); retrieval recall is the remaining gap, which is why
-> the verdict is `WARN`, not `PASS`.
+> The Python row started at **FAIL · −21.9% / 60% miss / G3 13%** and reached
+> PASS in two measured steps: method-level chunking (→ WARN · 82.9%, miss 40%,
+> G3 20%) and the `symbol_exact` retrieval signal (→ PASS · 88.6%, **0
+> misses**, recall 20% → 53%, G3 53%). The second step costs the Go shape one
+> hard task (economy 58.9% → 48.2%, recall 86% → 82%, still PASS) — cross-shape
+> recall was chosen over the prettier single-repo number. Both trade-offs are
+> documented below.
 
 Go uses the committed `audit/facts/*.json`; Python uses the committed
 [`g5_fixtures/click/`](g5_fixtures/click) (15 grep-verified identifiers across 5
@@ -78,15 +80,31 @@ same committed fixtures:
 | overall recall | 20% | 20% |
 | gate G3 (default bundle) | 13% | 20% |
 
-The token economy now holds wherever retrieval grounds at all — the remaining
-gap is **retrieval recall** (which chunks surface), not chunk economics. One
-follow-up was tried and **reverted** after measurement: scaling `symbol_match`
-by the number of matching query terms dropped recall on *both* shapes (click
-20% → 13%, NeuroFS 86% → 75%) because the substring-based term matcher lets
-generic question words stack onto irrelevant symbols. The honest conclusion:
-intra-file chunk *selection* needs a sharper signal than lexical term
-counting — likely exact-identifier awareness — and is the next measurable
-engine investment.
+That left **retrieval recall** (which chunks surface) as the gap. Three
+follow-ups were measured; two were reverted, one landed:
+
+- **Reverted — term-proportional `symbol_match`.** Scaling the symbol weight by
+  matching-term count dropped recall on *both* shapes (click 20% → 13%, NeuroFS
+  86% → 75%): the substring-based matcher lets generic question words stack
+  onto irrelevant symbols.
+- **Reverted — class-header anchoring.** Pulling `class X`'s header chunk in
+  whenever ≥2 of X's methods ranked changed nothing on click (the header
+  exceeded the size cap — click docstrings are huge) and regressed NeuroFS
+  (86% → 75%) by evicting fact-bearing hits at a full result limit.
+- **Landed — `symbol_exact` (+6.0).** A query term *equal* to the chunk's
+  symbol name (or its last dotted component) is qualitatively stronger evidence
+  than a substring hit, and it discriminates inside one file where every
+  structural boost is identical. Result: click recall 20% → **53%**, misses
+  40% → **0**, economy WARN → **PASS (88.6%)**, default-bundle G3 20% → 53%.
+  Cost: on NeuroFS, one task (`mcp-tools-list`) regresses because its query
+  words ("server", "client") are literal type names — economy 58.9% → 48.2%,
+  recall 86% → 82%, still PASS. A 4.0 weight was also measured: same cost on
+  Go, weaker click gains (47%, 1 miss) — 6.0 kept.
+
+The remaining recall gap on click (53% vs the 80% bar) is concentrated in
+fact-bearing chunks whose names the question does *not* speak verbatim —
+the next signal has to come from structure (callers/callees of the named
+symbols), not from more lexical weight tuning.
 
 **The toy repo inverts for the opposite reason.** On the 10-file TS sample,
 files are ~150–300 tokens each, so any excerpt overhead loses to just reading
@@ -99,12 +117,13 @@ in which files rank.
 
 ## Verdicts
 
-- **Go service** — `economy` PASS (58.9%, 0 miss), `gate` G2/G3 PASS. The result
-  that justifies the pivot. Unchanged by the Python chunking fix (verified).
-- **Python lib** — `economy` **WARN** (82.9% reduction on the answerable
-  subset, 40% miss); `gate` G2 PASS, **G3 FAIL (20%)**. The chunk-economics
-  half of the gap is closed; retrieval recall on cold large repos is the
-  remaining, measured gap.
+- **Go service** — `economy` PASS (48.2%, 0 miss), `gate` G2/G3 PASS (96%).
+  The result that justifies the pivot; carries the documented `symbol_exact`
+  cost on one task.
+- **Python lib** — `economy` **PASS** (88.6%, 0 miss); `gate` G2 PASS, G3
+  **FAIL (53%)** against the 80% bar. Chunk economics and search misses are
+  fixed; the default bundle's remaining recall gap needs a structural signal,
+  not lexical tuning.
 - **TS/JS toy** — `economy` FAIL (small-file inversion), `gate` G2/G3 PASS.
 
 ## Note on G1 (real-use signal)

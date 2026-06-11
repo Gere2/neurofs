@@ -1,20 +1,27 @@
 # Phase 0 — Proving the token economy
 
-**Verdict: PASS.** Delivering context with `neurofs_search` costs **58.9% fewer
+**Verdict: PASS.** Delivering context with `neurofs_search` costs **48.2% fewer
 tokens on average (median 71.4%)** than native whole-file reading **at equal
-fact recall** — more than double the 25% decision threshold, with **0 search
+fact recall** — roughly double the 25% decision threshold, with **0 search
 misses** (every fact task grounded). Phase 0 clears the gate; the pivot to a
 context-and-verification plane for autonomous loops is justified on the
 economics, not just the narrative.
 
 | metric | NeuroFS (`neurofs_search`) | native (whole files) |
 |---|---|---|
-| mean context tokens / task (scored subset) | **1,878** | 5,096 |
-| overall fact recall (all 7 tasks, misses = 0) | **86%** | — |
-| iso-recall (scored subset) | 86% | 89% (matched, ≥ B by construction) |
-| mean token reduction at iso-recall | **58.9%** | — |
+| mean context tokens / task (scored subset) | **1,858** | 4,648 |
+| overall fact recall (all 7 tasks, misses = 0) | **82%** | — |
+| mean token reduction at iso-recall | **48.2%** | — |
 | median token reduction at iso-recall | **71.4%** | — |
 | fact tasks / scored / search misses | 7 / 7 / **0** | — |
+
+> History: this run was first recorded at 58.9% / 86% recall. The
+> `symbol_exact` retrieval signal then landed because it more than doubled
+> recall on the Python shape (20% → 53%, misses to 0); on this repo it costs
+> one hard task (`mcp-tools-list`, whose query words "server"/"client" are
+> literal type names) and moves the mean to 48.2% / 82%. Cross-shape recall
+> was deliberately chosen over the prettier single-repo number — both shapes
+> now PASS.
 
 > Honest-recall note: the harness reports recall two ways. **Overall recall**
 > averages over *all* fact tasks, counting a search miss as 0 — the "how often
@@ -85,20 +92,24 @@ defensible baseline so it does not gate.)
 
 ## Per-task results
 
-| task | B tokens | B recall | native tokens | native recall | reduction |
-|---|---:|---:|---:|---:|---:|
-| MCP tools exposed | 1,690 | 50% | 4,868 | 50% | 65.3% |
-| packager excerpt vs signature | 1,274 | 75% | 7,002 | 100% | 81.8% |
-| packager UpgradeWithSlack | 2,552 | 100% | 2,862 | 100% | 10.8% |
-| ranker filename match | 1,672 | 100% | 6,096 | 100% | 72.6% |
-| retrieval ripgrep dependency | 3,267 | 100% | 5,119 | 100% | 36.2% |
-| session ledger timelines | 828 | 75% | 3,214 | 75% | 74.2% |
-| storage WAL pragma | 1,866 | 100% | 6,516 | 100% | 71.4% |
+| task | B tokens | B recall | native tokens | reduction |
+|---|---:|---:|---:|---:|
+| MCP tools exposed | 1,614 | 25% | 1,410 | −14.5% |
+| packager excerpt vs signature | 1,274 | 75% | 7,002 | 81.8% |
+| packager UpgradeWithSlack | 2,552 | 100% | 2,862 | 10.8% |
+| ranker filename match | 1,649 | 100% | 6,096 | 72.9% |
+| retrieval ripgrep dependency | 3,229 | 100% | 5,437 | 40.6% |
+| session ledger timelines | 828 | 75% | 3,214 | 74.2% |
+| storage WAL pragma | 1,866 | 100% | 6,516 | 71.4% |
 
-The weakest task (`UpgradeWithSlack`, 10.8%) is the honest one: when the answer
-is concentrated in a single modest file, reading that file whole is competitive
-with excerpting it. NeuroFS wins decisively when the facts are buried in, or
-spread across, large files — which is the common case in a real repo.
+The two weak tasks are the honest ones. `UpgradeWithSlack` (10.8%): when the
+answer is concentrated in a single modest file, reading that file whole is
+competitive with excerpting it. `mcp-tools-list` (−14.5%, recall 25%): the
+query's ordinary words ("server", "client") are literal type names, so the
+`symbol_exact` signal pulls those declarations over the tool-registry chunk —
+the documented cost of the signal that fixed the Python shape. NeuroFS wins
+decisively when the facts are buried in, or spread across, large files — the
+common case in a real repo.
 
 ## Proxy boundary (what this does NOT prove)
 

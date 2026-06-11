@@ -6,48 +6,45 @@
     "fact_tasks": 7,
     "scored": 7,
     "search_miss": 0,
-    "mean_tokens_neurofs": 1878,
-    "mean_tokens_native": 5096,
-    "mean_recall_neurofs": 0.8571428571428571,
-    "mean_recall_native": 0.8928571428571429,
-    "overall_recall_neurofs": 0.8571428571428571,
+    "mean_tokens_neurofs": 1858,
+    "mean_tokens_native": 4648,
+    "mean_recall_neurofs": 0.8214285714285714,
+    "mean_recall_native": 0.8571428571428571,
+    "overall_recall_neurofs": 0.8214285714285714,
     "miss_rate": 0,
-    "mean_token_reduction": 0.5889598539345007,
+    "mean_token_reduction": 0.4818990213169378,
     "median_token_reduction": 0.7136279926335175,
     "threshold": 0.25,
     "verdict": "PASS",
-    "detail": "mean iso-recall token reduction 58.9% \u003e= 25% (B 1878 tok vs native 5096 tok); overall recall 86% over 7 fact tasks, 0 miss"
+    "detail": "mean iso-recall token reduction 48.2% \u003e= 25% (B 1858 tok vs native 4648 tok); overall recall 82% over 7 fact tasks, 0 miss"
   },
   "tasks": [
     {
       "question": "What tools does the MCP server expose to the client?",
       "source": "mcp-tools-list.json",
       "neurofs": {
-        "tokens": 1690,
-        "recall": 0.5,
+        "tokens": 1614,
+        "recall": 0.25,
         "files": [
           "internal/mcp/server.go",
           "internal/cli/mcp_claude.go",
           "internal/mcp/tools.go"
         ],
         "facts_hit": [
-          "neurofs_task",
-          "neurofs_view_file"
+          "neurofs_task"
         ]
       },
       "native_iso": {
-        "tokens": 4868,
-        "recall": 0.5,
+        "tokens": 1410,
+        "recall": 0.25,
         "files": [
-          "internal/mcp/server.go",
-          "internal/cli/mcp_claude.go"
+          "internal/mcp/server.go"
         ],
         "facts_hit": [
-          "neurofs_task",
           "neurofs_view_file"
         ]
       },
-      "token_reduction": 0.6528348397699261,
+      "token_reduction": -0.14468085106382977,
       "has_facts": true,
       "scored": true
     },
@@ -124,7 +121,7 @@
       "question": "How does the ranker score filename matches and how is that weight defined?",
       "source": "ranking-filename-match.json",
       "neurofs": {
-        "tokens": 1672,
+        "tokens": 1649,
         "recall": 1,
         "files": [
           "internal/ranking/ranking.go",
@@ -149,7 +146,7 @@
           "scoreFile"
         ]
       },
-      "token_reduction": 0.7257217847769029,
+      "token_reduction": 0.729494750656168,
       "has_facts": true,
       "scored": true
     },
@@ -157,12 +154,15 @@
       "question": "How does the search retrieval use ripgrep and what is the timeout value?",
       "source": "retrieval-ripgrep-dependency.json",
       "neurofs": {
-        "tokens": 3267,
+        "tokens": 3229,
         "recall": 1,
         "files": [
           "internal/retrieval/search.go",
-          "internal/cli/bench.go",
-          "internal/mcp/tools.go"
+          "internal/mcp/tools.go",
+          "internal/memory/filestore.go",
+          "internal/memory/memstore.go",
+          "internal/memory/sqlitestore.go",
+          "internal/cli/bench.go"
         ],
         "facts_hit": [
           "LookPath",
@@ -172,7 +172,7 @@
         ]
       },
       "native_iso": {
-        "tokens": 5119,
+        "tokens": 5437,
         "recall": 1,
         "files": [
           "internal/retrieval/search.go"
@@ -184,7 +184,7 @@
           "normalizeRGPath"
         ]
       },
-      "token_reduction": 0.3617894119945302,
+      "token_reduction": 0.40610630862608055,
       "has_facts": true,
       "scored": true
     },
@@ -233,8 +233,8 @@
         "files": [
           "internal/storage/storage.go",
           "internal/contextladder/contextladder.go",
-          "internal/ui/proxy.go",
-          "internal/retrieval/search.go"
+          "internal/retrieval/search.go",
+          "internal/ui/proxy.go"
         ],
         "facts_hit": [
           "PRAGMA journal_mode = WAL",

@@ -314,6 +314,14 @@ func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, te
 	if textMatchesTerms(chunk.Symbol, terms) {
 		add("symbol_match", 8.0)
 	}
+	// A query term that *equals* the symbol name (or its last dotted
+	// component) is much stronger evidence than the substring matching
+	// above — the question literally names this identifier. This is the
+	// discriminator inside one file, where the file-level structural boosts
+	// are identical for every chunk and substring symbol matches tie.
+	if symbolExactlyNamed(chunk.Symbol, terms) {
+		add("symbol_exact", 6.0)
+	}
 	baseStem := stripExt(filepath.Base(rec.RelPath))
 	if textMatchesTerms(rec.RelPath, terms) || textMatchesTerms(baseStem, terms) {
 		add("path_match", 3.0)
@@ -748,6 +756,33 @@ func termMatchesText(term, text string) bool {
 			if strings.Contains(p, t) || strings.Contains(t, p) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// symbolExactlyNamed reports whether any query term is equal (case-insensitive)
+// to the chunk's symbol or to its last dotted component, e.g. the term
+// "upgradewithslack" against symbol "UpgradeWithSlack", or "invoke" against
+// "CliRunner.invoke". Tokenise keeps the raw lowercased token alongside its
+// camelCase splits, so multi-word identifiers written verbatim in the query
+// still compare equal here.
+func symbolExactlyNamed(symbol string, terms []string) bool {
+	sym := strings.ToLower(strings.TrimSpace(symbol))
+	if sym == "" {
+		return false
+	}
+	last := sym
+	if dot := strings.LastIndex(sym, "."); dot >= 0 && dot+1 < len(sym) {
+		last = sym[dot+1:]
+	}
+	for _, term := range terms {
+		t := strings.ToLower(strings.TrimSpace(term))
+		if t == "" {
+			continue
+		}
+		if t == sym || t == last {
+			return true
 		}
 	}
 	return false

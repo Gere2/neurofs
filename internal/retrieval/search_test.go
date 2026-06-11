@@ -507,3 +507,30 @@ func TestSearchEndToEnd(t *testing.T) {
 		t.Errorf("expected reasons populated on top hit, got empty")
 	}
 }
+
+func TestSymbolExactlyNamed(t *testing.T) {
+	tests := []struct {
+		symbol string
+		terms  []string
+		want   bool
+	}{
+		// Raw lowercased identifier token equals the full symbol.
+		{"UpgradeWithSlack", []string{"upgradewithslack", "packager"}, true},
+		// Term equals the last dotted component (method name).
+		{"CliRunner.invoke", []string{"invoke", "commands"}, true},
+		// Term equals a class symbol exactly.
+		{"Context", []string{"context", "object"}, true},
+		// Substring is NOT enough — that's symbol_match's job.
+		{"ContextManager", []string{"context"}, false},
+		{"make_context", []string{"context"}, false},
+		// Middle dotted components don't count.
+		{"Context.scope", []string{"context"}, false},
+		{"", []string{"anything"}, false},
+		{"Open", nil, false},
+	}
+	for _, tc := range tests {
+		if got := symbolExactlyNamed(tc.symbol, tc.terms); got != tc.want {
+			t.Errorf("symbolExactlyNamed(%q, %v) = %t, want %t", tc.symbol, tc.terms, got, tc.want)
+		}
+	}
+}
