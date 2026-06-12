@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/neuromfs/neuromfs/internal/agentcontext"
+	"github.com/neuromfs/neuromfs/internal/grounding"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
 )
@@ -150,4 +151,35 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func TestDigestGroundingScopedToSession(t *testing.T) {
+	repo := t.TempDir()
+	seed(t, repo, models.LedgerEntry{Query: "warm up the session"})
+
+	inCtx := true
+	// One event for this session, one for another session, one unlabeled
+	// (legacy manual append). The digest must count ours + the unlabeled one,
+	// and must NOT absorb the other session's signal.
+	for _, ev := range []grounding.Event{
+		{SessionID: sess, Kind: grounding.KindEdit, FileInContext: &inCtx},
+		{SessionID: "other-session", Kind: grounding.KindEdit, FileInContext: &inCtx},
+		{SessionID: "", Kind: grounding.KindResponse, GroundedRatio: 1.0},
+	} {
+		if err := grounding.Append(repo, ev); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	st, err := Digest(repo, sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Grounding.Events != 2 {
+		t.Fatalf("grounding events = %d, want 2 (ours + unlabeled, not other-session's): %+v",
+			st.Grounding.Events, st.Grounding)
+	}
+	if st.Grounding.Edits != 1 || st.Grounding.Responses != 1 {
+		t.Fatalf("edits/responses = %d/%d, want 1/1", st.Grounding.Edits, st.Grounding.Responses)
+	}
 }

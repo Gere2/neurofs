@@ -173,7 +173,17 @@ func Digest(repoRoot, sessionID string) (State, error) {
 	}
 
 	if events, gerr := grounding.Read(repoRoot); gerr == nil {
-		st.Grounding = grounding.Summarize(events)
+		// The State is per-session, so the verification signal must be too —
+		// the ledger holds every session's events. Unlabeled events (manual
+		// appends predating session stamping) stay visible rather than
+		// silently vanishing from every session's digest.
+		scoped := make([]grounding.Event, 0, len(events))
+		for _, ev := range events {
+			if ev.SessionID == sessionID || ev.SessionID == "" {
+				scoped = append(scoped, ev)
+			}
+		}
+		st.Grounding = grounding.Summarize(scoped)
 	}
 
 	st.Summary = buildSummary(st)
