@@ -397,6 +397,7 @@ func TestChunkOperations(t *testing.T) {
 			EndLine:       10,
 			ContentHash:   "hash1",
 			ASTHash:       "ast1",
+			Calls:         []string{"helper", "svc.Run"},
 			TokenEstimate: 30,
 		},
 		{
@@ -423,6 +424,9 @@ func TestChunkOperations(t *testing.T) {
 	}
 	if len(all) != 2 || all[0].ChunkID != "chunk1" {
 		t.Errorf("AllChunks returned unexpected: %+v", all)
+	}
+	if len(all[0].Calls) != 2 || all[0].Calls[0] != "helper" {
+		t.Errorf("Calls did not roundtrip: %+v", all[0].Calls)
 	}
 
 	gotChunks, err := db.GetChunksForFile("/repo/a.go")

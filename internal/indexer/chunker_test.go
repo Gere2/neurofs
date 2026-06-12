@@ -33,10 +33,10 @@ const x = 5;
 		start int
 		end   int
 	}{
-		"export_class-user":             {kind: "export_class", start: 3, end: 9},
-		"method-user.constructor":       {kind: "method", start: 4, end: 4},
-		"method-user.sayhello":          {kind: "method", start: 6, end: 8},
-		"export_func-helper":            {kind: "export_func", start: 11, end: 13},
+		"export_class-user":       {kind: "export_class", start: 3, end: 9},
+		"method-user.constructor": {kind: "method", start: 4, end: 4},
+		"method-user.sayhello":    {kind: "method", start: 6, end: 8},
+		"export_func-helper":      {kind: "export_func", start: 11, end: 13},
 	}
 
 	if len(chunks) != len(expected) {
@@ -77,14 +77,17 @@ def helper():
 	indexedAt := time.Now()
 	chunks := BuildChunks("calc.py", "calc.py", models.LangPython, code, indexedAt)
 
-
 	expectedPython := map[string]struct {
 		kind  string
 		start int
 		end   int
 	}{
-		"class-calculator": {kind: "class", start: 1, end: 7},
-		"func-helper":       {kind: "func", start: 9, end: 10},
+		// The class chunk is capped at its header — methods carry their own
+		// chunks, so the class body is never duplicated into one giant chunk.
+		"class-calculator":      {kind: "class", start: 1, end: 1},
+		"method-calculator.add": {kind: "method", start: 2, end: 4},
+		"method-calculator.sub": {kind: "method", start: 6, end: 7},
+		"func-helper":           {kind: "func", start: 9, end: 10},
 	}
 
 	if len(chunks) != len(expectedPython) {
@@ -103,5 +106,33 @@ def helper():
 		if chunk.StartLine != exp.start || chunk.EndLine != exp.end {
 			t.Errorf("chunk %s line range = %d-%d, want %d-%d", chunk.ChunkID, chunk.StartLine, chunk.EndLine, exp.start, exp.end)
 		}
+	}
+}
+
+func TestBuildPythonChunksClassHeaderKeepsDocstring(t *testing.T) {
+	code := `class Context:
+    """Holds state for a single invocation."""
+
+    allow_extra_args = False
+
+    @property
+    def meta(self):
+        return self._meta
+`
+
+	chunks := BuildChunks("ctx.py", "ctx.py", models.LangPython, code, time.Now())
+
+	byID := make(map[string]struct{ start, end int }, len(chunks))
+	for _, c := range chunks {
+		byID[c.ChunkID] = struct{ start, end int }{c.StartLine, c.EndLine}
+	}
+
+	// Header: class line, docstring, class attribute — but not the decorator,
+	// which belongs to the method below it.
+	if got, ok := byID["class-context"]; !ok || got.start != 1 || got.end != 4 {
+		t.Fatalf("class header chunk = %+v (ok=%t), want 1-4: %+v", got, ok, chunks)
+	}
+	if got, ok := byID["method-context.meta"]; !ok || got.start != 7 || got.end != 8 {
+		t.Fatalf("method chunk = %+v (ok=%t), want 7-8: %+v", got, ok, chunks)
 	}
 }

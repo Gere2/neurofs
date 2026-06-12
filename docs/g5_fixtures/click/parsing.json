@@ -1,0 +1,1 @@
+{"question":"How does click parse command line arguments?","expects_facts":["def parse_args","class Command","class Argument"]}

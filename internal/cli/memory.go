@@ -165,7 +165,7 @@ func newMemoryExportCmd(repoPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "export",
 		Short: "Export a summary of the active session context",
-		Long: `Export a structured, portable context summary in session_timeline (NEUROFS_SESSION.md), agents (AGENTS.md), or generic markdown formats.`,
+		Long:  `Export a structured, portable context summary in session_timeline (NEUROFS_SESSION.md), agents (AGENTS.md), or generic markdown formats.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format == "claude" {
 				format = "session_timeline"

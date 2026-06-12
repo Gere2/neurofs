@@ -362,5 +362,3 @@ func TestHandleChatStreamSimulation(t *testing.T) {
 		t.Errorf("expected body to contain Mock response, got: %s", body)
 	}
 }
-
-

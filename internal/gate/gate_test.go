@@ -536,3 +536,146 @@ func TestEvaluateG4(t *testing.T) {
 		}
 	})
 }
+
+func TestEvaluateG4SamplesPoolsOrigins(t *testing.T) {
+	t.Parallel()
+
+	t.Run("no samples → SKIP", func(t *testing.T) {
+		got := EvaluateG4Samples(nil, DefaultG4Thresholds())
+		if got.Verdict != Skip {
+			t.Errorf("expected SKIP, got %s", got.Verdict)
+		}
+	})
+
+	t.Run("pooled mean and per-origin counts", func(t *testing.T) {
+		samples := []DriftSample{
+			{Origin: "record", Label: "q1", Rate: 0.10},
+			{Origin: "pair", Label: "stem-a", Rate: 0.05},
+			{Origin: "grounding", Label: "sess1", Rate: 0.15},
+		}
+		got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+		if got.Verdict != Pass {
+			t.Fatalf("expected PASS at mean 10%%, got %s (%s)", got.Verdict, got.Detail)
+		}
+		if got.Numbers["records"] != 1 || got.Numbers["pairs"] != 1 || got.Numbers["grounding"] != 1 {
+			t.Errorf("origin counts wrong: %+v", got.Numbers)
+		}
+		if got.Numbers["samples"] != 3 {
+			t.Errorf("samples = %v, want 3", got.Numbers["samples"])
+		}
+	})
+
+	t.Run("high pooled drift → FAIL names worst", func(t *testing.T) {
+		samples := []DriftSample{
+			{Origin: "pair", Label: "good", Rate: 0.05},
+			{Origin: "grounding", Label: "hallucinated-session", Rate: 0.60},
+		}
+		got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+		if got.Verdict != Fail {
+			t.Fatalf("expected FAIL at mean 32.5%%, got %s", got.Verdict)
+		}
+		if !strings.Contains(got.Detail, "hallucinated-session") {
+			t.Errorf("detail should name the worst sample, got: %s", got.Detail)
+		}
+	})
+}
+
+func TestCollectPairDrift(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	bundlesDir := filepath.Join(dir, "bundles")
+	responsesDir := filepath.Join(dir, "responses")
+	if err := os.MkdirAll(bundlesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(responsesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bundle := models.Bundle{
+		Query: "how does auth work",
+		Fragments: []models.ContextFragment{{
+			RelPath: "src/auth.ts",
+			Content: "function verifyToken(token) { return jwtVerify(token) }",
+		}},
+	}
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundlesDir, "auth-run.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Grounded response: only identifiers the bundle contains.
+	grounded := "The flow calls verifyToken which wraps jwtVerify from src/auth.ts."
+	if err := os.WriteFile(filepath.Join(responsesDir, "auth-run.md"), []byte(grounded), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Orphan response with no matching bundle must be skipped, not scored.
+	if err := os.WriteFile(filepath.Join(responsesDir, "orphan.md"), []byte("references phantomScorer everywhere"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	samples, err := CollectPairDrift(bundlesDir, responsesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 {
+		t.Fatalf("samples = %d, want 1 (orphan must be skipped): %+v", len(samples), samples)
+	}
+	if samples[0].Origin != "pair" || samples[0].Label != "auth-run" {
+		t.Fatalf("sample identity wrong: %+v", samples[0])
+	}
+	if samples[0].Rate > 0.34 {
+		t.Errorf("grounded response drift = %.2f, want low", samples[0].Rate)
+	}
+
+	// A drifting response against the same bundle must score strictly higher.
+	drifting := "It calls phantomScorer and legacyRanker via ghost_module.deepMagic in lib/phantom.rs."
+	if err := os.WriteFile(filepath.Join(responsesDir, "auth-run.md"), []byte(drifting), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	driftSamples, err := CollectPairDrift(bundlesDir, responsesDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(driftSamples) != 1 {
+		t.Fatalf("drift samples = %d, want 1", len(driftSamples))
+	}
+	if driftSamples[0].Rate <= samples[0].Rate {
+		t.Errorf("drifting response (%.2f) should out-drift grounded one (%.2f)",
+			driftSamples[0].Rate, samples[0].Rate)
+	}
+
+	t.Run("missing responses dir → nil, no error", func(t *testing.T) {
+		got, err := CollectPairDrift(bundlesDir, filepath.Join(dir, "nope"))
+		if err != nil || got != nil {
+			t.Errorf("want (nil, nil), got (%+v, %v)", got, err)
+		}
+	})
+}
+
+func TestEvaluateG4MedianRobustToPlanOutlier(t *testing.T) {
+	t.Parallel()
+	// The motivating history: three grounded implementation responses and one
+	// legitimate plan-shaped outlier (a plan names files that don't exist
+	// yet). Mean = 25.3% would FAIL; the median asks "is the typical response
+	// grounded?" and passes, while mean and worst stay in the detail.
+	samples := []DriftSample{
+		{Origin: "pair", Label: "g4-packager-selection", Rate: 0.0},
+		{Origin: "pair", Label: "g4-storage-wal", Rate: 0.0},
+		{Origin: "pair", Label: "g4-gate-pooling", Rate: 0.13},
+		{Origin: "pair", Label: "audit-diff-01 (plan)", Rate: 0.88},
+	}
+	got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+	if got.Verdict != Pass {
+		t.Fatalf("verdict = %s, want PASS at median 6.5%% (%s)", got.Verdict, got.Detail)
+	}
+	if got.Numbers["median_drift"] > 0.07 {
+		t.Errorf("median = %v, want 0.065", got.Numbers["median_drift"])
+	}
+	if !strings.Contains(got.Detail, "mean") || !strings.Contains(got.Detail, "worst") {
+		t.Errorf("detail must keep mean and worst visible: %s", got.Detail)
+	}
+}

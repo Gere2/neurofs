@@ -305,10 +305,14 @@ func generate(cfg *config.Config, query string, budget int, useChunks bool, useM
 			return fmt.Errorf("close index before chunk search: %w", err)
 		}
 		closed = true
+		// Limit 24 (not 12): with method-sized chunks the token budget, not
+		// the hit count, should decide where the bundle stops — PackChunks
+		// trims greedily by budget, so extra candidates cost nothing when
+		// the budget is already full and recover facts when it is not.
 		searchRes, err := retrieval.Search(context.Background(), retrieval.Options{
 			Query: query,
 			Repo:  cfg.RepoRoot,
-			Limit: 12,
+			Limit: 24,
 			Mode:  "task",
 		})
 		if err != nil {
@@ -316,7 +320,7 @@ func generate(cfg *config.Config, query string, budget int, useChunks bool, useM
 		}
 		bundle, err = packager.PackChunks(chunkHitsFromRetrieval(searchRes, files), query, packager.Options{
 			Budget:           budget,
-			MaxFragments:     12,
+			MaxFragments:     24,
 			PreferSignatures: true,
 			UpgradeWithSlack: true,
 		})

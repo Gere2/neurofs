@@ -78,6 +78,47 @@ func TestWriteClaudeSkipsEmptyRepoSummary(t *testing.T) {
 	}
 }
 
+func TestWriteClaudeIncludesStructuredFragmentLocation(t *testing.T) {
+	b := models.Bundle{
+		Query: "verify jwt",
+		Fragments: []models.ContextFragment{{
+			RelPath:        "src/auth.go",
+			Lang:           models.LangGo,
+			Representation: models.RepExcerpt,
+			Content:        "func VerifyJWT() bool { return true }",
+			Tokens:         12,
+			StartLine:      10,
+			EndLine:        14,
+			ContentHash:    "abc123",
+		}},
+	}
+
+	t.Run("Claude Human Mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := output.WriteClaudeWithOptions(&buf, b, output.RepoSummary{}, output.Options{}); err != nil {
+			t.Fatalf("WriteClaudeWithOptions: %v", err)
+		}
+		got := buf.String()
+		if !strings.Contains(got, `<file path="src/auth.go" start=10 end=14 hash="abc123" rep="excerpt" tokens=12`) {
+			t.Fatalf("missing structured attrs in human mode:\n%s", got)
+		}
+	})
+
+	t.Run("Claude Machine Mode", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := output.WriteClaudeWithOptions(&buf, b, output.RepoSummary{}, output.Options{Machine: true}); err != nil {
+			t.Fatalf("WriteClaudeWithOptions: %v", err)
+		}
+		got := buf.String()
+		if !strings.Contains(got, `<file path="src/auth.go" start=10 end=14 hash="abc123">`) {
+			t.Fatalf("missing structured attrs in machine mode:\n%s", got)
+		}
+		if strings.Contains(got, `rep="excerpt"`) || strings.Contains(got, `tokens=12`) {
+			t.Fatalf("machine mode should keep human scoring attrs out:\n%s", got)
+		}
+	})
+}
+
 // TestWriteClaudeInstructionsCoverExcerpt locks the instruction wording for
 // rep="excerpt". Model behaviour observed without these instructions: when
 // the bundle contains an excerpt, the receiving model often treats the
@@ -315,4 +356,3 @@ func TestMachineOutput(t *testing.T) {
 		}
 	})
 }
-

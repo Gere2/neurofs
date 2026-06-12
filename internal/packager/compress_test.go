@@ -90,7 +90,7 @@ func TestCollapseBlankLines(t *testing.T) {
 		expected string
 	}{
 		{
-			name: "Normalizes newlines and trailing spaces",
+			name:  "Normalizes newlines and trailing spaces",
 			input: "package main \r\n\r\n\r\n\r\nimport \"fmt\"    \n",
 			expected: `package main
 
@@ -369,4 +369,3 @@ func main() {
 		t.Errorf("CompressCode with strip option mismatch\n got:  %q\n want: %q", gotCompressed, expectedCompressed)
 	}
 }
-

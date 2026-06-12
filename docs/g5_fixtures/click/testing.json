@@ -1,0 +1,1 @@
+{"question":"How does the click testing runner invoke commands and capture output?","expects_facts":["class CliRunner","def invoke","def isolation"]}

@@ -1,70 +1,103 @@
 # NeuroFS
 
-**A context compiler for LLMs.**
+**The context and verification plane for autonomous coding loops.**
 
-NeuroFS does not try to be another coding copilot.  
-It solves a different and more upstream problem:
+NeuroFS is the open, local, auditable layer *underneath* the agent. When an
+agent runs in a loop — Claude Code, Codex, Copilot — NeuroFS gives it the
+minimum fresh context it needs each iteration (over MCP), and gives the human
+supervising that loop aggregate grounding signals, so they can trust the run
+without reading every diff.
 
-> Given a question about a repository, produce better context for an LLM than copy-paste or naive retrieval.
-
----
-
-## The Problem
-
-Most AI coding workflows fail not because the model is weak, but because the input is poor.
-
-Three issues repeat:
-
-1. **Too much irrelevant context.** Noise drowns signal.
-2. **Missing structural relationships.** Files and symbols are disconnected in the prompt.
-3. **Manual selection does not scale.** Developers waste time deciding what to paste.
-
-Result: garbage in, garbage out.
+It is **not** a coding copilot and **not** the loop orchestrator. The harness
+drives the loop; NeuroFS is the layer below it that prepares context and
+verifies grounding.
 
 ---
 
-## What NeuroFS Does
+## Why the loop changes the economics
 
-Given a question about a codebase, NeuroFS:
+A one-shot chat and an autonomous loop are not the same product. Three costs
+that barely register in a chat come to dominate in a loop:
 
-1. **Indexes** repository structure and symbols
-2. **Ranks** files by relevance using structural and lexical signals
-3. **Expands** through import relationships to capture dependency clusters
-4. **Selects** a representation for each fragment: `full_code`, `signature`, `structural_note`
-5. **Packages** the minimum necessary context within a token budget
-6. **Justifies** every inclusion — no opaque retrieval
+1. **Tokens per iteration.** The agent re-derives its context every turn.
+   Shrinking the tokens it takes to ground each step compounds over a long run.
+2. **Verification.** Nobody reads every diff in a 200-step loop. The supervisor
+   needs an *aggregate* signal — is the agent still grounding its changes in
+   code that actually exists? — not a wall of patches.
+3. **Memory between iterations.** What was tried, what failed, what was decided
+   has to survive across turns, or the loop relearns it every time.
 
-The output is a self-contained, auditable bundle ready for any LLM interface.
+NeuroFS addresses all three locally and auditably. The audit layer is the
+differentiator: nobody else verifies that the agent grounded its changes in
+real code, with the reason for every included fragment on the record.
+
+---
+
+## The economy, measured
+
+The thesis is falsifiable, so it was measured first. On this repository,
+delivering context with `neurofs_search` costs **42.1% fewer tokens (median
+71.5%) than native whole-file reading, at equal fact recall**, with 0 search
+misses — well above the 25% decision threshold, stable across runs. On a
+large Python repo (pallets/click) the same measurement reads **82.3% fewer
+tokens, 0 misses, 67% recall** after method-level chunking, the exact-symbol
+signal, and same-symbol dedupe landed. Both shapes PASS; the per-task losers
+and every measured trade-off are documented, not hidden. Method, numbers,
+cross-shape verdicts, and proxy limits:
+[`docs/phase0_economy.md`](docs/phase0_economy.md) and
+[`docs/phase_g5_cross_shape.md`](docs/phase_g5_cross_shape.md); reproduce on
+any indexed repo with:
+
+```
+neurofs economy            # human-readable A/B report
+neurofs economy --json     # machine-readable
+neurofs economy --gate     # exit non-zero on a FAIL verdict (CI)
+```
+
+---
+
+## What NeuroFS does
+
+Given a question from an agent or a human, NeuroFS:
+
+1. **Indexes** repository structure, symbols, and content chunks (with hashes)
+2. **Ranks** candidates by lexical, structural, and semantic signals
+3. **Retrieves** citable line-ranged excerpts (`neurofs_search`) or routes a
+   question through the `neurofs_context` broker
+4. **Packages** the minimum sufficient context within a token budget
+5. **Justifies** every inclusion — no opaque retrieval
+6. **Verifies** the answer's grounding against the bundle (`audit replay`) and
+   aggregates the verdicts a supervisor reads at a glance
 
 ---
 
 ## Quickstart
 
+NeuroFS is consumed **primarily over MCP** — wire it into an agent host and the
+loop calls it directly.
+
 ```bash
 # Build the binary
 make build
 
-# Shortest path: one-shot prompt from a question, auto-scan included
-./bin/neurofs task "where is jwt verified" | pbcopy
+# Primary surface: expose NeuroFS as MCP tools to Claude Code / Codex / Cursor
+./bin/neurofs mcp        # stdio JSON-RPC 2.0 — wire it as an MCP server
 
-# Or open the local UI (loopback only — nothing leaves your machine)
-./bin/neurofs ui
-
-# Or keep the SQLite index fresh while you work
+# Keep the SQLite index fresh while the loop runs
 ./bin/neurofs watch
 
-# Or expose neurofs as MCP tools to Claude Desktop / Cursor / any MCP host
-./bin/neurofs mcp     # stdio JSON-RPC — wire it as an MCP server
+# Prove the token economy on your own repo
+./bin/neurofs economy
 ```
 
-`neurofs task` writes a paste-ready prompt to stdout and the summary
-(tokens, files, top picks, cache status) to stderr — composes as a Unix
-filter. The UI wraps the same flow plus `scan`, `pack`, `replay`, the
-journal, and global search in one page; it opens at
-<http://127.0.0.1:7777> automatically. `neurofs mcp` exposes the same
-flow as MCP tools so a host LLM can call NeuroFS directly. The lower-level
-`neurofs ask` / `neurofs pack` commands stay available — see
-[Commands](#commands).
+The CLI commands documented below (`task`, `ask`, `pack`, `bench`, `audit`,
+`gate`, `economy`, `ui`) are for **debugging and inspection**: they let a human
+drive the same engine the MCP tools expose — to see exactly what context an
+agent would receive, and how well past answers grounded — without changing what
+the agent consumes. The agent itself talks to NeuroFS over MCP.
+
+The local UI (`neurofs ui`, loopback only) wraps the same flow plus the journal,
+compare, and global search in one page at <http://127.0.0.1:7777>.
 
 ---
 
@@ -85,6 +118,12 @@ go install github.com/neuromfs/neuromfs/cmd/neurofs@latest
 ---
 
 ## Commands
+
+The primary integration surface is [`neurofs mcp`](#neurofs-mcp) — that is how
+an agent in a loop consumes NeuroFS. Everything else here is a **human
+inspection lens** on the same engine: run them to see what an agent would get,
+audit how a past answer grounded, or prove the economics. They do not change
+what the loop consumes.
 
 ### `neurofs task <query>`
 
@@ -201,6 +240,11 @@ The server exposes these tools to any MCP host:
 - **`neurofs_search`** — return ranked code chunks with line ranges,
   snippets, scores, reasons, content hashes, exact `rg` matches, semantic
   matches, and graph dependency/working-set bridges.
+- **`neurofs_log_memory`** / **`neurofs_search_memory`** /
+  **`neurofs_export_memory`** — write and read the session ledger.
+- **`neurofs_recall_state`** — the "where am I" digest a restarting loop reads:
+  what was tried, what failed, what was decided, the pending NextActions to
+  continue, and the rolling grounding signal. See [`neurofs recall`](#neurofs-recall).
 
 ### `neurofs watch [path]`
 
@@ -429,6 +473,54 @@ aggregates whatever is there:
 Commit the records if you want the history to travel with the repo; they
 are plain JSON and small.
 
+### Continuous grounding for loops (`neurofs ground`)
+
+The replay flow above is manual — you paste an answer and inspect one verdict.
+In an autonomous loop that does not scale: nobody pastes 200 answers. `neurofs
+ground` automates it as a **Claude Code hook** so grounding accumulates on its
+own, and a supervisor reads the rolling aggregate instead of every diff.
+
+```
+# Print the .claude/settings.json snippet to wire the hook
+neurofs ground --print-hook
+
+# What Claude Code runs after each action (reads the event JSON on stdin):
+#   PostToolUse Edit/Write → did the edit land on a file the agent had context
+#                            for, and is the added code anchored there?
+#   Stop                   → pull the final message and run the same
+#                            citation + drift grounding as `audit replay`.
+
+# Supervisor feed — the signal you watch instead of reading diffs
+neurofs ground --feed
+neurofs ground --feed --json
+```
+
+Each event is appended to `audit/grounding.jsonl` with its origin, timestamp,
+session, and files — auditable, never a black box. `neurofs stats` surfaces a
+one-line rollup (edits-in-context %, response grounding, concerning count), and
+`--feed` lists the recent events that did not clear the bar. This is the "CI of
+grounding" the loop layer is built around.
+
+### `neurofs recall`
+
+Memory between iterations. A loop that restarts mid-task should not relearn what
+it already tried. `neurofs recall` distills the session ledger and the grounding
+feed into one "where am I" digest:
+
+```
+neurofs recall            # human-readable
+neurofs recall --json     # machine-readable (also via the neurofs_recall_state MCP tool)
+```
+
+It reports **attempts** (task runs, edits, grounding events), **failures**
+(outcomes that regressed or were flagged), **decisions** (logged with
+`neurofs memory log --command decide --notes "…"`), the **pending NextActions**
+NeuroFS suggested that have not yet been addressed, and the rolling **grounding**
+signal. The NextActions the agent context emits are persisted automatically, so
+on restart the loop reads its open steps back. Every line is derived from
+artefacts already on disk — inspect them with `neurofs memory list` and
+`neurofs ground --feed`; nothing is a black box.
+
 ### Bench as a CI gate
 
 `neurofs bench --bundle` now reports mean/p50/p95 bundle token counts.
@@ -453,6 +545,26 @@ If the ranker regresses *or* the packager starts emitting bigger bundles
 for the same questions, the exit code is non-zero. With `--search` and
 `--context`, the same gate also catches chunk retrieval and broker output
 bloat.
+
+### `neurofs economy`
+
+Proves the core economic claim — that targeted excerpts beat whole-file
+reading — as a reproducible, hermetic A/B. For each task it runs
+`neurofs_search` (arm B) and compares it, **at equal fact recall**, against
+reading the whole files those hits came from (arm A, native):
+
+```
+neurofs economy                 # human-readable report + PASS/FAIL verdict
+neurofs economy --json          # machine-readable
+neurofs economy --gate          # exit non-zero on FAIL (decision gate / CI)
+neurofs economy --search-limit 8 --threshold 0.25
+```
+
+Tasks default to the `audit/facts/*.json` fixtures (the same recall oracle as
+the gate's G3). The baseline is deliberately conservative — native inherits
+NeuroFS's own file selection and stops the instant it matches B's recall — so
+the reported reduction is a lower bound. See
+[`docs/phase0_economy.md`](docs/phase0_economy.md) for methodology and limits.
 
 ---
 
@@ -535,7 +647,8 @@ internal/
   benchmark/          — curated (question → expected-file) ranking bench
   ui/                 — local web UI server, API handlers, and AI proxy
   mcp/                — Model Context Protocol (MCP) server implementation
-  cli/                — cobra commands: scan, ask, pack, stats, bench, audit, gate
+  abeval/             — Phase-0 iso-recall economy A/B (neurofs_search vs whole files)
+  cli/                — cobra commands: scan, ask, pack, stats, bench, economy, audit, gate
 testdata/
   sample-repo/        — realistic sample repository for tests
 ```
@@ -600,16 +713,28 @@ working-set boosts. Exact identifier and filename matches now add
 rank when smaller alternatives match. `neurofs pack` (or `neurofs task`) now uses
 chunk-based retrieval by default to build bundles from those chunk hits (opt out with
 `--no-chunks`), carrying the same line-ranged retrieval into the one-shot prompt flow.
-Next: AST-backed chunking for TS/JS/Python.
+Python chunking is method-level (qualified `Class.method` symbols, class chunks
+capped at their header), mirroring the JS extractor; search carries a
+`symbol_exact` signal for query terms that literally name an identifier and
+dedupes `@overload`-style same-symbol stubs so one declaration cannot crowd a
+file's result slots — on pallets/click these took the iso-recall economy from
+−21.9% to +82.3% with zero search misses and 67% recall.
+Next: real (non-mock) embeddings on cold repos for the facts a question
+doesn't name verbatim.
 
 **Strategic planning**
 Current competitive radar and implementation direction live in
 [`docs/strategic_anticipations.md`](docs/strategic_anticipations.md) and
 [`docs/implementation_plan.md`](docs/implementation_plan.md).
 
-**Next**  
-Hybrid agentic search, MCP broker routing, session ledger, progressive
-expansion, and attention routing for large context windows.
+**The pivot — context & verification plane for loops** *(in progress)*  
+With the token economy proven (Phase 0 above), the work now turns to the loop
+layer: continuous, automated grounding (an `audit replay` that runs as a
+Claude Code hook after each Edit/Write and accumulates a verdict feed a
+supervisor reads at a glance), and iteration memory (a session ledger that
+persists what was tried, failed, and decided so a restarting loop can read its
+own state). NeuroFS stays the layer *below* the harness — context in,
+verification out — never the orchestrator.
 
 ---
 
@@ -619,6 +744,10 @@ expansion, and attention routing for large context windows.
 - **Structure over flat text** — relationships matter, not just keywords.
 - **Compression with caution** — summaries can erase critical invariants.
 - **Traceability by default** — every inclusion has a reason.
+- **Verification, not just retrieval** — a loop is only as trustworthy as the
+  grounding signal a human can check without reading every diff.
+- **The layer below, not the orchestrator** — context in, verification out;
+  the harness drives the loop.
 - **Model-agnostic** — the output works with any LLM, any interface.
 
 ---

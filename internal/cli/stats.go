@@ -9,6 +9,7 @@ import (
 
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/grounding"
 	"github.com/neuromfs/neuromfs/internal/indexer"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/project"
@@ -121,6 +122,7 @@ but only 40 are indexed, something is being filtered out.`,
 			}
 
 			printAuditSummary(out, filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir))
+			printGroundingSummary(out, cfg.RepoRoot)
 
 			return nil
 		},
@@ -209,6 +211,25 @@ func printAuditSummary(w *os.File, recordsDir string) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+// printGroundingSummary renders the continuous-grounding rollup if the loop
+// has accumulated any events. Silent when the ledger is empty — the section
+// only appears once `neurofs ground` has recorded something.
+func printGroundingSummary(w *os.File, repoRoot string) {
+	events, err := grounding.Read(repoRoot)
+	if err != nil || len(events) == 0 {
+		return
+	}
+	agg := grounding.Summarize(events)
+	fmt.Fprintf(w, "\n  grounding feed : %d events\n", agg.Events)
+	if agg.Edits > 0 {
+		fmt.Fprintf(w, "    edits in ctx : %.0f%% (%d/%d)\n", agg.EditCoverage*100, agg.EditsInContext, agg.Edits)
+	}
+	if agg.Responses > 0 {
+		fmt.Fprintf(w, "    resp grounded: %.0f%% (drift %.0f%%)\n", agg.MeanGroundedResp*100, agg.MeanRespDrift*100)
+	}
+	fmt.Fprintf(w, "    concerning   : %d — see `neurofs ground --feed`\n", agg.Concerning)
 }
 
 // humanBytes renders a byte count as a compact human-readable string.

@@ -29,9 +29,9 @@ type packReq struct {
 	MaxFiles         int    `json:"max_files"`
 	MaxFragments     int    `json:"max_fragments"`
 	PreferSignatures bool   `json:"prefer_signatures"`
-	StripComments    bool     `json:"strip_comments"`
-	StripBlankLines  bool     `json:"strip_blank_lines"`
-	SnapshotName     string   `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
+	StripComments    bool   `json:"strip_comments"`
+	StripBlankLines  bool   `json:"strip_blank_lines"`
+	SnapshotName     string `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
 	// InheritedFocus carries the focus paths the user kept from a parent
 	// record. Merged with Focus server-side so the ranker sees one list and
 	// legacy clients (no parent) remain unchanged.

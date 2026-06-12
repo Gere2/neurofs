@@ -9,6 +9,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/gate"
+	"github.com/neuromfs/neuromfs/internal/grounding"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
@@ -135,7 +136,10 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 			// G2 post-processing depends on G3 outcome.
 			g2 := gate.PostprocessG2(g2res, g3)
 
-			// G4 — drift over historical bundles.
+			// G4 — replay drift, pooled from every available source:
+			// persisted records, stem-paired bundle+response files
+			// (recomputed against the bundle bytes on disk), and
+			// response-kind events from the continuous grounding ledger.
 			recordsDir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
 			paths, err := audit.ListRecords(recordsDir)
 			var records []audit.AuditRecord
@@ -147,7 +151,25 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 					}
 				}
 			}
-			g4 := gate.EvaluateG4(records, gate.DefaultG4Thresholds())
+			samples := gate.SamplesFromRecords(records)
+			pairSamples, err := gate.CollectPairDrift(bundlesDir, filepath.Join(cfg.RepoRoot, "audit", "responses"))
+			if err != nil {
+				return fmt.Errorf("gate: G4 pairs: %w", err)
+			}
+			samples = append(samples, pairSamples...)
+			if events, err := grounding.Read(cfg.RepoRoot); err == nil {
+				for _, ev := range events {
+					if ev.Kind != grounding.KindResponse {
+						continue // edit-kind drift can be legitimate new code
+					}
+					samples = append(samples, gate.DriftSample{
+						Origin: "grounding",
+						Label:  ev.SessionID,
+						Rate:   ev.DriftRate,
+					})
+				}
+			}
+			g4 := gate.EvaluateG4Samples(samples, gate.DefaultG4Thresholds())
 
 			// G5 — cross-shape sanity. Manual; this command only inspects
 			// the current repo.
