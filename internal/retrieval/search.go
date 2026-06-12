@@ -262,6 +262,8 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		return hits[i].Symbol < hits[j].Symbol
 	})
 
+	hits = dedupeSameSymbol(hits)
+
 	// Enforce diversity: allow at most 3 chunks per file in the final search results
 	const maxChunksPerFile = 3
 	filteredHits := make([]Hit, 0, len(hits))
@@ -283,6 +285,41 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		Mode:    strings.TrimSpace(opts.Mode),
 		Results: hits,
 	}, nil
+}
+
+// dedupeSameSymbol keeps one hit per (path, symbol) for named chunks. Python
+// @t.overload and TS .d.ts overloads index the same symbol several times as
+// near-identical stubs; left alone they fill the per-file diversity cap with
+// copies of one declaration and squeeze every other symbol in that file out
+// of the results. Among duplicates the largest chunk wins (the implementation
+// body, not a stub) with ties going to the earlier, higher-scored occurrence.
+// Hits must already be sorted by score; the kept hit stays at the position of
+// the first occurrence so ordering is preserved.
+func dedupeSameSymbol(hits []Hit) []Hit {
+	type symKey struct{ path, symbol string }
+	keptAt := make(map[symKey]int)
+	out := make([]Hit, 0, len(hits))
+	for _, h := range hits {
+		if h.Symbol == "" || h.Kind == "file" {
+			out = append(out, h)
+			continue
+		}
+		k := symKey{h.Path, h.Symbol}
+		if i, seen := keptAt[k]; seen {
+			if h.TokenEstimate > out[i].TokenEstimate {
+				// Same declaration, bigger body — replace in place, but keep
+				// the first occurrence's (higher or equal) score so the swap
+				// never promotes a duplicate above where its symbol ranked.
+				score, reasons := out[i].Score, out[i].Reasons
+				out[i] = h
+				out[i].Score, out[i].Reasons = score, reasons
+			}
+			continue
+		}
+		keptAt[k] = len(out)
+		out = append(out, h)
+	}
+	return out
 }
 
 func resolveRepo(path string) (string, error) {

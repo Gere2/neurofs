@@ -36,14 +36,15 @@ real code, with the reason for every included fragment on the record.
 ## The economy, measured
 
 The thesis is falsifiable, so it was measured first. On this repository,
-delivering context with `neurofs_search` costs **48.2% fewer tokens (median
-71.4%) than native whole-file reading, at equal fact recall**, with 0 search
-misses — roughly double the 25% decision threshold, stable across runs. On a
-large Python repo (pallets/click) the same measurement reads **88.6% fewer
-tokens, 0 misses** after method-level chunking and the exact-symbol retrieval
-signal landed. Both shapes PASS; the per-task losers and every measured
-trade-off are documented, not hidden. Method, numbers, cross-shape verdicts,
-and proxy limits: [`docs/phase0_economy.md`](docs/phase0_economy.md) and
+delivering context with `neurofs_search` costs **42.1% fewer tokens (median
+71.5%) than native whole-file reading, at equal fact recall**, with 0 search
+misses — well above the 25% decision threshold, stable across runs. On a
+large Python repo (pallets/click) the same measurement reads **82.3% fewer
+tokens, 0 misses, 67% recall** after method-level chunking, the exact-symbol
+signal, and same-symbol dedupe landed. Both shapes PASS; the per-task losers
+and every measured trade-off are documented, not hidden. Method, numbers,
+cross-shape verdicts, and proxy limits:
+[`docs/phase0_economy.md`](docs/phase0_economy.md) and
 [`docs/phase_g5_cross_shape.md`](docs/phase_g5_cross_shape.md); reproduce on
 any indexed repo with:
 
@@ -713,12 +714,13 @@ rank when smaller alternatives match. `neurofs pack` (or `neurofs task`) now use
 chunk-based retrieval by default to build bundles from those chunk hits (opt out with
 `--no-chunks`), carrying the same line-ranged retrieval into the one-shot prompt flow.
 Python chunking is method-level (qualified `Class.method` symbols, class chunks
-capped at their header), mirroring the JS extractor, and search carries a
-`symbol_exact` signal for query terms that literally name an identifier — on
-pallets/click these two took the iso-recall economy from −21.9% to +88.6% with
-zero search misses.
-Next: a structural recall signal (callers/callees of named symbols) for the
-facts a question doesn't name verbatim.
+capped at their header), mirroring the JS extractor; search carries a
+`symbol_exact` signal for query terms that literally name an identifier and
+dedupes `@overload`-style same-symbol stubs so one declaration cannot crowd a
+file's result slots — on pallets/click these took the iso-recall economy from
+−21.9% to +82.3% with zero search misses and 67% recall.
+Next: real (non-mock) embeddings on cold repos for the facts a question
+doesn't name verbatim.
 
 **Strategic planning**
 Current competitive radar and implementation direction live in

@@ -534,3 +534,34 @@ func TestSymbolExactlyNamed(t *testing.T) {
 		}
 	}
 }
+
+func TestDedupeSameSymbol(t *testing.T) {
+	hits := []Hit{
+		// Three @t.overload-style stubs + the real implementation, same symbol.
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 20, StartLine: 138},
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 22, StartLine: 144},
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 400, StartLine: 160},
+		// Distinct symbol in the same file must survive.
+		{Path: "decorators.py", Symbol: "option", Kind: "func", Score: 44, TokenEstimate: 300, StartLine: 220},
+		// Same symbol name in a different file is a different declaration.
+		{Path: "core.py", Symbol: "command", Kind: "method", Score: 40, TokenEstimate: 50, StartLine: 10},
+		// Unnamed file-kind chunks are exempt from deduping.
+		{Path: "README.md", Symbol: "", Kind: "file", Score: 30, TokenEstimate: 100, StartLine: 1},
+		{Path: "README.md", Symbol: "", Kind: "file", Score: 29, TokenEstimate: 100, StartLine: 1},
+	}
+	out := dedupeSameSymbol(hits)
+	if len(out) != 5 {
+		t.Fatalf("len = %d, want 5 (3 stubs collapsed to 1): %+v", len(out), out)
+	}
+	// The kept decorators.py/command hit is the implementation body, at the
+	// first occurrence's position and score.
+	if out[0].TokenEstimate != 400 || out[0].StartLine != 160 {
+		t.Errorf("kept chunk should be the largest body: %+v", out[0])
+	}
+	if out[0].Score != 46 {
+		t.Errorf("kept chunk keeps first occurrence's score, got %v", out[0].Score)
+	}
+	if out[1].Symbol != "option" {
+		t.Errorf("distinct symbol squeezed out: %+v", out[1])
+	}
+}

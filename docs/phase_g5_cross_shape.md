@@ -7,17 +7,18 @@ once the measurement was made honest and reproducible.
 
 | Shape | Repo | files | `economy` (iso-recall) | overall recall / miss | `bench` top-3 | `gate` G2 / G3 |
 |---|---|---:|---|---|---:|---|
-| Go service | NeuroFS (this repo) | 143 | **PASS · 48.2%** | 82% / 0% | 83.3% | PASS / PASS (96%) |
-| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **PASS · 88.6%** | 53% / 0% | 66.7% | PASS / **FAIL (53%)** |
+| Go service | NeuroFS (this repo) | 143 | **PASS · 42.1%** | 79% / 0% | 83.3% | PASS / PASS (93%) |
+| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **PASS · 82.3%** | 67% / 0% | 66.7% | PASS / **FAIL (67%)** |
 | TS/JS frontend | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
 
-> The Python row started at **FAIL · −21.9% / 60% miss / G3 13%** and reached
-> PASS in two measured steps: method-level chunking (→ WARN · 82.9%, miss 40%,
-> G3 20%) and the `symbol_exact` retrieval signal (→ PASS · 88.6%, **0
-> misses**, recall 20% → 53%, G3 53%). The second step costs the Go shape one
-> hard task (economy 58.9% → 48.2%, recall 86% → 82%, still PASS) — cross-shape
-> recall was chosen over the prettier single-repo number. Both trade-offs are
-> documented below.
+> The Python row started at **FAIL · −21.9% / 60% miss / G3 13%** and improved
+> in three measured steps: method-level chunking (→ WARN · 82.9%, miss 40%,
+> G3 20%), the `symbol_exact` retrieval signal (→ PASS · 88.6%, **0 misses**,
+> recall 20% → 53%, G3 53%), and same-symbol dedupe plus a wider bundle
+> candidate surface (→ recall **67%** on both surfaces, G3 **67%**). Each step
+> costs the Go shape a few points (economy 58.9% → 42.1%, recall 86% → 79%,
+> G3 96% → 93% — all still PASS); cross-shape recall was chosen over the
+> prettier single-repo number. Every trade-off is documented below.
 
 Go uses the committed `audit/facts/*.json`; Python uses the committed
 [`g5_fixtures/click/`](g5_fixtures/click) (15 grep-verified identifiers across 5
@@ -101,9 +102,20 @@ follow-ups were measured; two were reverted, one landed:
   recall 86% → 82%, still PASS. A 4.0 weight was also measured: same cost on
   Go, weaker click gains (47%, 1 miss) — 6.0 kept.
 
-The remaining recall gap on click (53% vs the 80% bar) is concentrated in
+A fourth measured step then landed: **same-symbol dedupe + wider bundle
+candidate surface**. Diagnosis showed click's per-file diversity cap (3
+chunks/file) being filled by three `@t.overload` stubs of the *same* symbol
+(`command` at decorators.py:138/144/153), squeezing `def option` and
+`pass_context` out entirely; and the bundle path's search limit (12) cutting
+candidates the 8k budget had room for. `dedupeSameSymbol` keeps one hit per
+(path, symbol) — the implementation body, not a stub — and taskflow now
+searches 24 candidates, letting the budget do the trimming. Result: click
+recall 53% → **67%** on both the search and bundle surfaces; cost on Go:
+economy 48.2% → 42.1%, G3 96% → 93% (both still PASS).
+
+The remaining recall gap on click (67% vs the 80% bar) is concentrated in
 fact-bearing chunks whose names the question does *not* speak verbatim. Two
-follow-up hypotheses for reaching them were then measured and **falsified**:
+follow-up hypotheses for reaching them were measured and **falsified**:
 
 - **Component equality** (`symbol_component` +4.0: query term equal to one
   snake/camel component of the name — "parse" vs `parse_args`, "runner" vs
@@ -134,13 +146,14 @@ in which files rank.
 
 ## Verdicts
 
-- **Go service** — `economy` PASS (48.2%, 0 miss), `gate` G2/G3 PASS (96%).
-  The result that justifies the pivot; carries the documented `symbol_exact`
-  cost on one task.
-- **Python lib** — `economy` **PASS** (88.6%, 0 miss); `gate` G2 PASS, G3
-  **FAIL (53%)** against the 80% bar. Chunk economics and search misses are
-  fixed; the default bundle's remaining recall gap needs a structural signal,
-  not lexical tuning.
+- **Go service** — `economy` PASS (42.1%, 0 miss), `gate` G2/G3 PASS (93%).
+  The result that justifies the pivot; carries the documented cross-shape
+  trade-offs on one hard task.
+- **Python lib** — `economy` **PASS** (82.3%, 0 miss); `gate` G2 PASS, G3
+  **FAIL (67%)** against the 80% bar — up from 13% in four measured steps.
+  The remaining misses need evidence the question doesn't name verbatim:
+  real embeddings on cold repos is the unblocked-by-code, blocked-by-key
+  direction (no `OPENAI_API_KEY` in this environment).
 - **TS/JS toy** — `economy` FAIL (small-file inversion), `gate` G2/G3 PASS.
 
 ## Note on G1 (real-use signal)
