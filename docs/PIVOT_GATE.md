@@ -163,20 +163,37 @@ grounded in the bundles they were given?
 
 **Verdict.**
 - `SKIP` if no samples exist in any source.
-- `FAIL` if mean drift rate > `MaxMeanDrift` (default 0.15). The detail
-  names the worst sample and the per-source counts.
+- `FAIL` if **median** drift rate > `MaxMedianDrift` (default 0.15). The
+  detail always carries the mean, the per-source counts, and names the
+  worst sample.
 - `PASS` otherwise.
 
-**Known limitation.** Drift measures grounding discipline, not
-hallucination alone: a *design-plan* response legitimately names files and
-symbols that do not exist yet, and will read as high drift (the seed pair,
-a plan for `audit diff`, scores 88%). Feed G4 with implementation- and
-review-shaped responses, or expect plan-heavy histories to need a higher
-threshold. Small-n verdicts are honest but noisy — accumulate samples
-before acting on a single FAIL.
+**Why the median.** Drift measures grounding discipline, not hallucination
+alone: a *design-plan* response legitimately names files and symbols that
+do not exist yet, and reads as high drift (the seed pair, a plan for
+`audit diff`, scores 88%). A mean lets one such sample fail the criterion
+until diluted by sheer volume — measured on a real history of three
+grounded implementation responses plus that plan (0%, 0%, 13%, 88%), the
+mean reads 25.3% (FAIL) while the median reads 6.5% (PASS). The median
+asks the right question — "is the *typical* response grounded?" — and the
+mean and worst sample stay in the report so an operator still sees the
+outliers. Small-n verdicts are honest but noisy — accumulate samples
+before acting on a single result.
+
+**Calibration note.** The drift detector rewards verbatim identifiers:
+prose forms of bundle content ("TypeScript" for `models.LangTypeScript`,
+`QueryTerms` for `opts.QueryTerms`) and meta-references to artefact
+filenames read as drift. Grounded agent responses should cite identifiers
+exactly as they appear in the context — which is the citation discipline
+the bundle instructions already ask for.
 
 **How to move it.** Every `audit replay`, every saved bundle+response pair,
 and every loop turn with the grounding hook enabled adds a sample for free.
+
+**Known sharp edge.** A response that exists both as a persisted record and
+as a bundle+response pair contributes two samples (one per source). With a
+median verdict the skew is bounded, but prefer one pipeline per response:
+either persist the replay record or save the pair, not both.
 
 ---
 

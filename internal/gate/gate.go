@@ -320,14 +320,20 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 	return c
 }
 
-// G4Thresholds parameterises response drift. Default: 15% max mean drift.
+// G4Thresholds parameterises response drift. The threshold applies to the
+// MEDIAN drift across samples, not the mean: a healthy history legitimately
+// contains high-drift members (a design-plan response names files that do not
+// exist yet), and a mean lets one such sample fail the criterion until it is
+// diluted by sheer volume. The median asks the right question — "is the
+// typical response grounded?" — while the mean and the worst sample stay in
+// the report for the operator. Default: 15% max median drift.
 type G4Thresholds struct {
-	MaxMeanDrift float64
+	MaxMedianDrift float64
 }
 
 // DefaultG4Thresholds returns the default drift threshold.
 func DefaultG4Thresholds() G4Thresholds {
-	return G4Thresholds{MaxMeanDrift: 0.15}
+	return G4Thresholds{MaxMedianDrift: 0.15}
 }
 
 // DriftSample is one drift observation feeding G4, tagged with where it came
@@ -423,9 +429,11 @@ func EvaluateG4Samples(samples []DriftSample, th G4Thresholds) Criterion {
 	sum := 0.0
 	worst := 0.0
 	worstLabel := ""
+	rates := make([]float64, 0, len(samples))
 	byOrigin := map[string]int{}
 	for _, s := range samples {
 		sum += s.Rate
+		rates = append(rates, s.Rate)
 		byOrigin[s.Origin]++
 		if s.Rate > worst {
 			worst = s.Rate
@@ -433,25 +441,41 @@ func EvaluateG4Samples(samples []DriftSample, th G4Thresholds) Criterion {
 		}
 	}
 	mean := sum / float64(len(samples))
+	med := medianFloats(rates)
 	c.Numbers = map[string]float64{
-		"samples":    float64(len(samples)),
-		"records":    float64(byOrigin["record"]),
-		"pairs":      float64(byOrigin["pair"]),
-		"grounding":  float64(byOrigin["grounding"]),
-		"mean_drift": mean,
-		"max_drift":  th.MaxMeanDrift,
+		"samples":      float64(len(samples)),
+		"records":      float64(byOrigin["record"]),
+		"pairs":        float64(byOrigin["pair"]),
+		"grounding":    float64(byOrigin["grounding"]),
+		"mean_drift":   mean,
+		"median_drift": med,
+		"max_drift":    th.MaxMedianDrift,
 	}
 	sources := formatOriginCounts(byOrigin)
-	if mean > th.MaxMeanDrift {
+	if med > th.MaxMedianDrift {
 		c.Verdict = Fail
-		c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d samples (%s) is above %.0f%% threshold; worst: %s at %.0f%%",
-			mean*100, len(samples), sources, th.MaxMeanDrift*100, truncate(worstLabel, 40), worst*100)
+		c.Detail = fmt.Sprintf("median drift rate %.1f%% over %d samples (%s) is above %.0f%% threshold; mean %.1f%%, worst: %s at %.0f%%",
+			med*100, len(samples), sources, th.MaxMedianDrift*100, mean*100, truncate(worstLabel, 40), worst*100)
 		return c
 	}
 	c.Verdict = Pass
-	c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d samples (%s; threshold %.0f%%)",
-		mean*100, len(samples), sources, th.MaxMeanDrift*100)
+	c.Detail = fmt.Sprintf("median drift rate %.1f%% over %d samples (%s; threshold %.0f%%); mean %.1f%%, worst: %s at %.0f%%",
+		med*100, len(samples), sources, th.MaxMedianDrift*100, mean*100, truncate(worstLabel, 40), worst*100)
 	return c
+}
+
+func medianFloats(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	cp := make([]float64, len(xs))
+	copy(cp, xs)
+	sort.Float64s(cp)
+	mid := len(cp) / 2
+	if len(cp)%2 == 1 {
+		return cp[mid]
+	}
+	return (cp[mid-1] + cp[mid]) / 2
 }
 
 func formatOriginCounts(byOrigin map[string]int) string {

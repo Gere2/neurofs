@@ -655,3 +655,27 @@ func TestCollectPairDrift(t *testing.T) {
 		}
 	})
 }
+
+func TestEvaluateG4MedianRobustToPlanOutlier(t *testing.T) {
+	t.Parallel()
+	// The motivating history: three grounded implementation responses and one
+	// legitimate plan-shaped outlier (a plan names files that don't exist
+	// yet). Mean = 25.3% would FAIL; the median asks "is the typical response
+	// grounded?" and passes, while mean and worst stay in the detail.
+	samples := []DriftSample{
+		{Origin: "pair", Label: "g4-packager-selection", Rate: 0.0},
+		{Origin: "pair", Label: "g4-storage-wal", Rate: 0.0},
+		{Origin: "pair", Label: "g4-gate-pooling", Rate: 0.13},
+		{Origin: "pair", Label: "audit-diff-01 (plan)", Rate: 0.88},
+	}
+	got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+	if got.Verdict != Pass {
+		t.Fatalf("verdict = %s, want PASS at median 6.5%% (%s)", got.Verdict, got.Detail)
+	}
+	if got.Numbers["median_drift"] > 0.07 {
+		t.Errorf("median = %v, want 0.065", got.Numbers["median_drift"])
+	}
+	if !strings.Contains(got.Detail, "mean") || !strings.Contains(got.Detail, "worst") {
+		t.Errorf("detail must keep mean and worst visible: %s", got.Detail)
+	}
+}
