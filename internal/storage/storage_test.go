@@ -476,6 +476,111 @@ func TestChunkOperations(t *testing.T) {
 	}
 }
 
+func TestChunkEmbeddingsPrunedOnChunkUpdate(t *testing.T) {
+	db := newTempDB(t)
+
+	f := models.FileRecord{Path: "/repo/a.go", RelPath: "a.go", Lang: models.LangGo, Checksum: "a", IndexedAt: time.Now()}
+	if err := db.UpsertFile(f); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.UpdateChunks("/repo/a.go", []models.Chunk{
+		{ChunkID: "one", FilePath: "/repo/a.go", ContentHash: "hash1"},
+		{ChunkID: "two", FilePath: "/repo/a.go", ContentHash: "hash2"},
+	}); err != nil {
+		t.Fatalf("initial UpdateChunks: %v", err)
+	}
+	for _, hash := range []string{"hash1", "hash2", "hash3", "orphan"} {
+		if err := db.SaveChunkEmbedding(hash, []float32{1.0}, "mock", "mock-lcg"); err != nil {
+			t.Fatalf("SaveChunkEmbedding %s: %v", hash, err)
+		}
+	}
+
+	if err := db.UpdateChunks("/repo/a.go", []models.Chunk{
+		{ChunkID: "two", FilePath: "/repo/a.go", ContentHash: "hash2"},
+		{ChunkID: "three", FilePath: "/repo/a.go", ContentHash: "hash3"},
+	}); err != nil {
+		t.Fatalf("updated UpdateChunks: %v", err)
+	}
+
+	embs, err := db.AllChunkEmbeddings()
+	if err != nil {
+		t.Fatalf("AllChunkEmbeddings: %v", err)
+	}
+	if len(embs) != 2 {
+		t.Fatalf("expected 2 referenced embeddings, got %d: %+v", len(embs), embs)
+	}
+	for _, hash := range []string{"hash2", "hash3"} {
+		if _, ok := embs[hash]; !ok {
+			t.Fatalf("expected referenced embedding %s to remain: %+v", hash, embs)
+		}
+	}
+	for _, hash := range []string{"hash1", "orphan"} {
+		if _, ok := embs[hash]; ok {
+			t.Fatalf("expected unreferenced embedding %s to be pruned: %+v", hash, embs)
+		}
+	}
+}
+
+func TestDeleteFilePrunesUnreferencedChunkEmbeddings(t *testing.T) {
+	db := newTempDB(t)
+
+	fileA := models.FileRecord{Path: "/repo/a.go", RelPath: "a.go", Lang: models.LangGo, Checksum: "a", IndexedAt: time.Now()}
+	fileB := models.FileRecord{Path: "/repo/b.go", RelPath: "b.go", Lang: models.LangGo, Checksum: "b", IndexedAt: time.Now()}
+	if err := db.UpsertFile(fileA); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.UpsertFile(fileB); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.UpdateChunks("/repo/a.go", []models.Chunk{
+		{ChunkID: "a-only", FilePath: "/repo/a.go", ContentHash: "a-only"},
+		{ChunkID: "shared", FilePath: "/repo/a.go", ContentHash: "shared"},
+	}); err != nil {
+		t.Fatalf("UpdateChunks fileA: %v", err)
+	}
+	if err := db.UpdateChunks("/repo/b.go", []models.Chunk{
+		{ChunkID: "shared", FilePath: "/repo/b.go", ContentHash: "shared"},
+	}); err != nil {
+		t.Fatalf("UpdateChunks fileB: %v", err)
+	}
+	for _, hash := range []string{"a-only", "shared"} {
+		if err := db.SaveChunkEmbedding(hash, []float32{1.0}, "mock", "mock-lcg"); err != nil {
+			t.Fatalf("SaveChunkEmbedding %s: %v", hash, err)
+		}
+	}
+	if err := db.UpdateRelations([]models.FileRelation{
+		{SourcePath: "/repo/a.go", TargetPath: "/repo/b.go", RelType: "import"},
+		{SourcePath: "/repo/b.go", TargetPath: "/repo/a.go", RelType: "import"},
+	}); err != nil {
+		t.Fatalf("UpdateRelations: %v", err)
+	}
+
+	if err := db.DeleteFile("/repo/a.go"); err != nil {
+		t.Fatalf("DeleteFile: %v", err)
+	}
+
+	embs, err := db.AllChunkEmbeddings()
+	if err != nil {
+		t.Fatalf("AllChunkEmbeddings: %v", err)
+	}
+	if _, ok := embs["a-only"]; ok {
+		t.Fatalf("expected deleted file's private embedding to be pruned: %+v", embs)
+	}
+	if _, ok := embs["shared"]; !ok || len(embs) != 1 {
+		t.Fatalf("expected shared embedding to remain: %+v", embs)
+	}
+
+	rels, err := db.AllRelations()
+	if err != nil {
+		t.Fatalf("AllRelations: %v", err)
+	}
+	if len(rels) != 0 {
+		t.Fatalf("expected relations touching deleted file to be removed: %+v", rels)
+	}
+}
+
 func TestClearIndex(t *testing.T) {
 	db := newTempDB(t)
 

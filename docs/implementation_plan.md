@@ -99,8 +99,8 @@ Pruebas:
 
 - [x] Un cambio dentro de una funcion cambia solo el hash del chunk afectado.
 - [x] `go test ./...` pasa con chunks activados.
-- [ ] Un rename/delete debe limpiar `files`, `chunks`, `file_embeddings` y `chunk_embeddings` no referenciados.
-- [ ] Dos runs sobre el mismo repo deben producir el mismo orden y los mismos hashes en un fixture dedicado.
+- [x] Un rename/delete debe limpiar `files`, `chunks`, `file_embeddings` y `chunk_embeddings` no referenciados.
+- [x] Dos runs sobre el mismo repo deben producir el mismo orden y los mismos hashes en un fixture dedicado.
 
 ## Fase 5B - AST multi-lenguaje
 

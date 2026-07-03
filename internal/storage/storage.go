@@ -415,17 +415,15 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("storage: begin tx: %w", err)
 	}
-	stmt, err := tx.Prepare(`DELETE FROM files WHERE path = ?`)
-	if err != nil {
-		_ = tx.Rollback()
-		return 0, fmt.Errorf("storage: prepare delete: %w", err)
-	}
-	defer stmt.Close()
+	defer tx.Rollback()
+
 	for _, p := range toDelete {
-		if _, err := stmt.Exec(p); err != nil {
-			_ = tx.Rollback()
+		if err := deleteFileRecord(tx, p); err != nil {
 			return 0, fmt.Errorf("storage: delete %s: %w", p, err)
 		}
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("storage: commit delete: %w", err)
@@ -435,8 +433,32 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 
 // DeleteFile deletes a single file record by path.
 func (s *DB) DeleteFile(path string) error {
-	_, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, path)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("storage: begin delete file: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := deleteFileRecord(tx, path); err != nil {
+		return err
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit delete file: %w", err)
+	}
+	return nil
+}
+
+func deleteFileRecord(tx *sql.Tx, path string) error {
+	if _, err := tx.Exec(`DELETE FROM file_relations WHERE source_path = ? OR target_path = ?`, path, path); err != nil {
+		return fmt.Errorf("storage: delete file relations: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE path = ?`, path); err != nil {
+		return fmt.Errorf("storage: delete file record: %w", err)
+	}
+	return nil
 }
 
 // scanFile reads one row from a files query into a FileRecord.
@@ -747,6 +769,9 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 	}
 
 	if len(chunks) == 0 {
+		if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 
@@ -778,8 +803,30 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 		}
 	}
 
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("storage: commit chunks: %w", err)
+	}
+	return nil
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func pruneUnreferencedChunkEmbeddings(exec sqlExecer) error {
+	_, err := exec.Exec(`
+		DELETE FROM chunk_embeddings
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM chunks
+			WHERE chunks.content_hash = chunk_embeddings.content_hash
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("storage: prune unreferenced chunk embeddings: %w", err)
 	}
 	return nil
 }
