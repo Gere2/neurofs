@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,9 @@ import (
 )
 
 func TestMarkStaleFactsFlagsOnlyDeadIdentifiers(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not installed — MarkStaleFacts degrades to a no-op without it")
+	}
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "main.go"),
 		[]byte("package main\n\nfunc realFact() {}\n"), 0o644); err != nil {

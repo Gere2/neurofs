@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -145,6 +146,9 @@ func TestPromoteRetractionSuppressesEarlierFeedback(t *testing.T) {
 }
 
 func TestPromoteDropsFactsAbsentFromRepo(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not installed — the promotion guard passes facts through without it")
+	}
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n\nfunc realSymbol() {}\n"), 0o644); err != nil {
 		t.Fatal(err)
