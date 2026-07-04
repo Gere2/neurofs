@@ -268,6 +268,7 @@ func TestScanProducesDeterministicChunkSnapshot(t *testing.T) {
 type chunkSnapshotEntry struct {
 	RelPath       string
 	ChunkID       string
+	ParentID      string
 	Kind          string
 	Symbol        string
 	StartLine     int
@@ -294,6 +295,7 @@ func deterministicChunkSnapshot(t *testing.T, db *storage.DB, repoRoot string) [
 		out = append(out, chunkSnapshotEntry{
 			RelPath:       filepath.ToSlash(rel),
 			ChunkID:       c.ChunkID,
+			ParentID:      c.ParentID,
 			Kind:          c.Kind,
 			Symbol:        c.Symbol,
 			StartLine:     c.StartLine,

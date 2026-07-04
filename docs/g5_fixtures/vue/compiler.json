@@ -1,0 +1,1 @@
+{"question":"How does the Vue compiler transform a template AST and generate render code?","expects_facts":["baseCompile","function transform","function generate"]}

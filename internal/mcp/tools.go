@@ -252,6 +252,11 @@ func toolsList() []Tool {
 			Description: "Read the session state a restarting loop needs: what was tried, what failed, what was decided, the pending NextActions to continue, and the rolling grounding signal.",
 			InputSchema: json.RawMessage(recallStateInputSchema),
 		},
+		{
+			Name:        "neurofs_feedback",
+			Description: "Report whether retrieved context served the task, after finishing it. Feeds the learn loop that improves ranking from real use — call it once per task that used neurofs_search or neurofs_context results, naming the useful symbols/paths and anything that was missing.",
+			InputSchema: json.RawMessage(feedbackInputSchema),
+		},
 	}
 }
 
@@ -287,6 +292,8 @@ func callTool(ctx context.Context, p ToolCallParams) ToolCallResult {
 		return runPruneMemoryTool(ctx, p.Arguments)
 	case "neurofs_recall_state":
 		return runRecallStateTool(ctx, p.Arguments)
+	case "neurofs_feedback":
+		return runFeedbackTool(ctx, p.Arguments)
 	default:
 		return errResult(fmt.Sprintf("unknown tool: %q", p.Name))
 	}
@@ -370,6 +377,13 @@ func runContextTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	response, err := Context(ctx, args)
 	if err != nil {
 		return errResult(err.Error())
+	}
+	if repo, repoErr := resolveRepo(ctx, args.Repo); repoErr == nil {
+		bundleTokens := 0
+		if response.Stats != nil {
+			bundleTokens = response.Stats.TokensUsed
+		}
+		logSearchUsage(repo, "neurofs_context", response.Query, response.Route, response.Results, bundleTokens)
 	}
 	return jsonTextResult(response)
 }
@@ -1430,6 +1444,7 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if err != nil {
 		return errResult(err.Error())
 	}
+	logSearchUsage(repo, "neurofs_search", args.Query, args.Mode, response.Results, 0)
 	payload, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return errResult(fmt.Sprintf("marshal search response: %v", err))
@@ -1437,9 +1452,12 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	return textResult(string(payload))
 }
 
-// Search runs the same chunk retrieval path exposed by the neurofs_search MCP tool.
+// Search runs the same chunk retrieval path exposed by the neurofs_search
+// MCP tool. It goes through the shared session pool: the MCP server is a
+// long-lived process pinned to one repo, so paying the index load once per
+// index change (instead of once per query) is the whole point.
 func Search(ctx context.Context, opts SearchOptions) (SearchResponse, error) {
-	response, err := retrieval.Search(ctx, retrieval.Options{
+	response, err := retrieval.SearchShared(ctx, retrieval.Options{
 		Query: opts.Query,
 		Repo:  opts.Repo,
 		Limit: opts.Limit,

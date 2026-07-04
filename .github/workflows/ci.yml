@@ -1,0 +1,38 @@
+# CI runs the same gates a local `make check-retrieval` enforces, so a PR
+# cannot silently regress the retrieval quality the loop has accumulated.
+# The tuned weight files (.neurofs/*.json) are committed on purpose — the
+# thresholds below assume the tuned engine (defaults measure ~28 recall
+# points lower on this repo; see docs/self_improvement.md).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Unit tests
+        run: go test ./...
+
+  retrieval-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install ripgrep (exact-signal dependency of retrieval)
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Build
+        run: make build
+      - name: Index the repo
+        run: ./bin/neurofs scan .
+      - name: Retrieval regression gates
+        run: make check-retrieval

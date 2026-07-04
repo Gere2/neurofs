@@ -1,0 +1,1 @@
+{"question":"How is a Vue component instance set up with its props and setup function?","expects_facts":["setupComponent","setupStatefulComponent"]}

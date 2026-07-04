@@ -1,6 +1,12 @@
 bin/
 *.db
-.neurofs/
+# .neurofs is local state (ledgers, caches, index) EXCEPT the tuned weight
+# files: those are gate-validated engine tuning worth versioning — measured
+# 2026-07-04, defaults vs tuned is 61% vs 89% search-surface recall. The
+# `/*` form (not `/`) is required so the negations below can re-include.
+**/.neurofs/*
+!**/.neurofs/weights.json
+!**/.neurofs/ranking_weights.json
 *.prompt
 *.env
 

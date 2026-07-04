@@ -160,12 +160,14 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	rels, _ := db.AllRelations()
 
 	// 4. Rank and package the context bundle
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 
@@ -302,12 +304,14 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	rels, _ := db.AllRelations()
 
 	// 4. Rank and package the context bundle
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 
@@ -757,6 +761,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 	rels, _ := db.AllRelations()
 
 	// 5. Rank and package
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		ChangedFiles:   gitChangedFiles(cfg.RepoRoot),
@@ -764,6 +769,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	ranked := ranking.RankWithOptions(files, query, rankOpts)
 

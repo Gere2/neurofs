@@ -1,0 +1,1 @@
+{"question":"How does Vue's reactivity system track and trigger dependencies?","expects_facts":["function track","function trigger","ReactiveEffect"]}

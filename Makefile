@@ -1,4 +1,4 @@
-.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps lint
+.PHONY: check-retrieval build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps lint
 
 BINARY   := neurofs
 CMD_PATH := ./cmd/neurofs
@@ -82,6 +82,11 @@ fmt:
 ## lint: Run golangci-lint
 lint:
 	golangci-lint run ./...
+
+## check-retrieval: Retrieval regression gates — fact recall + top-3 precision on both surfaces (thresholds sit under the 2026-07-04 baselines: recall 88.9%, file top-3 66.7%, search top-3 75.0%; bump when an intentional change improves them)
+check-retrieval: build
+	$(OUT_DIR)/$(BINARY) learn eval --min-recall 0.80
+	$(OUT_DIR)/$(BINARY) bench --search --min-top3 60 --min-search-top3 70
 
 ## help: Print available targets
 help:

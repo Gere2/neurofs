@@ -91,12 +91,14 @@ Examples:
 
 			rels, _ := db.AllRelations()
 			info := loadProjectInfo(db)
+			rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 			rankOpts := ranking.Options{
 				Project:        info,
 				Focus:          focus,
 				QueryEmbedding: queryEmb,
 				Embeddings:     fileEmbs,
 				Relations:      rels,
+				Weights:        &rankWeights,
 			}
 			if changed {
 				rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)

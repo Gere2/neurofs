@@ -9,7 +9,8 @@ once the measurement was made honest and reproducible.
 |---|---|---:|---|---|---:|---|
 | Go service | NeuroFS (this repo) | 143 | **PASS · 42.1%** | 79% / 0% | 83.3% | PASS / PASS (93%) |
 | Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **PASS · 82.3%** | 67% / 0% | 66.7% | PASS / **FAIL (67%)** |
-| TS/JS frontend | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
+| TS/JS toy | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
+| TS frontend | [vuejs/core](https://github.com/vuejs/core) | 599 | **PASS · 77.0%** | 61% / 17% miss | — | see below |
 
 > The Python row started at **FAIL · −21.9% / 60% miss / G3 13%** and improved
 > in three measured steps: method-level chunking (→ WARN · 82.9%, miss 40%,
@@ -155,6 +156,67 @@ in which files rank.
   real embeddings on cold repos is the unblocked-by-code, blocked-by-key
   direction (no `OPENAI_API_KEY` in this environment).
 - **TS/JS toy** — `economy` FAIL (small-file inversion), `gate` G2/G3 PASS.
+
+## Real TS frontend: vuejs/core (2026-07-04)
+
+The toy-repo inversion said nothing about the TS *shape*, so a real corpus
+landed: [`g5_fixtures/vue/`](g5_fixtures/vue) — 6 questions, 16 grep-verified
+identifiers against a fresh vuejs/core checkout (599 indexed files).
+Reproduce with:
+
+```
+git clone --depth 1 https://github.com/vuejs/core /tmp/vue && neurofs scan /tmp/vue
+neurofs economy --repo /tmp/vue --fixtures-dir docs/g5_fixtures/vue
+```
+
+Findings, in measured order:
+
+1. **Baseline: WARN — economics hold (64.2% reduction), recall is the gap
+   (44% overall, 2/6 search misses).** The same profile click had before its
+   fixes. The TS shape is not inverted; the toy result was a size artefact.
+2. **Landed — nested-closure chunking.** vuejs/core hides its renderer API
+   inside one factory: `baseCreateRenderer` was a single 15,272-token chunk
+   (lines 335–2472) whose inner `const mountComponent = (...)` closures were
+   invisible to search. The JS chunker now emits `parent.closure` chunks for
+   function-expression assignments and named functions nested one level deep
+   in large (≥40-line) function bodies, each claimed by its innermost parent
+   (heuristic decl-end detection can make a top-level `let`'s range swallow
+   later functions; without the innermost rule every bogus parent re-emits
+   the same closure). 174 nested chunks on vue; economy 64.2% → **67.2%**;
+   Go and Python shapes unchanged (70.9% / 82.9% same-tree).
+3. **Falsified — tiny-chunk downrank.** With closures indexed, the remaining
+   misses trace to 1–4-line stubs and type aliases (`export const Vue`,
+   `type Renderer`, `type Component`) winning `symbol_exact` on ordinary
+   question words and crowding the 3-per-file diversity cap — the
+   `mcp-tools-list` failure shape, reproduced on TS. A multiplicative
+   downrank for sub-40-token chunks (keep=0.7) was A/B-tested across all
+   three corpora with `learn eval`: click recall **66.7% → 53.3%**, tokens up
+   on every shape, vue recall unchanged. Tiny stubs are *cheap* tokens and
+   sometimes *are* the answer. The knob ships neutral (`tiny_chunk_keep`
+   = 1.0, tunable) so the weight tuner can re-explore it as fixtures grow.
+4. **Out-of-sample validation of the applied weights.** The multi-corpus
+   tuned weights (trained on NeuroFS + click) were tested on vue before any
+   vue-specific work: recall identical to defaults (same 2 misses), economy
+   equivalent (62.8% vs 64.2%). The applied tune generalizes to a shape it
+   never saw — the check the first (reverted) single-repo tune failed.
+
+5. **Landed — `impl_kind`, born neutral, switched on by evidence.** The
+   kind-aware fix shipped as a signal with weight **0** (inert), because the
+   scoring history here is a graveyard of hand-picked weights. Two pieces
+   made it adoptable: chunks carry their kind (func/method/nested_func vs
+   type/const/default-stub declarations), and the tuner gained fixed probe
+   values for zero weights (multiplicative steps can never move a 0). The
+   3-corpus tune adopted it at 0.5 and vue recall jumped **50% → 66.7% on
+   the search surface**; economy verdict **WARN → PASS (77.0%, miss rate
+   33% → 17%)**. Cost, per the usual policy: Go economy recall 92% → 89%
+   (still 0 miss, PASS), G3 97% → 94%. Classes are deliberately not
+   "implementation" — click's fixtures need class headers competing evenly.
+
+With that, **all three real shapes PASS the economy gate** — the first time
+since cross-shape measurement began. The remaining vue miss
+(`component-setup`) still loses to compat-layer declaration noise
+(`installCompatInstanceProperties.set` and friends); candidate next steps
+are compat-path awareness or real embeddings, both measurable.
 
 ## Note on G1 (real-use signal)
 

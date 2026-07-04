@@ -1,0 +1,9 @@
+{
+  "question": "cross shape toy TS repo economy inverts fixtures",
+  "expects_facts": [
+    "phase_g5_cross_shape"
+  ],
+  "source": "feedback",
+  "usage_id": "43e7ddb92351",
+  "created_at": "2026-07-04T11:14:43Z"
+}

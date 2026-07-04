@@ -26,34 +26,12 @@ import (
 )
 
 const (
-	weightFilename        = 3.0
-	weightPath            = 1.5
-	weightSymbol          = 2.5
-	weightImport          = 1.0
-	weightImportExpansion = 0.8
-	weightLangBonus       = 0.3
-	weightContentMatch    = 0.5
-	weightEntryPoint      = 1.5
-	weightDependencyMatch = 1.2
-	weightFocus           = 4.0
-	weightChanged         = 2.0
-	weightSemantic        = 4.0
-	// weightRootDoc is a floor for canonical project docs at the repo root
-	// (README, ARCHITECTURE, CONTRIBUTING, CHANGELOG). Without it, queries in
-	// languages other than the doc's language — or any query that does not
-	// happen to lexically match the doc's contents — leave the README at zero
-	// score and out of every bundle, which is exactly the wrong behaviour for
-	// "what is this project" style questions. Sized between weightSymbol and
-	// weightFilename so a strong specific match still beats it, but a weak or
-	// non-matching query still surfaces the README.
-	weightRootDoc = 3.5
-
 	// expansionLimit is the number of top files used as seeds for import expansion.
 	expansionLimit = 12
 )
 
 // rootDocStems is the set of canonical doc filename stems (no extension,
-// lowercase) that earn weightRootDoc when they sit at the repo root.
+// lowercase) that earn w.RootDoc when they sit at the repo root.
 var rootDocStems = map[string]bool{
 	"readme":       true,
 	"architecture": true,
@@ -82,6 +60,10 @@ type Options struct {
 	QueryEmbedding []float32
 	// Relations carries the semantic dependency graph relationships.
 	Relations []models.FileRelation
+	// Weights overrides the ranker scoring weights. Nil means the shipped
+	// defaults; callers with a repo root can pass LoadWeights output so
+	// tuned weights apply (taskflow and the bench harness do).
+	Weights *Weights
 }
 
 // Rank scores all files against the query and returns them sorted by score
@@ -98,6 +80,11 @@ func Rank(files []models.FileRecord, query string) []models.ScoredFile {
 // run with project metadata. When Options.Project is nil the behaviour is
 // identical to Rank.
 func RankWithOptions(files []models.FileRecord, query string, opts Options) []models.ScoredFile {
+	w := opts.Weights
+	if w == nil {
+		d := DefaultWeights()
+		w = &d
+	}
 	terms := tokenise(query)
 	if len(terms) == 0 {
 		out := make([]models.ScoredFile, len(files))
@@ -107,11 +94,11 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 			// still give structure to "what's in this repo" or
 			// "review my edits" queries.
 			if opts.Project != nil {
-				addEntryPointBonus(&out[i], opts.Project)
+				addEntryPointBonus(&out[i], opts.Project, w)
 			}
 		}
-		applyFocusBoost(out, opts.Focus)
-		applyChangedBoost(out, opts.ChangedFiles)
+		applyFocusBoost(out, opts.Focus, w)
+		applyChangedBoost(out, opts.ChangedFiles, w)
 		sort.Slice(out, func(i, j int) bool {
 			if math.Abs(out[i].Score-out[j].Score) < 1e-9 {
 				return out[i].Record.RelPath < out[j].Record.RelPath
@@ -123,7 +110,7 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 
 	scored := make([]models.ScoredFile, len(files))
 	for i, f := range files {
-		sc, reasons := scoreFile(f, terms)
+		sc, reasons := scoreFile(f, terms, w)
 		scored[i] = models.ScoredFile{Record: f, Score: sc, Reasons: reasons}
 	}
 
@@ -134,7 +121,7 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 				sim := embeddings.CosineSimilarity(opts.QueryEmbedding, vec)
 				// Cosine similarity can be negative, clamp it to >= 0 for scoring boost
 				if sim > 0 {
-					boost := sim * weightSemantic
+					boost := sim * w.Semantic
 					scored[i].Score += boost
 					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 						Signal: "semantic_match",
@@ -147,18 +134,18 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	}
 
 	if opts.Project != nil {
-		applyProjectSignals(scored, terms, opts.Project)
+		applyProjectSignals(scored, terms, opts.Project, w)
 	}
 
-	applyFocusBoost(scored, opts.Focus)
-	applyChangedBoost(scored, opts.ChangedFiles)
+	applyFocusBoost(scored, opts.Focus, w)
+	applyChangedBoost(scored, opts.ChangedFiles, w)
 
 	if len(opts.Relations) > 0 {
 		expandByGraphRelations(scored, opts.Relations)
 	} else {
-		expandByImports(scored, terms, opts.Project)
+		expandByImports(scored, terms, opts.Project, w)
 	}
-	enrichWithContent(scored, terms)
+	enrichWithContent(scored, terms, w)
 
 	applyTestPenalty(scored, query)
 
@@ -173,7 +160,7 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 }
 
 // scoreFile computes the base score for a single file.
-func scoreFile(f models.FileRecord, terms []string) (float64, []models.InclusionReason) {
+func scoreFile(f models.FileRecord, terms []string, w *Weights) (float64, []models.InclusionReason) {
 	score := 0.0
 	var reasons []models.InclusionReason
 
@@ -190,19 +177,19 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 		// still find files with abbreviated names.
 		if anyContains(baseName, variants) ||
 			(len(baseStem) >= 3 && anyContainsReverse(variants, baseStem)) {
-			score += weightFilename
+			score += w.Filename
 			reasons = append(reasons, models.InclusionReason{
 				Signal: "filename_match",
 				Detail: term,
-				Weight: weightFilename,
+				Weight: w.Filename,
 			})
 		} else if anyContains(relPath, variants) {
 			// Path match (directory components, not just filename).
-			score += weightPath
+			score += w.Path
 			reasons = append(reasons, models.InclusionReason{
 				Signal: "path_match",
 				Detail: term,
-				Weight: weightPath,
+				Weight: w.Path,
 			})
 		}
 
@@ -210,11 +197,11 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 		for _, sym := range f.Symbols {
 			symLower := strings.ToLower(sym.Name)
 			if anyContains(symLower, variants) {
-				score += weightSymbol
+				score += w.Symbol
 				reasons = append(reasons, models.InclusionReason{
 					Signal: "symbol_match",
 					Detail: fmt.Sprintf("%s (L%d)", sym.Name, sym.Line),
-					Weight: weightSymbol,
+					Weight: w.Symbol,
 				})
 				break // one bonus per term per file
 			}
@@ -223,11 +210,11 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 		// Import match.
 		for _, imp := range f.Imports {
 			if anyContains(strings.ToLower(imp), variants) {
-				score += weightImport
+				score += w.Import
 				reasons = append(reasons, models.InclusionReason{
 					Signal: "import_match",
 					Detail: imp,
-					Weight: weightImport,
+					Weight: w.Import,
 				})
 				break
 			}
@@ -237,11 +224,11 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 	// Language bonus: prioritise code files over config/data.
 	switch f.Lang {
 	case models.LangTypeScript, models.LangJavaScript, models.LangPython, models.LangGo:
-		score += weightLangBonus
+		score += w.LangBonus
 		reasons = append(reasons, models.InclusionReason{
 			Signal: "lang_bonus",
 			Detail: string(f.Lang),
-			Weight: weightLangBonus,
+			Weight: w.LangBonus,
 		})
 	}
 
@@ -249,11 +236,11 @@ func scoreFile(f models.FileRecord, terms []string) (float64, []models.Inclusion
 	// enough to earn a slot. Subdirectory READMEs (per-package docs) do
 	// not get the boost — they're scope-local, not project-level.
 	if isRootDoc(f.RelPath) {
-		score += weightRootDoc
+		score += w.RootDoc
 		reasons = append(reasons, models.InclusionReason{
 			Signal: "root_doc",
 			Detail: filepath.Base(f.RelPath),
-			Weight: weightRootDoc,
+			Weight: w.RootDoc,
 		})
 	}
 
@@ -337,7 +324,7 @@ func expandByGraphRelations(scored []models.ScoredFile, relations []models.FileR
 // When info is non-nil, tsconfig path aliases are resolved before matching so
 // imports like `@app/user` expand to files under `src/user` the same way
 // relative imports do.
-func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info) {
+func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info, w *Weights) {
 	tmp := make([]models.ScoredFile, len(scored))
 	copy(tmp, scored)
 	sort.Slice(tmp, func(i, j int) bool { return tmp[i].Score > tmp[j].Score })
@@ -373,11 +360,11 @@ func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info)
 				strings.HasSuffix(imp, "/"+base) ||
 				strings.HasPrefix(imp, base+".") ||
 				strings.Contains(imp, "/"+base+".") {
-				scored[i].Score += weightImportExpansion
+				scored[i].Score += w.ImportExpansion
 				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 					Signal: "import_expansion",
 					Detail: imp,
-					Weight: weightImportExpansion,
+					Weight: w.ImportExpansion,
 				})
 				break
 			}
@@ -391,33 +378,33 @@ func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info)
 //	entry_point       — file is declared as main/module/types/bin
 //	dependency_match  — a query term names a production dependency AND the
 //	                    file imports that dependency
-func applyProjectSignals(scored []models.ScoredFile, terms []string, info *project.Info) {
+func applyProjectSignals(scored []models.ScoredFile, terms []string, info *project.Info, w *Weights) {
 	if info == nil {
 		return
 	}
 
 	entries := info.EntryPoints()
 	for i := range scored {
-		addEntryPointBonus(&scored[i], info)
-		applyDependencyMatch(&scored[i], terms, info)
+		addEntryPointBonus(&scored[i], info, w)
+		applyDependencyMatch(&scored[i], terms, info, w)
 		_ = entries // referenced via addEntryPointBonus
 	}
 }
 
 // addEntryPointBonus tags a file as an entry point when its relative path
 // matches one of the project's declared entries.
-func addEntryPointBonus(sf *models.ScoredFile, info *project.Info) {
+func addEntryPointBonus(sf *models.ScoredFile, info *project.Info, w *Weights) {
 	if info == nil {
 		return
 	}
 	rel := filepath.ToSlash(sf.Record.RelPath)
 	for _, entry := range info.EntryPoints() {
 		if pathsMatchEntry(rel, entry) {
-			sf.Score += weightEntryPoint
+			sf.Score += w.EntryPoint
 			sf.Reasons = append(sf.Reasons, models.InclusionReason{
 				Signal: "entry_point",
 				Detail: entry,
-				Weight: weightEntryPoint,
+				Weight: w.EntryPoint,
 			})
 			return
 		}
@@ -427,7 +414,7 @@ func addEntryPointBonus(sf *models.ScoredFile, info *project.Info) {
 // applyDependencyMatch boosts a file when a query term names a declared
 // production dependency and the file imports that dependency. The bonus is
 // only applied once per file.
-func applyDependencyMatch(sf *models.ScoredFile, terms []string, info *project.Info) {
+func applyDependencyMatch(sf *models.ScoredFile, terms []string, info *project.Info, w *Weights) {
 	if info == nil || len(info.Dependencies) == 0 {
 		return
 	}
@@ -448,11 +435,11 @@ func applyDependencyMatch(sf *models.ScoredFile, terms []string, info *project.I
 			if !fileImports[dep] {
 				continue
 			}
-			sf.Score += weightDependencyMatch
+			sf.Score += w.DependencyMatch
 			sf.Reasons = append(sf.Reasons, models.InclusionReason{
 				Signal: "dependency_match",
 				Detail: dep,
-				Weight: weightDependencyMatch,
+				Weight: w.DependencyMatch,
 			})
 			return
 		}
@@ -507,7 +494,7 @@ func resolveAlias(imp string, info *project.Info) string {
 
 // enrichWithContent adds a content-match bonus by reading files for the top
 // candidates. We cap at the top 30 to avoid I/O on the whole repo.
-func enrichWithContent(scored []models.ScoredFile, terms []string) {
+func enrichWithContent(scored []models.ScoredFile, terms []string, w *Weights) {
 	// Work on a snapshot sorted by current score.
 	type indexed struct {
 		pos int
@@ -541,7 +528,7 @@ func enrichWithContent(scored []models.ScoredFile, terms []string) {
 				continue
 			}
 			// TF-style: reward frequency but dampen with log.
-			bonus := weightContentMatch * math.Log1p(float64(count))
+			bonus := w.ContentMatch * math.Log1p(float64(count))
 			// Normalise by file size so large files don't dominate unfairly.
 			if totalTokens > 0 {
 				bonus = bonus * math.Min(1.0, 1000.0/float64(totalTokens))
@@ -559,7 +546,7 @@ func enrichWithContent(scored []models.ScoredFile, terms []string) {
 // applyFocusBoost adds a strong score bump to files under any of the
 // comma-separated prefixes in focus. Prefixes are compared against the
 // forward-slashed relpath so behaviour is identical on Windows and Unix.
-func applyFocusBoost(scored []models.ScoredFile, focus string) {
+func applyFocusBoost(scored []models.ScoredFile, focus string, w *Weights) {
 	prefixes := parseFocusPrefixes(focus)
 	if len(prefixes) == 0 {
 		return
@@ -568,11 +555,11 @@ func applyFocusBoost(scored []models.ScoredFile, focus string) {
 		rel := filepath.ToSlash(scored[i].Record.RelPath)
 		for _, p := range prefixes {
 			if rel == p || strings.HasPrefix(rel, p+"/") {
-				scored[i].Score += weightFocus
+				scored[i].Score += w.Focus
 				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 					Signal: "focus",
 					Detail: p,
-					Weight: weightFocus,
+					Weight: w.Focus,
 				})
 				break
 			}
@@ -583,7 +570,7 @@ func applyFocusBoost(scored []models.ScoredFile, focus string) {
 // applyChangedBoost bumps files whose relpath is in the changed set. The
 // caller is responsible for producing the list (see cli/gitchanges.go); any
 // format of slashes is normalised here so a caller on Windows is fine.
-func applyChangedBoost(scored []models.ScoredFile, changed []string) {
+func applyChangedBoost(scored []models.ScoredFile, changed []string, w *Weights) {
 	if len(changed) == 0 {
 		return
 	}
@@ -594,11 +581,11 @@ func applyChangedBoost(scored []models.ScoredFile, changed []string) {
 	for i := range scored {
 		rel := filepath.ToSlash(scored[i].Record.RelPath)
 		if set[rel] {
-			scored[i].Score += weightChanged
+			scored[i].Score += w.Changed
 			scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 				Signal: "changed",
 				Detail: rel,
-				Weight: weightChanged,
+				Weight: w.Changed,
 			})
 		}
 	}
@@ -635,20 +622,21 @@ func Tokenise(query string) []string {
 // SignalWeights returns the scoring weights Rank applies, keyed by signal.
 // Useful for rendering an explain table alongside reason-level weights.
 func SignalWeights() map[string]float64 {
+	w := DefaultWeights()
 	return map[string]float64{
-		"filename_match":   weightFilename,
-		"path_match":       weightPath,
-		"symbol_match":     weightSymbol,
-		"import_match":     weightImport,
-		"import_expansion": weightImportExpansion,
-		"content_match":    weightContentMatch,
-		"lang_bonus":       weightLangBonus,
-		"entry_point":      weightEntryPoint,
-		"dependency_match": weightDependencyMatch,
-		"focus":            weightFocus,
-		"changed":          weightChanged,
-		"root_doc":         weightRootDoc,
-		"semantic_match":   weightSemantic,
+		"filename_match":   w.Filename,
+		"path_match":       w.Path,
+		"symbol_match":     w.Symbol,
+		"import_match":     w.Import,
+		"import_expansion": w.ImportExpansion,
+		"content_match":    w.ContentMatch,
+		"lang_bonus":       w.LangBonus,
+		"entry_point":      w.EntryPoint,
+		"dependency_match": w.DependencyMatch,
+		"focus":            w.Focus,
+		"changed":          w.Changed,
+		"root_doc":         w.RootDoc,
+		"semantic_match":   w.Semantic,
 	}
 }
 

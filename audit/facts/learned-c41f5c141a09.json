@@ -1,0 +1,10 @@
+{
+  "question": "how does promote validate that feedback facts exist in the repo",
+  "expects_facts": [
+    "Promote",
+    "factsPresentInRepo"
+  ],
+  "source": "feedback",
+  "usage_id": "14db57331d9a",
+  "created_at": "2026-07-04T16:41:06Z"
+}

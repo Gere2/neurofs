@@ -333,11 +333,13 @@ func generate(cfg *config.Config, query string, budget int, useChunks bool, useM
 		fileEmbs, _ := db.AllEmbeddings()
 		rels, _ := db.AllRelations()
 
+		rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 		ranked := ranking.RankWithOptions(files, query, ranking.Options{
 			Project:        info,
 			QueryEmbedding: queryEmb,
 			Embeddings:     fileEmbs,
 			Relations:      rels,
+			Weights:        &rankWeights,
 		})
 		bundle, err = packager.Pack(ranked, query, packager.Options{
 			Budget:           budget,

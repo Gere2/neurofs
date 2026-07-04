@@ -1,0 +1,7 @@
+[
+  {"question":"How does click create and manage the Context object during command invocation?","expects":["src/click/core.py"]},
+  {"question":"How do click command and option decorators work?","expects":["src/click/decorators.py"]},
+  {"question":"How does click parse command line arguments?","expects":["src/click/core.py","src/click/parser.py"]},
+  {"question":"How does the click testing runner invoke commands and capture output?","expects":["src/click/testing.py"]},
+  {"question":"How are option parameter types defined and converted in click?","expects":["src/click/types.py"]}
+]

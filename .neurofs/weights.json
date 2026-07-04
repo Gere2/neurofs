@@ -1,0 +1,21 @@
+{
+  "symbol_match": 12.0,
+  "symbol_exact": 8.96,
+  "path_match": 6.75,
+  "kind_match": 1,
+  "content_match": 0.72,
+  "chunk_scope": 0.5,
+  "structural_symbol": 8.64,
+  "structural_symbol_partial": 4.69,
+  "structural_import": 1.08,
+  "semantic": 8.0,
+  "working_set": 1.35,
+  "exact_content": 2.7,
+  "exact_filename": 2.04,
+  "graph": 1.25,
+  "long_chunk_penalty_max": 6.25,
+  "test_downrank": 0.9,
+  "tiny_chunk_keep": 1.0,
+  "impl_kind": 0.5,
+  "legacy_path_keep": 1.0
+}

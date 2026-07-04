@@ -10,6 +10,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/gate"
 	"github.com/neuromfs/neuromfs/internal/grounding"
+	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
@@ -129,7 +130,13 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 				if maxFixtures > 0 && len(fixtures) > maxFixtures {
 					fixtures = fixtures[:maxFixtures]
 				}
+				if stale := staleIndexCount(cfg.DBPath, cfg.RepoRoot); stale > 0 {
+					fmt.Fprintf(os.Stderr,
+						"  WARN: index is stale — %d indexed file(s) changed on disk since the last scan; G3/G4 ground against the index, run `neurofs scan` first\n\n",
+						stale)
+				}
 				g3Details = runFixtures(cfg.RepoRoot, fixtures, fixtureBudg, noChunks)
+				gate.MarkStaleFacts(cfg.RepoRoot, g3Details)
 				g3 = gate.EvaluateG3(g3Details, gate.DefaultG3Thresholds())
 			}
 
@@ -243,6 +250,22 @@ func indexReady(dbPath string) bool {
 		return false
 	}
 	return info.Size() > 0
+}
+
+// staleIndexCount opens the index read-only and counts files whose disk
+// content no longer matches their indexed checksum. Errors degrade to 0:
+// the staleness warning is a courtesy, never a gate blocker.
+func staleIndexCount(dbPath, repoRoot string) int {
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	files, err := db.AllFiles()
+	if err != nil {
+		return 0
+	}
+	return gate.CountStaleIndexFiles(repoRoot, files)
 }
 
 // runFixtures invokes taskflow.Run for each fixture and scores the

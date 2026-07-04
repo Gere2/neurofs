@@ -93,12 +93,14 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	fileEmbs, _ := db.AllEmbeddings()
 
 	rels, _ := db.AllRelations()
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		Focus:          mergeFocus(req.Focus, req.InheritedFocus),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	if req.Changed {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)

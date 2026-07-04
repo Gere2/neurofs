@@ -20,6 +20,7 @@ func TestSubcommandsHelp(t *testing.T) {
 		"bench",
 		"economy",
 		"ground",
+		"learn",
 		"audit",
 		"gate",
 		"ui",

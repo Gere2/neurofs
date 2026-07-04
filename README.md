@@ -54,6 +54,22 @@ neurofs economy --json     # machine-readable
 neurofs economy --gate     # exit non-zero on a FAIL verdict (CI)
 ```
 
+## It improves from use
+
+Retrieval quality is not frozen: every search served over MCP logs what it
+delivered (`.neurofs/usage.jsonl`), the consuming agent reports what
+actually helped via the `neurofs_feedback` tool (`.neurofs/feedback.jsonl`),
+and `neurofs learn` turns that signal into engine improvements — feedback
+becomes regression fixtures (`learn promote`), and a coordinate-descent
+tuner optimizes both scoring surfaces against them (`learn tune` for chunk
+search, `learn tune-files` for the file ranker), always as a macro-average
+across repository shapes so no single repo can overfit the objective.
+Measured on this repo: defaults vs tuned is 61% vs 89% search-surface
+recall at fewer delivered tokens. The tuned weight files are committed;
+`make check-retrieval` and the pivot gate hold every level once reached.
+Full loop, evidence tables, and the falsified hypotheses:
+[`docs/self_improvement.md`](docs/self_improvement.md).
+
 ---
 
 ## What NeuroFS does

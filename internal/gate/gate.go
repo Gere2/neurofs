@@ -255,6 +255,11 @@ type FactResult struct {
 	Recall  float64  `json:"recall"`
 	Hits    []string `json:"hits"`
 	Misses  []string `json:"misses"`
+	// StaleFacts is the subset of Misses that no longer occur anywhere in
+	// the repo (filled by MarkStaleFacts): the fixture expects an
+	// identifier the code no longer has — update the fixture, don't chase
+	// retrieval.
+	StaleFacts []string `json:"stale_facts,omitempty"`
 	// Error is set when fixture execution itself failed (no index, etc.).
 	// A fixture with an error counts as recall 0 and is named in the detail.
 	Error string `json:"error,omitempty"`
@@ -614,9 +619,23 @@ func renderG3FixtureDetail(w io.Writer, results []FactResult) {
 			fmt.Fprintf(w, "    [error] %q — %s\n", q, r.Error)
 			continue
 		}
-		fmt.Fprintf(w, "    [%3.0f%%] %q%s\n",
-			r.Recall*100, q, formatMisses(r.Misses))
+		fmt.Fprintf(w, "    [%3.0f%%] %q%s%s\n",
+			r.Recall*100, q, formatMisses(r.Misses), formatStaleFacts(r.StaleFacts))
 	}
+}
+
+// formatStaleFacts flags expected facts that exist nowhere in the repo —
+// the "rotten fixture" case where the fix is editing the fixture, not the
+// engine.
+func formatStaleFacts(stale []string) string {
+	if len(stale) == 0 {
+		return ""
+	}
+	shown := stale
+	if len(shown) > renderMaxMissing {
+		shown = shown[:renderMaxMissing]
+	}
+	return fmt.Sprintf(" [%s no longer in repo — stale fixture?]", strings.Join(shown, ", "))
 }
 
 // formatMisses returns " — missing: a, b, c" or " — missing: a, b, c (+N more)",

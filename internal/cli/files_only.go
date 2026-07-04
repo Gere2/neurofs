@@ -51,11 +51,13 @@ func rankFilesForCLI(ctx context.Context, cfg *config.Config, db *storage.DB, qu
 		fileEmbs, _ = db.AllEmbeddings()
 	}
 	rels, _ := db.AllRelations()
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	return ranking.RankWithOptions(files, query, ranking.Options{
 		Project:        loadProjectInfo(db),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	})
 }
 

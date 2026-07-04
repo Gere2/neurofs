@@ -1,0 +1,10 @@
+{
+  "question": "how does the gate warn when the index is stale",
+  "expects_facts": [
+    "staleIndexCount",
+    "CountStaleIndexFiles"
+  ],
+  "source": "feedback",
+  "usage_id": "6111f16bc789",
+  "created_at": "2026-07-04T16:41:06Z"
+}

@@ -88,8 +88,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 15 {
-		t.Fatalf("tools: got %d want 15", len(listResult.Tools))
+	if len(listResult.Tools) != 16 {
+		t.Fatalf("tools: got %d want 16", len(listResult.Tools))
 	}
 	wantNames := map[string]bool{
 		"neurofs_context":         true,
@@ -107,6 +107,7 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_export_memory":   true,
 		"neurofs_prune_memory":    true,
 		"neurofs_recall_state":    true,
+		"neurofs_feedback":        true,
 	}
 	for _, tool := range listResult.Tools {
 		if !wantNames[tool.Name] {
@@ -464,6 +465,9 @@ func BetaWorker() string {
 
 func TestSearchToolUsesSemanticChunkEmbeddings(t *testing.T) {
 	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	// Retrieval skips the semantic path entirely under the mock provider;
+	// this test exercises that path with a planted vector, so opt back in.
+	t.Setenv("NEUROFS_MOCK_SEMANTIC", "1")
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
