@@ -20,6 +20,7 @@ a model actually needs to answer a question about your codebase.`,
 	}
 
 	root.AddCommand(newScanCmd())
+	root.AddCommand(newSetupCmd())
 	root.AddCommand(newWatchCmd())
 	root.AddCommand(newAskCmd())
 	root.AddCommand(newPackCmd())

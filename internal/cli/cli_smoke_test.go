@@ -8,6 +8,7 @@ import (
 func TestSubcommandsHelp(t *testing.T) {
 	subcommands := []string{
 		"scan",
+		"setup",
 		"watch",
 		"ask",
 		"pack",

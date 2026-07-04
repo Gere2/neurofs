@@ -45,9 +45,16 @@ weights, fed by two append-only ledgers that fill themselves while you work.
 
 ## Daily workflow
 
-Nothing to do beyond using the tool. With NeuroFS registered as an MCP
-server, retrievals log themselves; instruct the agent (CLAUDE.md) to call
-`neurofs_feedback` after each task. Then, occasionally:
+Adopting a new repo is one command — it indexes, wires the CLAUDE.md
+retrieval contract, and prints the one-time MCP registration:
+
+```
+cd /path/to/project && neurofs setup
+```
+
+After that there is nothing to do beyond using the tool: retrievals log
+themselves and the agent reports feedback per the CLAUDE.md contract.
+Then, occasionally:
 
 ```
 neurofs learn status          # how much signal has accumulated

@@ -96,6 +96,10 @@ loop calls it directly.
 # Build the binary
 make build
 
+# Wire any repo for agent use in one shot: index + CLAUDE.md retrieval
+# contract + the one-time MCP registration command
+cd /path/to/project && neurofs setup
+
 # Primary surface: expose NeuroFS as MCP tools to Claude Code / Codex / Cursor
 ./bin/neurofs mcp        # stdio JSON-RPC 2.0 — wire it as an MCP server
 
