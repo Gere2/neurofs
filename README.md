@@ -14,6 +14,43 @@ verifies grounding.
 
 ---
 
+## Get started in 3 steps
+
+You need [Go 1.23+](https://go.dev/dl/), [ripgrep](https://github.com/BurntSushi/ripgrep#installation),
+and an MCP-capable agent (Claude Code, Codex, Cursor…).
+
+```bash
+# 1. Build it
+git clone https://github.com/Gere2/neurofs && cd neurofs && make build
+
+# 2. Register it with your agent, once (example: Claude Code)
+claude mcp add --scope user neurofs -- "$(pwd)/bin/neurofs" mcp
+
+# 3. In any project you want the agent to work in:
+cd /path/to/your/project && /path/to/neurofs/bin/neurofs setup
+```
+
+`setup` indexes the repo, adds a short retrieval block to its `CLAUDE.md`,
+and reprints the registration line. That's it — now when your agent works in
+that project it asks NeuroFS for targeted, citable context (over the
+`neurofs_context` / `neurofs_search` tools) instead of reading whole files,
+and reports back what helped (`neurofs_feedback`).
+
+**And it gets better the more you use it.** That feedback accumulates; every
+week or so, in the project:
+
+```bash
+neurofs learn status     # how much usage signal has piled up
+neurofs learn promote    # turn feedback into regression fixtures
+neurofs learn tune       # optimize retrieval against them (see docs/self_improvement.md
+                         #   for the one rule: always tune across ≥2 repo shapes)
+neurofs gate             # the guardrail — confirm nothing regressed
+```
+
+Full loop and evidence: [`docs/self_improvement.md`](docs/self_improvement.md).
+
+---
+
 ## Why the loop changes the economics
 
 A one-shot chat and an autonomous loop are not the same product. Three costs
