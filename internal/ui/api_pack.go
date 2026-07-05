@@ -29,9 +29,9 @@ type packReq struct {
 	MaxFiles         int    `json:"max_files"`
 	MaxFragments     int    `json:"max_fragments"`
 	PreferSignatures bool   `json:"prefer_signatures"`
-	StripComments    bool     `json:"strip_comments"`
-	StripBlankLines  bool     `json:"strip_blank_lines"`
-	SnapshotName     string   `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
+	StripComments    bool   `json:"strip_comments"`
+	StripBlankLines  bool   `json:"strip_blank_lines"`
+	SnapshotName     string `json:"snapshot_name"` // optional — when empty, a default path under .neurofs/ui/ is used
 	// InheritedFocus carries the focus paths the user kept from a parent
 	// record. Merged with Focus server-side so the ranker sees one list and
 	// legacy clients (no parent) remain unchanged.
@@ -93,12 +93,14 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 	fileEmbs, _ := db.AllEmbeddings()
 
 	rels, _ := db.AllRelations()
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        taskflow.LoadProjectInfo(db),
 		Focus:          mergeFocus(req.Focus, req.InheritedFocus),
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	if req.Changed {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)

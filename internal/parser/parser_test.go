@@ -123,9 +123,49 @@ class EventBus:
 	assertContainsSymbol(t, result.Symbols, "compute_checksum", "func")
 	assertContainsSymbol(t, result.Symbols, "fetch_data", "func")
 	assertContainsSymbol(t, result.Symbols, "EventBus", "class")
+	// Methods are qualified Class.method, mirroring the JS extractor.
+	assertContainsSymbol(t, result.Symbols, "EventBus.subscribe", "method")
 
 	assertContainsImport(t, result.Imports, "hashlib")
 	assertContainsImport(t, result.Imports, "typing")
+}
+
+func TestParsePythonMethodsClosuresAndDocstrings(t *testing.T) {
+	content := `
+class Context:
+    """Example docstring with code:
+
+        def phantom_from_docstring():
+            pass
+    """
+
+    def make_context(self, args):
+        def closure_helper():
+            pass
+        return closure_helper
+
+    async def invoke(self, callback):
+        pass
+
+def top_level():
+    pass
+`
+
+	result := parser.Parse(models.LangPython, content)
+
+	assertContainsSymbol(t, result.Symbols, "Context", "class")
+	assertContainsSymbol(t, result.Symbols, "Context.make_context", "method")
+	assertContainsSymbol(t, result.Symbols, "Context.invoke", "method")
+	assertContainsSymbol(t, result.Symbols, "top_level", "func")
+
+	for _, s := range result.Symbols {
+		if strings.Contains(s.Name, "phantom_from_docstring") {
+			t.Errorf("docstring example code captured as symbol: %+v", s)
+		}
+		if strings.Contains(s.Name, "closure_helper") {
+			t.Errorf("closure captured as symbol: %+v", s)
+		}
+	}
 }
 
 func TestParseGo(t *testing.T) {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/neuromfs/neuromfs/internal/contextmap"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	codeParser "github.com/neuromfs/neuromfs/internal/parser"
@@ -34,11 +35,15 @@ func BuildChunks(filePath, relPath string, lang models.Lang, content string, ind
 		chunks = buildJSChunks(filePath, relPath, content, indexedAt)
 	case models.LangPython:
 		chunks = buildPythonChunks(filePath, relPath, content, indexedAt)
+	case models.LangMarkdown:
+		chunks = buildMarkdownChunks(filePath, relPath, content, indexedAt)
 	}
 	if len(chunks) == 0 {
 		chunks = []models.Chunk{newChunk(filePath, "file", filepath.Base(relPath), 1, countLogicalLines(content), content, indexedAt)}
 	}
-	return uniqueChunkIDs(chunks)
+	chunks = uniqueChunkIDs(chunks)
+	assignChunkParents(chunks)
+	return chunks
 }
 
 func buildGoChunks(filePath, relPath, content string, indexedAt time.Time) []models.Chunk {
@@ -181,6 +186,7 @@ func newChunk(filePath, kind, symbol string, startLine, endLine int, content str
 		Content:       content,
 		ContentHash:   contentHash,
 		ASTHash:       astHash,
+		Calls:         contextmap.CallsIn(content),
 		TokenEstimate: tokenbudget.EstimateTokens(content),
 		IndexedAt:     indexedAt,
 	}
@@ -211,6 +217,41 @@ func uniqueChunkIDs(chunks []models.Chunk) []models.Chunk {
 		chunks[i].ChunkID = fmt.Sprintf("%s-%d", base, seen[base])
 	}
 	return chunks
+}
+
+func assignChunkParents(chunks []models.Chunk) {
+	parentIDs := make(map[string]string)
+	for _, chunk := range chunks {
+		switch chunk.Kind {
+		case "class", "export_class", "type", "interface",
+			"func", "export_func", "const", "export_const", "let", "var":
+			if chunk.Symbol != "" {
+				if _, exists := parentIDs[chunk.Symbol]; !exists {
+					parentIDs[chunk.Symbol] = chunk.ChunkID
+				}
+			}
+		}
+	}
+	for i := range chunks {
+		if !isMemberChunkKind(chunks[i].Kind) {
+			continue
+		}
+		parent, ok := parentSymbol(chunks[i].Symbol)
+		if !ok {
+			continue
+		}
+		chunks[i].ParentID = parentIDs[parent]
+	}
+}
+
+func isMemberChunkKind(kind string) bool {
+	return kind == "method" || kind == "get" || kind == "set" || kind == "nested_func"
+}
+
+func parentSymbol(symbol string) (string, bool) {
+	parent, _, ok := strings.Cut(symbol, ".")
+	parent = strings.TrimSpace(parent)
+	return parent, ok && parent != ""
 }
 
 func persistChunks(ctx context.Context, db *storage.DB, embClient *embeddings.Client, rec models.FileRecord, content string) (int, error) {
@@ -285,7 +326,7 @@ func buildJSChunks(filePath, relPath, content string, indexedAt time.Time) []mod
 
 	lines := logicalLines(content)
 	offsets := lineOffsets(content)
-	var chunks []models.Chunk
+	ranges := make([]jsRange, 0, len(res.Symbols))
 
 	for _, sym := range res.Symbols {
 		if sym.Line <= 0 || sym.Line > len(offsets) {
@@ -311,7 +352,38 @@ func buildJSChunks(filePath, relPath, content string, indexedAt time.Time) []mod
 		if endLine < sym.Line {
 			endLine = sym.Line
 		}
-		chunks = append(chunks, newChunkFromLines(filePath, sym.Kind, sym.Name, sym.Line, endLine, lines, indexedAt))
+		ranges = append(ranges, jsRange{sym: sym, start: sym.Line, end: endLine})
+	}
+
+	for i := range ranges {
+		if !isJSClassChunkKind(ranges[i].sym.Kind) {
+			continue
+		}
+		firstChild := 0
+		for j := range ranges {
+			if i == j || !isMemberChunkKind(ranges[j].sym.Kind) {
+				continue
+			}
+			parent, ok := parentSymbol(ranges[j].sym.Name)
+			if !ok || parent != ranges[i].sym.Name {
+				continue
+			}
+			if ranges[j].start > ranges[i].start && ranges[j].start <= ranges[i].end {
+				if firstChild == 0 || ranges[j].start < firstChild {
+					firstChild = ranges[j].start
+				}
+			}
+		}
+		if firstChild > 0 {
+			ranges[i].end = trimJSClassHeaderEnd(lines, ranges[i].start, firstChild-1)
+		}
+	}
+
+	ranges = append(ranges, nestedJSFunctionRanges(content, lines, offsets, ranges)...)
+
+	var chunks []models.Chunk
+	for _, r := range ranges {
+		chunks = append(chunks, newChunkFromLines(filePath, r.sym.Kind, r.sym.Name, r.start, r.end, lines, indexedAt))
 	}
 
 	sort.SliceStable(chunks, func(i, j int) bool {
@@ -321,6 +393,170 @@ func buildJSChunks(filePath, relPath, content string, indexedAt time.Time) []mod
 		return chunks[i].ChunkID < chunks[j].ChunkID
 	})
 	return chunks
+}
+
+// Factory-style TS/JS code hides its real API inside one huge function
+// body: vuejs/core's baseCreateRenderer spans ~2,100 lines whose inner
+// `const mountComponent = (...) => {...}` closures ARE the renderer, yet
+// the top-level pass indexes the whole factory as a single 15k-token
+// chunk with one symbol. These consts thresholds keep the nested scan
+// aimed at that shape: only bodies big enough to hide an API are scanned,
+// and only the shallowest closure layer is extracted — closures nested
+// inside closures are implementation detail, not API surface.
+const nestedJSScanMinLines = 40
+const nestedJSMaxPerParent = 80
+
+var nestedJSAssignedFuncRe = regexp.MustCompile(`^(\s+)(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)(?:\s*:\s*[^=]+?)?\s*=\s*(?:async\s+)?(?:function\b|\()`)
+var nestedJSNamedFuncRe = regexp.MustCompile(`^(\s+)(?:async\s+)?function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
+
+type jsRange struct {
+	sym   models.Symbol
+	start int
+	end   int
+}
+
+type nestedJSMatch struct {
+	name   string
+	line   int
+	indent int
+}
+
+// nestedJSFunctionRanges emits child ranges for function-expression
+// assignments and named functions nested inside large function bodies.
+// Symbols are dotted (`baseCreateRenderer.mountComponent`) so parent
+// assignment and `symbol_exact` matching on the last component both work.
+// Each nested match is claimed only by its innermost containing function:
+// heuristic decl-end detection can overshoot a top-level `let`'s range far
+// enough to swallow later functions, and without the innermost rule every
+// such bogus parent re-emits the same closure as a duplicate chunk.
+func nestedJSFunctionRanges(content string, lines []string, offsets []int, ranges []jsRange) []jsRange {
+	topLevel := make(map[string]bool, len(ranges))
+	for _, r := range ranges {
+		topLevel[r.sym.Name] = true
+	}
+
+	type claim struct {
+		parent jsRange
+		match  nestedJSMatch
+	}
+	claims := make(map[int]claim) // match line -> innermost parent's claim
+
+	for _, parent := range ranges {
+		if parent.end-parent.start < nestedJSScanMinLines {
+			continue
+		}
+		if !isJSFunctionRange(parent, lines) {
+			continue
+		}
+
+		var matches []nestedJSMatch
+		minIndent := 0
+		for lineNo := parent.start + 1; lineNo < parent.end && lineNo <= len(lines); lineNo++ {
+			line := lines[lineNo-1]
+			m := nestedJSAssignedFuncRe.FindStringSubmatch(line)
+			if m == nil {
+				m = nestedJSNamedFuncRe.FindStringSubmatch(line)
+			}
+			if m == nil {
+				continue
+			}
+			name := m[2]
+			if name == parent.sym.Name || topLevel[name] {
+				continue
+			}
+			indent := indentationLevel(line)
+			matches = append(matches, nestedJSMatch{name: name, line: lineNo, indent: indent})
+			if minIndent == 0 || indent < minIndent {
+				minIndent = indent
+			}
+		}
+
+		emitted := 0
+		for _, match := range matches {
+			if match.indent != minIndent {
+				continue
+			}
+			if emitted >= nestedJSMaxPerParent {
+				break
+			}
+			if prev, taken := claims[match.line]; taken {
+				if parent.end-parent.start >= prev.parent.end-prev.parent.start {
+					continue
+				}
+			}
+			claims[match.line] = claim{parent: parent, match: match}
+			emitted++
+		}
+	}
+
+	var out []jsRange
+	for _, c := range claims {
+		startOffset := offsets[c.match.line-1]
+		braceOffset, semiOffset := findJSDeclEnd(content, startOffset)
+		endLine := c.match.line
+		if braceOffset >= 0 {
+			if _, bodyEnd := codeParser.FindBraceBody(content, braceOffset); bodyEnd >= 0 {
+				endLine = lineForOffset(offsets, bodyEnd)
+			}
+		} else if semiOffset >= 0 {
+			endLine = lineForOffset(offsets, semiOffset)
+		}
+		if endLine < c.match.line {
+			endLine = c.match.line
+		}
+		if endLine > c.parent.end {
+			endLine = c.parent.end
+		}
+		out = append(out, jsRange{
+			sym: models.Symbol{
+				Name: c.parent.sym.Name + "." + c.match.name,
+				Kind: "nested_func",
+				Line: c.match.line,
+			},
+			start: c.match.line,
+			end:   endLine,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].start < out[j].start })
+	return out
+}
+
+// isJSFunctionRange reports whether a top-level range is actually a
+// function body worth scanning: named functions by kind, and const/let/var
+// declarations only when their declaration line shows a function value —
+// a plain `let state = {...}` object can span hundreds of lines and its
+// contents are not API closures.
+func isJSFunctionRange(r jsRange, lines []string) bool {
+	switch r.sym.Kind {
+	case "func", "export_func":
+		return true
+	case "const", "export_const", "let", "var":
+		if r.start >= 1 && r.start <= len(lines) {
+			decl := lines[r.start-1]
+			return strings.Contains(decl, "=>") || strings.Contains(decl, "function")
+		}
+	}
+	return false
+}
+
+func isJSClassChunkKind(kind string) bool {
+	return kind == "class" || kind == "export_class"
+}
+
+func trimJSClassHeaderEnd(lines []string, startLine, endLine int) int {
+	for endLine > startLine {
+		trimmed := strings.TrimSpace(lines[endLine-1])
+		if trimmed == "" ||
+			strings.HasPrefix(trimmed, "//") ||
+			strings.HasPrefix(trimmed, "/*") ||
+			strings.HasPrefix(trimmed, "*") ||
+			strings.HasPrefix(trimmed, "@") {
+			endLine--
+			continue
+		}
+		break
+	}
+	return endLine
 }
 
 func findJSDeclEnd(content string, startOffset int) (braceOffset int, semiOffset int) {
@@ -407,6 +643,44 @@ func lineForOffset(offsets []int, offset int) int {
 	return lo + 1
 }
 
+// buildMarkdownChunks splits a document at its h1–h3 headings (the levels
+// the parser already extracts as symbols): section = heading line through
+// the line before the next heading, heading text = symbol. Before this,
+// every .md was one whole-file chunk (2.3k tokens average in this repo) —
+// no symbol to match, long-chunk-penalized, so doc-content queries lost to
+// code files stacking structural boosts. Measured origin: a real query for
+// cross-shape results missed docs/phase_g5_cross_shape.md entirely
+// (learned fixture 680b59f7aed5). Headingless documents keep the
+// whole-file fallback.
+func buildMarkdownChunks(filePath, relPath, content string, indexedAt time.Time) []models.Chunk {
+	res := codeParser.Parse(models.LangMarkdown, content)
+	if len(res.Symbols) == 0 {
+		return nil
+	}
+
+	lines := logicalLines(content)
+	total := len(lines)
+	var chunks []models.Chunk
+
+	if first := res.Symbols[0].Line; first > 1 {
+		chunks = append(chunks, newChunkFromLines(filePath, "section", "preamble", 1, first-1, lines, indexedAt))
+	}
+	for i, sym := range res.Symbols {
+		if sym.Line <= 0 || sym.Line > total {
+			continue
+		}
+		end := total
+		if i+1 < len(res.Symbols) {
+			end = res.Symbols[i+1].Line - 1
+		}
+		if end < sym.Line {
+			end = sym.Line
+		}
+		chunks = append(chunks, newChunkFromLines(filePath, "section", sym.Name, sym.Line, end, lines, indexedAt))
+	}
+	return chunks
+}
+
 func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) []models.Chunk {
 	res := codeParser.Parse(models.LangPython, content)
 	if len(res.Symbols) == 0 {
@@ -414,8 +688,16 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 	}
 
 	lines := logicalLines(content)
-	var chunks []models.Chunk
 
+	// First pass: indentation-scoped range per symbol. The parser emits
+	// methods as their own symbols (Class.method), so ranges nest: a class
+	// range covers its whole body, each method covers its own block.
+	type symRange struct {
+		sym   models.Symbol
+		start int
+		end   int
+	}
+	ranges := make([]symRange, 0, len(res.Symbols))
 	for _, sym := range res.Symbols {
 		if sym.Line <= 0 || sym.Line > len(lines) {
 			continue
@@ -434,18 +716,44 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 				break
 			}
 		}
+		ranges = append(ranges, symRange{sym: sym, start: sym.Line, end: endLine})
+	}
 
-		// strip trailing blank/comment lines
-		for endLine > sym.Line {
+	// Second pass: cap each class at its first child symbol so the class
+	// chunk carries the header — class line, docstring, class-level
+	// attributes — instead of duplicating every method body. Without the cap
+	// a large class (click's Context is ~1000 lines) becomes one chunk that
+	// is too big to be cheap and too blunt to target.
+	for i := range ranges {
+		if ranges[i].sym.Kind != "class" {
+			continue
+		}
+		for j := range ranges {
+			if j == i {
+				continue
+			}
+			if ranges[j].start > ranges[i].start && ranges[j].start <= ranges[i].end {
+				if headerEnd := ranges[j].start - 1; headerEnd < ranges[i].end {
+					ranges[i].end = headerEnd
+				}
+			}
+		}
+	}
+
+	var chunks []models.Chunk
+	for _, r := range ranges {
+		endLine := r.end
+		// strip trailing blank/comment/decorator lines (a decorator above the
+		// first method belongs to the method, not the class header)
+		for endLine > r.start {
 			trimmed := strings.TrimSpace(lines[endLine-1])
-			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "@") {
 				endLine--
 			} else {
 				break
 			}
 		}
-
-		chunks = append(chunks, newChunkFromLines(filePath, sym.Kind, sym.Name, sym.Line, endLine, lines, indexedAt))
+		chunks = append(chunks, newChunkFromLines(filePath, r.sym.Kind, r.sym.Name, r.start, endLine, lines, indexedAt))
 	}
 
 	sort.SliceStable(chunks, func(i, j int) bool {

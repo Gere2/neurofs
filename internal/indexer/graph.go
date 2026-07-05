@@ -11,7 +11,7 @@ import (
 // and returns the set of file relationships.
 func BuildRelations(files []models.FileRecord) []models.FileRelation {
 	// Create lookup maps for fast matching
-	fileMap := make(map[string]models.FileRecord) // rel_path -> record
+	fileMap := make(map[string]models.FileRecord)  // rel_path -> record
 	dirMap := make(map[string][]models.FileRecord) // dir_path -> records
 	for _, f := range files {
 		fileMap[f.RelPath] = f
@@ -90,7 +90,7 @@ func BuildRelations(files []models.FileRecord) []models.FileRelation {
 				// For example, Go import "github.com/neuromfs/neuromfs/internal/storage"
 				// suffix-matches folder "internal/storage".
 				// Python import "crypto" matches "crypto.py".
-				
+
 				// Suffix folder match. Match in either direction so we cover
 				// short imports against deep folders (Python: "crypto" → "lib/crypto")
 				// and long canonical imports against shallow folders

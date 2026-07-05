@@ -1,0 +1,11 @@
+{
+  "question": "how does the session pool invalidate cached sessions when the index changes",
+  "expects_facts": [
+    "sessionFor",
+    "indexModTime",
+    "SearchShared"
+  ],
+  "source": "feedback",
+  "usage_id": "3fc2e2426276",
+  "created_at": "2026-07-04T16:41:06Z"
+}

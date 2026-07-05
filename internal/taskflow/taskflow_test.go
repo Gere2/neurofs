@@ -375,4 +375,3 @@ func TestEnsureFreshIndex(t *testing.T) {
 		t.Errorf("expected DB to be re-scanned, but mtime remains stale: %v", stat.ModTime())
 	}
 }
-

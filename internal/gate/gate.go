@@ -7,8 +7,10 @@
 //   - G3 — audit/facts/*.json, hand-written fixtures of (question,
 //     expects_facts). The CLI runs each fixture through the current
 //     ranker/packager and counts which facts the bundle recovered.
-//   - G4 — drift over historical bundles. Skipped in v1 (manual via
-//     `audit replay --bundle X --response Y`).
+//   - G4 — replay drift, pooled from three sources: persisted audit
+//     records, stem-paired bundle+response files recomputed with
+//     audit.DetectDrift, and response-kind events from the continuous
+//     grounding ledger (audit/grounding.jsonl).
 //   - G5 — cross-shape sanity. Manual; this package only operates on
 //     the current repo.
 //
@@ -88,8 +90,8 @@ type Report struct {
 // from recall=1.0 to recall=0.5 is below the absolute threshold but is a
 // real regression compared to main.
 type Regression struct {
-	Kind   string `json:"kind"`   // verdict_downgrade | fixture_failed | recall_dropped
-	Where  string `json:"where"`  // criterion ID or fixture identifier
+	Kind   string `json:"kind"`  // verdict_downgrade | fixture_failed | recall_dropped
+	Where  string `json:"where"` // criterion ID or fixture identifier
 	Before string `json:"before"`
 	After  string `json:"after"`
 	Detail string `json:"detail"`
@@ -253,6 +255,11 @@ type FactResult struct {
 	Recall  float64  `json:"recall"`
 	Hits    []string `json:"hits"`
 	Misses  []string `json:"misses"`
+	// StaleFacts is the subset of Misses that no longer occur anywhere in
+	// the repo (filled by MarkStaleFacts): the fixture expects an
+	// identifier the code no longer has — update the fixture, don't chase
+	// retrieval.
+	StaleFacts []string `json:"stale_facts,omitempty"`
 	// Error is set when fixture execution itself failed (no index, etc.).
 	// A fixture with an error counts as recall 0 and is named in the detail.
 	Error string `json:"error,omitempty"`
@@ -318,50 +325,175 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 	return c
 }
 
-// G4Thresholds parameterises response drift. Default: 15% max mean drift.
+// G4Thresholds parameterises response drift. The threshold applies to the
+// MEDIAN drift across samples, not the mean: a healthy history legitimately
+// contains high-drift members (a design-plan response names files that do not
+// exist yet), and a mean lets one such sample fail the criterion until it is
+// diluted by sheer volume. The median asks the right question — "is the
+// typical response grounded?" — while the mean and the worst sample stay in
+// the report for the operator. Default: 15% max median drift.
 type G4Thresholds struct {
-	MaxMeanDrift float64
+	MaxMedianDrift float64
 }
 
 // DefaultG4Thresholds returns the default drift threshold.
 func DefaultG4Thresholds() G4Thresholds {
-	return G4Thresholds{MaxMeanDrift: 0.15}
+	return G4Thresholds{MaxMedianDrift: 0.15}
 }
 
-// EvaluateG4 evaluates response drift over historical audit records.
-// It loads all audit records and computes the mean drift rate.
+// DriftSample is one drift observation feeding G4, tagged with where it came
+// from so the verdict can say which pipeline produced the evidence.
+type DriftSample struct {
+	Origin string  // "record" | "pair" | "grounding"
+	Label  string  // human handle: question, pair stem, or session id
+	Rate   float64 // unknown / (known + unknown), as produced by audit.DetectDrift
+}
+
+// SamplesFromRecords projects persisted audit records onto drift samples.
+func SamplesFromRecords(records []audit.AuditRecord) []DriftSample {
+	out := make([]DriftSample, 0, len(records))
+	for _, r := range records {
+		out = append(out, DriftSample{Origin: "record", Label: r.Question, Rate: r.Drift.Rate})
+	}
+	return out
+}
+
+// CollectPairDrift walks responsesDir for saved model responses and pairs each
+// one by file stem with a bundle snapshot in bundlesDir (responses/x.md ↔
+// bundles/x.json). Each pair is re-scored with audit.DetectDrift against the
+// bundle bytes on disk, so the gate measures the history itself rather than
+// trusting a verdict persisted earlier. Responses without a matching bundle
+// are skipped — there is nothing hermetic to score them against.
+func CollectPairDrift(bundlesDir, responsesDir string) ([]DriftSample, error) {
+	entries, err := os.ReadDir(responsesDir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gate: read responses dir: %w", err)
+	}
+	var samples []DriftSample
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		stem := strings.TrimSuffix(ent.Name(), filepath.Ext(ent.Name()))
+		if stem == "" {
+			continue
+		}
+		bundlePath := filepath.Join(bundlesDir, stem+".json")
+		bundle, err := loadBundleFile(bundlePath)
+		if err != nil {
+			continue // orphan response or unreadable bundle — not scoreable
+		}
+		respBytes, err := os.ReadFile(filepath.Join(responsesDir, ent.Name()))
+		if err != nil {
+			continue
+		}
+		drift := audit.DetectDrift(string(respBytes), bundle)
+		samples = append(samples, DriftSample{Origin: "pair", Label: stem, Rate: drift.Rate})
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i].Label < samples[j].Label })
+	return samples, nil
+}
+
+func loadBundleFile(path string) (models.Bundle, error) {
+	var bundle models.Bundle
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return bundle, err
+	}
+	if err := json.Unmarshal(data, &bundle); err != nil {
+		return bundle, fmt.Errorf("gate: parse bundle %s: %w", path, err)
+	}
+	return bundle, nil
+}
+
+// EvaluateG4 evaluates response drift over historical audit records. Kept as
+// the single-source entry point; pooled evaluation lives in EvaluateG4Samples.
+func EvaluateG4(records []audit.AuditRecord, th G4Thresholds) Criterion {
+	return EvaluateG4Samples(SamplesFromRecords(records), th)
+}
+
+// EvaluateG4Samples evaluates response drift over every available drift
+// observation: persisted records, recomputed bundle+response pairs, and
+// response-kind grounding ledger events.
 //
 // Verdict:
-//   - SKIP if no records are present.
+//   - SKIP if no samples are present.
 //   - FAIL if the mean drift rate is above the threshold.
 //   - PASS otherwise.
-func EvaluateG4(records []audit.AuditRecord, th G4Thresholds) Criterion {
+func EvaluateG4Samples(samples []DriftSample, th G4Thresholds) Criterion {
 	c := Criterion{ID: "G4", Name: "Replay drift"}
-	if len(records) == 0 {
+	if len(samples) == 0 {
 		c.Verdict = Skip
-		c.Detail = "no audit records available — run `neurofs audit replay` or use the UI to produce them"
+		c.Detail = "no drift evidence — run `neurofs audit replay`, save bundle+response pairs under audit/, or enable the grounding hook"
 		return c
 	}
+
 	sum := 0.0
-	for _, r := range records {
-		sum += r.Drift.Rate
+	worst := 0.0
+	worstLabel := ""
+	rates := make([]float64, 0, len(samples))
+	byOrigin := map[string]int{}
+	for _, s := range samples {
+		sum += s.Rate
+		rates = append(rates, s.Rate)
+		byOrigin[s.Origin]++
+		if s.Rate > worst {
+			worst = s.Rate
+			worstLabel = s.Label
+		}
 	}
-	mean := sum / float64(len(records))
+	mean := sum / float64(len(samples))
+	med := medianFloats(rates)
 	c.Numbers = map[string]float64{
-		"records":    float64(len(records)),
-		"mean_drift": mean,
-		"max_drift":  th.MaxMeanDrift,
+		"samples":      float64(len(samples)),
+		"records":      float64(byOrigin["record"]),
+		"pairs":        float64(byOrigin["pair"]),
+		"grounding":    float64(byOrigin["grounding"]),
+		"mean_drift":   mean,
+		"median_drift": med,
+		"max_drift":    th.MaxMedianDrift,
 	}
-	if mean > th.MaxMeanDrift {
+	sources := formatOriginCounts(byOrigin)
+	if med > th.MaxMedianDrift {
 		c.Verdict = Fail
-		c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d records is above %.0f%% threshold",
-			mean*100, len(records), th.MaxMeanDrift*100)
+		c.Detail = fmt.Sprintf("median drift rate %.1f%% over %d samples (%s) is above %.0f%% threshold; mean %.1f%%, worst: %s at %.0f%%",
+			med*100, len(samples), sources, th.MaxMedianDrift*100, mean*100, truncate(worstLabel, 40), worst*100)
 		return c
 	}
 	c.Verdict = Pass
-	c.Detail = fmt.Sprintf("mean drift rate %.1f%% over %d records (threshold %.0f%%)",
-		mean*100, len(records), th.MaxMeanDrift*100)
+	c.Detail = fmt.Sprintf("median drift rate %.1f%% over %d samples (%s; threshold %.0f%%); mean %.1f%%, worst: %s at %.0f%%",
+		med*100, len(samples), sources, th.MaxMedianDrift*100, mean*100, truncate(worstLabel, 40), worst*100)
 	return c
+}
+
+func medianFloats(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	cp := make([]float64, len(xs))
+	copy(cp, xs)
+	sort.Float64s(cp)
+	mid := len(cp) / 2
+	if len(cp)%2 == 1 {
+		return cp[mid]
+	}
+	return (cp[mid-1] + cp[mid]) / 2
+}
+
+func formatOriginCounts(byOrigin map[string]int) string {
+	keys := make([]string, 0, len(byOrigin))
+	for k := range byOrigin {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, byOrigin[k]))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // PostprocessG2 downgrades G2 from PASS to WARN when median utilisation
@@ -487,9 +619,23 @@ func renderG3FixtureDetail(w io.Writer, results []FactResult) {
 			fmt.Fprintf(w, "    [error] %q — %s\n", q, r.Error)
 			continue
 		}
-		fmt.Fprintf(w, "    [%3.0f%%] %q%s\n",
-			r.Recall*100, q, formatMisses(r.Misses))
+		fmt.Fprintf(w, "    [%3.0f%%] %q%s%s\n",
+			r.Recall*100, q, formatMisses(r.Misses), formatStaleFacts(r.StaleFacts))
 	}
+}
+
+// formatStaleFacts flags expected facts that exist nowhere in the repo —
+// the "rotten fixture" case where the fix is editing the fixture, not the
+// engine.
+func formatStaleFacts(stale []string) string {
+	if len(stale) == 0 {
+		return ""
+	}
+	shown := stale
+	if len(shown) > renderMaxMissing {
+		shown = shown[:renderMaxMissing]
+	}
+	return fmt.Sprintf(" [%s no longer in repo — stale fixture?]", strings.Join(shown, ", "))
 }
 
 // formatMisses returns " — missing: a, b, c" or " — missing: a, b, c (+N more)",

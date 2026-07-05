@@ -9,6 +9,8 @@ import (
 	"github.com/neuromfs/neuromfs/internal/audit"
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/gate"
+	"github.com/neuromfs/neuromfs/internal/grounding"
+	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
@@ -128,14 +130,23 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 				if maxFixtures > 0 && len(fixtures) > maxFixtures {
 					fixtures = fixtures[:maxFixtures]
 				}
+				if stale := staleIndexCount(cfg.DBPath, cfg.RepoRoot); stale > 0 {
+					fmt.Fprintf(os.Stderr,
+						"  WARN: index is stale — %d indexed file(s) changed on disk since the last scan; G3/G4 ground against the index, run `neurofs scan` first\n\n",
+						stale)
+				}
 				g3Details = runFixtures(cfg.RepoRoot, fixtures, fixtureBudg, noChunks)
+				gate.MarkStaleFacts(cfg.RepoRoot, g3Details)
 				g3 = gate.EvaluateG3(g3Details, gate.DefaultG3Thresholds())
 			}
 
 			// G2 post-processing depends on G3 outcome.
 			g2 := gate.PostprocessG2(g2res, g3)
 
-			// G4 — drift over historical bundles.
+			// G4 — replay drift, pooled from every available source:
+			// persisted records, stem-paired bundle+response files
+			// (recomputed against the bundle bytes on disk), and
+			// response-kind events from the continuous grounding ledger.
 			recordsDir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
 			paths, err := audit.ListRecords(recordsDir)
 			var records []audit.AuditRecord
@@ -147,7 +158,25 @@ Exit code: 1 only on overall FAIL; 0 on PASS, WARN, or SKIP.`,
 					}
 				}
 			}
-			g4 := gate.EvaluateG4(records, gate.DefaultG4Thresholds())
+			samples := gate.SamplesFromRecords(records)
+			pairSamples, err := gate.CollectPairDrift(bundlesDir, filepath.Join(cfg.RepoRoot, "audit", "responses"))
+			if err != nil {
+				return fmt.Errorf("gate: G4 pairs: %w", err)
+			}
+			samples = append(samples, pairSamples...)
+			if events, err := grounding.Read(cfg.RepoRoot); err == nil {
+				for _, ev := range events {
+					if ev.Kind != grounding.KindResponse {
+						continue // edit-kind drift can be legitimate new code
+					}
+					samples = append(samples, gate.DriftSample{
+						Origin: "grounding",
+						Label:  ev.SessionID,
+						Rate:   ev.DriftRate,
+					})
+				}
+			}
+			g4 := gate.EvaluateG4Samples(samples, gate.DefaultG4Thresholds())
 
 			// G5 — cross-shape sanity. Manual; this command only inspects
 			// the current repo.
@@ -221,6 +250,22 @@ func indexReady(dbPath string) bool {
 		return false
 	}
 	return info.Size() > 0
+}
+
+// staleIndexCount opens the index read-only and counts files whose disk
+// content no longer matches their indexed checksum. Errors degrade to 0:
+// the staleness warning is a courtesy, never a gate blocker.
+func staleIndexCount(dbPath, repoRoot string) int {
+	db, err := storage.Open(dbPath)
+	if err != nil {
+		return 0
+	}
+	defer db.Close()
+	files, err := db.AllFiles()
+	if err != nil {
+		return 0
+	}
+	return gate.CountStaleIndexFiles(repoRoot, files)
 }
 
 // runFixtures invokes taskflow.Run for each fixture and scores the

@@ -331,12 +331,14 @@ func rebuildBundle(cfg *config.Config, query string, budget int, focus string, c
 	fileEmbs, _ := db.AllEmbeddings()
 
 	rels, _ := db.AllRelations()
+	rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 	rankOpts := ranking.Options{
 		Project:        loadProjectInfo(db),
 		Focus:          focus,
 		QueryEmbedding: queryEmb,
 		Embeddings:     fileEmbs,
 		Relations:      rels,
+		Weights:        &rankWeights,
 	}
 	if changedFlag {
 		rankOpts.ChangedFiles = gitChangedFiles(cfg.RepoRoot)

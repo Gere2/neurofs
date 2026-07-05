@@ -1,0 +1,11 @@
+{
+  "question": "how does neurofs setup wire CLAUDE.md idempotently",
+  "expects_facts": [
+    "claudeMDBlock",
+    "newSetupCmd",
+    "claudeMDMarker"
+  ],
+  "source": "feedback",
+  "usage_id": "d5cb0a3cb5e2",
+  "created_at": "2026-07-05T13:24:03Z"
+}

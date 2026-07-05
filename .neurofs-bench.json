@@ -1,0 +1,51 @@
+[
+  {
+    "question": "How does the ranker score filename matches and how is that weight defined?",
+    "expects": ["internal/ranking/ranking.go"]
+  },
+  {
+    "question": "What tools does the MCP server expose to the client?",
+    "expects": ["internal/mcp/tools.go"]
+  },
+  {
+    "question": "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?",
+    "expects": ["internal/packager/packager.go", "internal/packager/excerpt.go"],
+    "note": "selectFragment lives in packager.go; the excerpt path is acceptable too"
+  },
+  {
+    "question": "What does UpgradeWithSlack do and what is the upgrade cap?",
+    "expects": ["internal/packager/excerpt_go.go"]
+  },
+  {
+    "question": "How does the search retrieval use ripgrep and what is the timeout value?",
+    "expects": ["internal/retrieval/search.go"]
+  },
+  {
+    "question": "How does the session ledger manage timelines and cognitive history?",
+    "expects": ["internal/memory/ledger.go", "internal/memory/exporters.go"]
+  },
+  {
+    "question": "How does storage open the database with WAL mode and what pragmas are set?",
+    "expects": ["internal/storage/storage.go"]
+  },
+  {
+    "question": "How does the weight tuner optimize retrieval scoring weights against fixtures?",
+    "expects": ["internal/learn/learn.go"]
+  },
+  {
+    "question": "Where are retrieval usage entries and feedback appended to their ledgers?",
+    "expects": ["internal/usage/usage.go"]
+  },
+  {
+    "question": "How are markdown files chunked into heading sections?",
+    "expects": ["internal/indexer/chunker.go"]
+  },
+  {
+    "question": "How does the pivot gate aggregate per-criterion verdicts into an overall verdict?",
+    "expects": ["internal/gate/gate.go"]
+  },
+  {
+    "question": "How does the iso-recall economy comparison build its native baseline arm?",
+    "expects": ["internal/abeval/abeval.go"]
+  }
+]

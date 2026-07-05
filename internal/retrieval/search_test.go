@@ -14,6 +14,13 @@ import (
 	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
+// defaultTestWeights returns a fresh default weight set for direct calls to
+// the scoring helpers under test.
+func defaultTestWeights() *Weights {
+	w := DefaultWeights()
+	return &w
+}
+
 func TestResolveRepoReturnsAbsolutePath(t *testing.T) {
 	got, err := resolveRepo(".")
 	if err != nil {
@@ -168,7 +175,7 @@ func TestScoreChunkHit(t *testing.T) {
 	snippet := "func ParseFunction(input string) ast.Node { return parseFunction(input) }"
 	terms := []string{"parsefunction", "parser", "func"}
 
-	score, reasons := scoreChunkHit(rec, chunk, snippet, terms)
+	score, reasons := scoreChunkHit(rec, chunk, snippet, terms, defaultTestWeights())
 
 	if score <= 0 {
 		t.Fatalf("expected positive score, got %v", score)
@@ -181,33 +188,33 @@ func TestScoreChunkHit(t *testing.T) {
 	}
 
 	// Unrelated query yields no score and no reasons.
-	noscore, noreasons := scoreChunkHit(rec, chunk, snippet, []string{"zzzzzz"})
+	noscore, noreasons := scoreChunkHit(rec, chunk, snippet, []string{"zzzzzz"}, defaultTestWeights())
 	if noscore != 0 || len(noreasons) != 0 {
 		t.Errorf("expected zero score for unrelated terms, got %v / %v", noscore, noreasons)
 	}
 }
 
 func TestSemanticBoost(t *testing.T) {
-	if got := semanticBoost(0.0); got != 1.0 {
+	if got := semanticBoost(0.0, defaultTestWeights()); got != 1.0 {
 		t.Errorf("below-threshold sim=0 → boost %v, want 1.0", got)
 	}
-	if got := semanticBoost(0.18); got != 1.0 {
+	if got := semanticBoost(0.18, defaultTestWeights()); got != 1.0 {
 		t.Errorf("at-threshold sim=0.18 → boost %v, want 1.0", got)
 	}
-	if got := semanticBoost(0.5); !(got > 1.0 && got < 8.0) {
+	if got := semanticBoost(0.5, defaultTestWeights()); !(got > 1.0 && got < 8.0) {
 		t.Errorf("mid sim → boost %v, want in (1, 8)", got)
 	}
 	// sim clamps to 1; with threshold 0.18 and slope 8, max attainable boost is 7.56.
-	if got := semanticBoost(2.0); !(got > 7.0 && got <= 8.0) {
+	if got := semanticBoost(2.0, defaultTestWeights()); !(got > 7.0 && got <= 8.0) {
 		t.Errorf("above-1 sim → boost %v, want near max", got)
 	}
 }
 
 func TestSymbolScore(t *testing.T) {
-	if got := symbolScore("ParseFunction", []string{"parsefunction"}); got != 18.0 {
+	if got := symbolScore("ParseFunction", []string{"parsefunction"}, defaultTestWeights()); got != 18.0 {
 		t.Errorf("exact-match symbolScore = %v, want 18", got)
 	}
-	if got := symbolScore("ParseFunction", []string{"unrelatedterm"}); got != 3.0 {
+	if got := symbolScore("ParseFunction", []string{"unrelatedterm"}, defaultTestWeights()); got != 3.0 {
 		t.Errorf("non-match symbolScore = %v, want 3", got)
 	}
 }
@@ -261,7 +268,7 @@ func TestApplyExactBoost(t *testing.T) {
 		"a.go": {filename: true, lines: map[int]bool{15: true}}, // overlaps [10,20]
 		"b.go": {lines: map[int]bool{100: true}},                // no overlap
 	}
-	applyExactBoost(cands, signals)
+	applyExactBoost(cands, signals, defaultTestWeights())
 
 	if !containsString(cands[0].hit.Reasons, "exact_filename") {
 		t.Errorf("expected exact_filename on a.go, got %v", cands[0].hit.Reasons)
@@ -283,7 +290,7 @@ func TestApplyLongChunkPenalty(t *testing.T) {
 		{hit: Hit{Path: "b.go", Score: 5.0, TokenEstimate: 450}}, // below threshold
 		{hit: Hit{Path: "d.go", Score: 5.0, TokenEstimate: 800}}, // above threshold and >= 2x smallest
 	}
-	applyLongChunkPenalty(cands)
+	applyLongChunkPenalty(cands, defaultTestWeights())
 
 	if containsString(cands[0].hit.Reasons, "long_chunk_penalty") {
 		t.Errorf("smallest chunk should not be penalized")
@@ -306,7 +313,7 @@ func TestApplyWorkingSetBoost(t *testing.T) {
 		{filePath: "/repo/c.go", hit: Hit{Path: "c.go", Score: 0, ContentHash: "h3", StartLine: 1}},
 	}
 	changed := map[string]bool{"a.go": true, "c.go": true}
-	applyWorkingSetBoost(cands, changed)
+	applyWorkingSetBoost(cands, changed, defaultTestWeights())
 
 	if !containsString(cands[0].hit.Reasons, "working_set") {
 		t.Errorf("expected working_set on a.go (scoring + changed)")
@@ -344,7 +351,7 @@ func TestApplyGraphBoost(t *testing.T) {
 	relations := []models.FileRelation{
 		{SourcePath: "/repo/a.go", TargetPath: "/repo/b.go", RelType: "import"},
 	}
-	applyGraphBoost(cands, relations)
+	applyGraphBoost(cands, relations, defaultTestWeights())
 
 	if !containsString(cands[1].hit.Reasons, "graph_dependency") {
 		t.Errorf("expected graph_dependency on b.go (bridge via a→b), got %v", cands[1].hit.Reasons)
@@ -411,7 +418,7 @@ func TestApplyTestPenalty(t *testing.T) {
 			{hit: Hit{Path: "src/auth.go", Score: 10.0}},
 			{hit: Hit{Path: "src/auth_test.go", Score: 10.0}},
 		}
-		applyTestPenalty(cands, "how does authentication work?")
+		applyTestPenalty(cands, "how does authentication work?", defaultTestWeights())
 
 		if cands[0].hit.Score != 10.0 {
 			t.Errorf("production file should not be penalised, got %v", cands[0].hit.Score)
@@ -429,7 +436,7 @@ func TestApplyTestPenalty(t *testing.T) {
 			{hit: Hit{Path: "src/auth.go", Score: 10.0}},
 			{hit: Hit{Path: "src/auth_test.go", Score: 10.0}},
 		}
-		applyTestPenalty(cands, "run the unit tests for auth")
+		applyTestPenalty(cands, "run the unit tests for auth", defaultTestWeights())
 
 		if cands[0].hit.Score != 10.0 {
 			t.Errorf("production file should not be penalised, got %v", cands[0].hit.Score)
@@ -505,5 +512,63 @@ func TestSearchEndToEnd(t *testing.T) {
 	}
 	if len(top.Reasons) == 0 {
 		t.Errorf("expected reasons populated on top hit, got empty")
+	}
+}
+
+func TestSymbolExactlyNamed(t *testing.T) {
+	tests := []struct {
+		symbol string
+		terms  []string
+		want   bool
+	}{
+		// Raw lowercased identifier token equals the full symbol.
+		{"UpgradeWithSlack", []string{"upgradewithslack", "packager"}, true},
+		// Term equals the last dotted component (method name).
+		{"CliRunner.invoke", []string{"invoke", "commands"}, true},
+		// Term equals a class symbol exactly.
+		{"Context", []string{"context", "object"}, true},
+		// Substring is NOT enough — that's symbol_match's job.
+		{"ContextManager", []string{"context"}, false},
+		{"make_context", []string{"context"}, false},
+		// Middle dotted components don't count.
+		{"Context.scope", []string{"context"}, false},
+		{"", []string{"anything"}, false},
+		{"Open", nil, false},
+	}
+	for _, tc := range tests {
+		if got := symbolExactlyNamed(tc.symbol, tc.terms); got != tc.want {
+			t.Errorf("symbolExactlyNamed(%q, %v) = %t, want %t", tc.symbol, tc.terms, got, tc.want)
+		}
+	}
+}
+
+func TestDedupeSameSymbol(t *testing.T) {
+	hits := []Hit{
+		// Three @t.overload-style stubs + the real implementation, same symbol.
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 20, StartLine: 138},
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 22, StartLine: 144},
+		{Path: "decorators.py", Symbol: "command", Kind: "func", Score: 46, TokenEstimate: 400, StartLine: 160},
+		// Distinct symbol in the same file must survive.
+		{Path: "decorators.py", Symbol: "option", Kind: "func", Score: 44, TokenEstimate: 300, StartLine: 220},
+		// Same symbol name in a different file is a different declaration.
+		{Path: "core.py", Symbol: "command", Kind: "method", Score: 40, TokenEstimate: 50, StartLine: 10},
+		// Unnamed file-kind chunks are exempt from deduping.
+		{Path: "README.md", Symbol: "", Kind: "file", Score: 30, TokenEstimate: 100, StartLine: 1},
+		{Path: "README.md", Symbol: "", Kind: "file", Score: 29, TokenEstimate: 100, StartLine: 1},
+	}
+	out := dedupeSameSymbol(hits)
+	if len(out) != 5 {
+		t.Fatalf("len = %d, want 5 (3 stubs collapsed to 1): %+v", len(out), out)
+	}
+	// The kept decorators.py/command hit is the implementation body, at the
+	// first occurrence's position and score.
+	if out[0].TokenEstimate != 400 || out[0].StartLine != 160 {
+		t.Errorf("kept chunk should be the largest body: %+v", out[0])
+	}
+	if out[0].Score != 46 {
+		t.Errorf("kept chunk keeps first occurrence's score, got %v", out[0].Score)
+	}
+	if out[1].Symbol != "option" {
+		t.Errorf("distinct symbol squeezed out: %+v", out[1])
 	}
 }

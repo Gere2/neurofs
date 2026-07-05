@@ -1,0 +1,11 @@
+{
+  "question": "how does the ranker score filename matches",
+  "expects_facts": [
+    "scoreFile",
+    "RankWithOptions",
+    "DefaultWeights"
+  ],
+  "source": "feedback",
+  "usage_id": "6c7777082427",
+  "created_at": "2026-07-03T21:40:20Z"
+}

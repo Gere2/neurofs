@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/neuromfs/neuromfs/internal/contextladder"
+	"github.com/neuromfs/neuromfs/internal/contextmap"
+	"github.com/neuromfs/neuromfs/internal/contextusage"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/memory"
 	"github.com/neuromfs/neuromfs/internal/models"
@@ -85,8 +88,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	}
 	var listResult ToolsListResult
 	mustReencode(t, listResp.Result, &listResult)
-	if len(listResult.Tools) != 12 {
-		t.Fatalf("tools: got %d want 12", len(listResult.Tools))
+	if len(listResult.Tools) != 16 {
+		t.Fatalf("tools: got %d want 16", len(listResult.Tools))
 	}
 	wantNames := map[string]bool{
 		"neurofs_context":         true,
@@ -94,6 +97,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_scan":            true,
 		"neurofs_view_file":       true,
 		"neurofs_get_outline":     true,
+		"neurofs_expand":          true,
+		"neurofs_measure":         true,
 		"neurofs_list_signatures": true,
 		"neurofs_get_excerpt":     true,
 		"neurofs_search":          true,
@@ -101,6 +106,8 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 		"neurofs_search_memory":   true,
 		"neurofs_export_memory":   true,
 		"neurofs_prune_memory":    true,
+		"neurofs_recall_state":    true,
+		"neurofs_feedback":        true,
 	}
 	for _, tool := range listResult.Tools {
 		if !wantNames[tool.Name] {
@@ -458,6 +465,9 @@ func BetaWorker() string {
 
 func TestSearchToolUsesSemanticChunkEmbeddings(t *testing.T) {
 	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	// Retrieval skips the semantic path entirely under the mock provider;
+	// this test exercises that path with a planted vector, so opt back in.
+	t.Setenv("NEUROFS_MOCK_SEMANTIC", "1")
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
@@ -960,6 +970,22 @@ export function unrelated() {
 		t.Errorf("expected outline to list %q, got: %s", tsPath, outlineRes.Content[0].Text)
 	}
 
+	fileOutlineArgsRaw, _ := json.Marshal(map[string]any{
+		"path": tsPath,
+		"repo": tmpDir,
+	})
+	fileOutlineRes := runGetOutlineTool(ctx, fileOutlineArgsRaw)
+	if fileOutlineRes.IsError {
+		t.Fatalf("file outline tool failed: %s", fileOutlineRes.Content[0].Text)
+	}
+	var logic contextmap.LogicMap
+	if err := json.Unmarshal([]byte(fileOutlineRes.Content[0].Text), &logic); err != nil {
+		t.Fatalf("decode file outline: %v\n%s", err, fileOutlineRes.Content[0].Text)
+	}
+	if logic.Path != tsPath || len(logic.Symbols) == 0 {
+		t.Fatalf("expected file logic map for %s, got %+v", tsPath, logic)
+	}
+
 	// 3) Test list signatures tool
 	sigArgsRaw, _ := json.Marshal(map[string]any{
 		"path": tsPath,
@@ -988,6 +1014,96 @@ export function unrelated() {
 	}
 	if strings.Contains(excRes.Content[0].Text, "unrelated") {
 		t.Errorf("expected excerpt to NOT contain unrelated function, got: %s", excRes.Content[0].Text)
+	}
+
+	taskArgsRaw, _ := json.Marshal(map[string]any{
+		"query":      "change compute sum",
+		"repo":       tmpDir,
+		"budget":     2000,
+		"agent":      true,
+		"session_id": "mcp-task-session",
+	})
+	taskRes := runTaskTool(ctx, taskArgsRaw)
+	if taskRes.IsError {
+		t.Fatalf("task agent tool failed: %s", taskRes.Content[0].Text)
+	}
+	var taskPayload taskAgentResponse
+	if err := json.Unmarshal([]byte(taskRes.Content[0].Text), &taskPayload); err != nil {
+		t.Fatalf("decode task agent payload: %v\n%s", err, taskRes.Content[0].Text)
+	}
+	if taskPayload.SessionID != "mcp-task-session" || taskPayload.InitialTokens <= 0 || taskPayload.Prompt == "" || !taskPayload.ThinPrompt {
+		t.Fatalf("unexpected task agent payload: %+v", taskPayload)
+	}
+	if len(taskPayload.NextActions) == 0 {
+		t.Fatalf("expected next actions in task agent payload: %+v", taskPayload)
+	}
+	if !strings.Contains(taskPayload.Prompt, "<patch_context session=\"mcp-task-session\">") ||
+		!strings.Contains(taskPayload.Prompt, "call neurofs_expand") ||
+		!strings.Contains(taskPayload.Prompt, "call neurofs_measure") {
+		t.Fatalf("expected MCP patch context in task prompt:\n%s", taskPayload.Prompt)
+	}
+	if strings.Contains(taskPayload.Prompt, `return a + b`) {
+		t.Fatalf("MCP agent prompt should be thin and avoid eager source bodies:\n%s", taskPayload.Prompt)
+	}
+	taskMeasureArgsRaw, _ := json.Marshal(map[string]any{
+		"repo":       tmpDir,
+		"session_id": "mcp-task-session",
+	})
+	taskMeasureRes := runMeasureTool(ctx, taskMeasureArgsRaw)
+	if taskMeasureRes.IsError {
+		t.Fatalf("task measure failed: %s", taskMeasureRes.Content[0].Text)
+	}
+	var taskSummary contextusage.Summary
+	if err := json.Unmarshal([]byte(taskMeasureRes.Content[0].Text), &taskSummary); err != nil {
+		t.Fatalf("decode task measure summary: %v\n%s", err, taskMeasureRes.Content[0].Text)
+	}
+	if taskSummary.InitialTokens != taskPayload.InitialTokens || taskSummary.Expansions != 0 {
+		t.Fatalf("unexpected task measure summary: %+v payload=%+v", taskSummary, taskPayload)
+	}
+
+	sessionID := "mcp-session"
+	if err := contextusage.Append(tmpDir, contextusage.Entry{
+		SessionID: sessionID,
+		Phase:     "initial_bundle",
+		Command:   "test",
+		Tokens:    11,
+	}); err != nil {
+		t.Fatalf("append usage: %v", err)
+	}
+	expandArgsRaw, _ := json.Marshal(map[string]any{
+		"target":     tsPath + ":2-4",
+		"repo":       tmpDir,
+		"session_id": sessionID,
+	})
+	expandRes := runExpandTool(ctx, expandArgsRaw)
+	if expandRes.IsError {
+		t.Fatalf("expand tool failed: %s", expandRes.Content[0].Text)
+	}
+	var expanded contextladder.ExpandedContent
+	if err := json.Unmarshal([]byte(expandRes.Content[0].Text), &expanded); err != nil {
+		t.Fatalf("decode expanded content: %v\n%s", err, expandRes.Content[0].Text)
+	}
+	if expanded.Mode != contextladder.ModeExcerpt || expanded.Path != tsPath || !strings.Contains(expanded.Content, "computeSum") {
+		t.Fatalf("unexpected expand payload: %+v", expanded)
+	}
+	if strings.Contains(expanded.Content, "unrelated") {
+		t.Fatalf("expand should only return requested range, got %+v", expanded)
+	}
+
+	measureArgsRaw, _ := json.Marshal(map[string]any{
+		"repo":       tmpDir,
+		"session_id": sessionID,
+	})
+	measureRes := runMeasureTool(ctx, measureArgsRaw)
+	if measureRes.IsError {
+		t.Fatalf("measure tool failed: %s", measureRes.Content[0].Text)
+	}
+	var summary contextusage.Summary
+	if err := json.Unmarshal([]byte(measureRes.Content[0].Text), &summary); err != nil {
+		t.Fatalf("decode measure summary: %v\n%s", err, measureRes.Content[0].Text)
+	}
+	if summary.InitialTokens != 11 || summary.Expansions != 1 || summary.TotalTokens <= summary.InitialTokens {
+		t.Fatalf("unexpected measure summary: %+v", summary)
 	}
 }
 
@@ -1196,4 +1312,3 @@ func TestPruneMemoryTool(t *testing.T) {
 		t.Errorf("expected 1 entry left ('new query'), got %d entries: %+v", len(entries), entries)
 	}
 }
-

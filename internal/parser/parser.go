@@ -340,10 +340,18 @@ func methodsInBody(body, className string, bodyOffset int, fileLines []int, seen
 var (
 	rePyImport     = regexp.MustCompile(`(?m)^import\s+(\S+)`)
 	rePyFromImport = regexp.MustCompile(`(?m)^from\s+(\S+)\s+import`)
-	rePyDef        = regexp.MustCompile(`(?m)^(?:async\s+)?def\s+(\w+)`)
-	rePyClass      = regexp.MustCompile(`(?m)^class\s+(\w+)`)
+	rePyDefLine    = regexp.MustCompile(`^([ \t]*)(?:async\s+)?def\s+(\w+)`)
+	rePyClassLine  = regexp.MustCompile(`^([ \t]*)class\s+(\w+)\b`)
+	rePyTripleQ    = regexp.MustCompile(`"""|'''`)
 )
 
+// parsePython extracts imports plus symbols at every nesting level. Methods
+// are qualified as "ClassName.methodName" (kind "method"), mirroring the JS
+// extractor, so queries like "invoke" match the class member and chunking can
+// split a large class into per-method chunks instead of one class-sized blob.
+// Defs nested inside other defs (closures) are deliberately skipped — they are
+// implementation detail, not navigable API. Lines inside triple-quoted strings
+// are ignored so docstring example code does not produce phantom symbols.
 func parsePython(content string) Result {
 	var r Result
 
@@ -355,21 +363,60 @@ func parsePython(content string) Result {
 	}
 	r.Imports = unique(r.Imports)
 
-	lines := lineIndex(content)
-
-	for _, m := range rePyDef.FindAllStringSubmatchIndex(content, -1) {
-		r.Symbols = append(r.Symbols, models.Symbol{
-			Name: content[m[2]:m[3]],
-			Kind: "func",
-			Line: lineForOffset(lines, m[0]),
-		})
+	// scope is the enclosing class/def stack, tracked by indentation. A new
+	// class/def at indent <= an open frame's indent closes that frame.
+	type frame struct {
+		kind   string // "class" | "def"
+		name   string
+		indent int
 	}
-	for _, m := range rePyClass.FindAllStringSubmatchIndex(content, -1) {
-		r.Symbols = append(r.Symbols, models.Symbol{
-			Name: content[m[2]:m[3]],
-			Kind: "class",
-			Line: lineForOffset(lines, m[0]),
-		})
+	var stack []frame
+	inDocstring := false
+
+	for i, line := range strings.Split(content, "\n") {
+		// Toggle docstring state per triple-quote occurrence. A line with an
+		// odd number of """ / ''' flips the state (open or close); an even
+		// number (one-line docstring) leaves it unchanged.
+		quotes := len(rePyTripleQ.FindAllString(line, -1))
+		if inDocstring {
+			if quotes%2 == 1 {
+				inDocstring = false
+			}
+			continue
+		}
+		startsDocstring := quotes%2 == 1
+
+		if m := rePyClassLine.FindStringSubmatch(line); m != nil {
+			indent := len(m[1])
+			for len(stack) > 0 && stack[len(stack)-1].indent >= indent {
+				stack = stack[:len(stack)-1]
+			}
+			r.Symbols = append(r.Symbols, models.Symbol{Name: m[2], Kind: "class", Line: i + 1})
+			stack = append(stack, frame{kind: "class", name: m[2], indent: indent})
+		} else if m := rePyDefLine.FindStringSubmatch(line); m != nil {
+			indent := len(m[1])
+			for len(stack) > 0 && stack[len(stack)-1].indent >= indent {
+				stack = stack[:len(stack)-1]
+			}
+			sym := models.Symbol{Name: m[2], Kind: "func", Line: i + 1}
+			emit := true
+			if len(stack) > 0 {
+				if top := stack[len(stack)-1]; top.kind == "class" {
+					sym.Name = top.name + "." + m[2]
+					sym.Kind = "method"
+				} else {
+					emit = false // closure inside another def
+				}
+			}
+			if emit {
+				r.Symbols = append(r.Symbols, sym)
+			}
+			stack = append(stack, frame{kind: "def", name: m[2], indent: indent})
+		}
+
+		if startsDocstring {
+			inDocstring = true
+		}
 	}
 
 	var sb strings.Builder
@@ -382,6 +429,8 @@ func parsePython(content string) Result {
 			fmt.Fprintf(&sb, "def %s(...): ...\n", s.Name)
 		case "class":
 			fmt.Fprintf(&sb, "class %s: ...\n", s.Name)
+		case "method":
+			fmt.Fprintf(&sb, "  def %s(...): ...\n", s.Name)
 		}
 	}
 	r.Signature = sb.String()

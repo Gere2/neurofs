@@ -199,4 +199,3 @@ apps/noise.py
 		t.Error("expected other/noise.py NOT to match")
 	}
 }
-

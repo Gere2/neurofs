@@ -1,4 +1,4 @@
-.PHONY: build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps lint
+.PHONY: corpora check-retrieval build test clean install run-scan run-ask run-pack run-stats run-bench run-explain run-ui deps lint
 
 BINARY   := neurofs
 CMD_PATH := ./cmd/neurofs
@@ -82,6 +82,23 @@ fmt:
 ## lint: Run golangci-lint
 lint:
 	golangci-lint run ./...
+
+## check-retrieval: Retrieval regression gates — fact recall + top-3 precision on both surfaces (thresholds sit under the 2026-07-04 baselines: recall 88.9%, file top-3 66.7%, search top-3 75.0%; bump when an intentional change improves them)
+check-retrieval: build
+	$(OUT_DIR)/$(BINARY) learn eval --min-recall 0.80
+	$(OUT_DIR)/$(BINARY) bench --search --context --min-top3 60 --min-search-top3 70 --min-context-top3 65
+
+## corpora: Clone and index the cross-shape tuning corpora (pallets/click, vuejs/core) under /tmp — required before any multi-corpus `learn tune`; /tmp is wiped on reboot so re-run as needed
+corpora: build
+	@test -d /tmp/click || git clone --depth 1 https://github.com/pallets/click /tmp/click
+	@test -d /tmp/vue || git clone --depth 1 https://github.com/vuejs/core /tmp/vue
+	$(OUT_DIR)/$(BINARY) scan /tmp/click
+	$(OUT_DIR)/$(BINARY) scan /tmp/vue
+	@echo ""
+	@echo "cross-shape tune (chunk search):"
+	@echo "  $(OUT_DIR)/$(BINARY) learn tune --corpus /tmp/click:docs/g5_fixtures/click --corpus /tmp/vue:docs/g5_fixtures/vue"
+	@echo "cross-shape tune (file ranker):"
+	@echo "  $(OUT_DIR)/$(BINARY) learn tune-files --bench /tmp/click:docs/g5_bench/click.json --bench /tmp/vue:docs/g5_bench/vue.json"
 
 ## help: Print available targets
 help:

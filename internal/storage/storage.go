@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     end_line       INTEGER NOT NULL,
     content_hash   TEXT    NOT NULL,
     ast_hash       TEXT    NOT NULL DEFAULT '',
+    calls          TEXT    NOT NULL DEFAULT '[]',
     token_estimate INTEGER NOT NULL DEFAULT 0,
     indexed_at     TEXT    NOT NULL,
     UNIQUE(file_path, chunk_id),
@@ -134,18 +135,75 @@ func Open(dbPath string) (*DB, error) {
 		"PRAGMA foreign_keys = ON",
 	}
 	for _, p := range pragmas {
-		if _, err := db.Exec(p); err != nil {
+		if err := execWithBusyRetry(db, p); err != nil {
 			return nil, fmt.Errorf("storage: %s: %w", p, err)
 		}
 	}
 
 	db.SetMaxOpenConns(1) // SQLite is single-writer
 
-	if _, err := db.Exec(schema); err != nil {
+	if err := execWithBusyRetry(db, schema); err != nil {
 		return nil, fmt.Errorf("storage: apply schema: %w", err)
+	}
+	if err := ensureColumn(db, "chunks", "calls", `ALTER TABLE chunks ADD COLUMN calls TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		return nil, fmt.Errorf("storage: migrate chunks.calls: %w", err)
 	}
 
 	return &DB{db: db, path: dbPath}, nil
+}
+
+func ensureColumn(db *sql.DB, table, column, ddl string) error {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	return execWithBusyRetry(db, ddl)
+}
+
+func execWithBusyRetry(db *sql.DB, stmt string) error {
+	var last error
+	for attempt := 0; attempt < 20; attempt++ {
+		if _, err := db.Exec(stmt); err != nil {
+			if !isSQLiteBusy(err) {
+				return err
+			}
+			last = err
+			time.Sleep(time.Duration(attempt+1) * 25 * time.Millisecond)
+			continue
+		}
+		return nil
+	}
+	return last
+}
+
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "sqlite_busy") ||
+		strings.Contains(text, "database is locked") ||
+		strings.Contains(text, "database table is locked")
 }
 
 // Close closes the underlying database connection.
@@ -357,17 +415,15 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("storage: begin tx: %w", err)
 	}
-	stmt, err := tx.Prepare(`DELETE FROM files WHERE path = ?`)
-	if err != nil {
-		_ = tx.Rollback()
-		return 0, fmt.Errorf("storage: prepare delete: %w", err)
-	}
-	defer stmt.Close()
+	defer tx.Rollback()
+
 	for _, p := range toDelete {
-		if _, err := stmt.Exec(p); err != nil {
-			_ = tx.Rollback()
+		if err := deleteFileRecord(tx, p); err != nil {
 			return 0, fmt.Errorf("storage: delete %s: %w", p, err)
 		}
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("storage: commit delete: %w", err)
@@ -377,8 +433,32 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 
 // DeleteFile deletes a single file record by path.
 func (s *DB) DeleteFile(path string) error {
-	_, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, path)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("storage: begin delete file: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := deleteFileRecord(tx, path); err != nil {
+		return err
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit delete file: %w", err)
+	}
+	return nil
+}
+
+func deleteFileRecord(tx *sql.Tx, path string) error {
+	if _, err := tx.Exec(`DELETE FROM file_relations WHERE source_path = ? OR target_path = ?`, path, path); err != nil {
+		return fmt.Errorf("storage: delete file relations: %w", err)
+	}
+	if _, err := tx.Exec(`DELETE FROM files WHERE path = ?`, path); err != nil {
+		return fmt.Errorf("storage: delete file record: %w", err)
+	}
+	return nil
 }
 
 // scanFile reads one row from a files query into a FileRecord.
@@ -689,6 +769,9 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 	}
 
 	if len(chunks) == 0 {
+		if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+			return err
+		}
 		return tx.Commit()
 	}
 
@@ -696,8 +779,8 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 		INSERT INTO chunks (
 			file_path, chunk_id, parent_id, kind, symbol,
 			start_line, end_line, content_hash, ast_hash,
-			token_estimate, indexed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			calls, token_estimate, indexed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("storage: prepare chunk insert: %w", err)
@@ -706,18 +789,44 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
 	for _, c := range chunks {
+		calls, err := json.Marshal(c.Calls)
+		if err != nil {
+			return fmt.Errorf("storage: marshal calls for chunk %s: %w", c.ChunkID, err)
+		}
 		_, err = stmt.Exec(
 			filePath, c.ChunkID, c.ParentID, c.Kind, c.Symbol,
 			c.StartLine, c.EndLine, c.ContentHash, c.ASTHash,
-			c.TokenEstimate, nowStr,
+			string(calls), c.TokenEstimate, nowStr,
 		)
 		if err != nil {
 			return fmt.Errorf("storage: insert chunk %s: %w", c.ChunkID, err)
 		}
 	}
 
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("storage: commit chunks: %w", err)
+	}
+	return nil
+}
+
+type sqlExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func pruneUnreferencedChunkEmbeddings(exec sqlExecer) error {
+	_, err := exec.Exec(`
+		DELETE FROM chunk_embeddings
+		WHERE NOT EXISTS (
+			SELECT 1
+			FROM chunks
+			WHERE chunks.content_hash = chunk_embeddings.content_hash
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("storage: prune unreferenced chunk embeddings: %w", err)
 	}
 	return nil
 }
@@ -796,7 +905,7 @@ func (s *DB) AllChunks() ([]models.Chunk, error) {
 // SearchChunks retrieves chunks by file path, symbol substring, or content hash.
 func (s *DB) SearchChunks(opts ChunkSearchOptions) ([]models.Chunk, error) {
 	query := `
-		SELECT id, file_path, chunk_id, parent_id, kind, symbol, start_line, end_line, content_hash, ast_hash, token_estimate, indexed_at
+		SELECT id, file_path, chunk_id, parent_id, kind, symbol, start_line, end_line, content_hash, ast_hash, calls, token_estimate, indexed_at
 		FROM chunks
 	`
 	var where []string
@@ -836,13 +945,17 @@ func scanChunks(rows *sql.Rows) ([]models.Chunk, error) {
 	for rows.Next() {
 		var c models.Chunk
 		var indexedAtStr string
+		var callsJSON string
 		err := rows.Scan(
 			&c.ID, &c.FilePath, &c.ChunkID, &c.ParentID, &c.Kind, &c.Symbol,
-			&c.StartLine, &c.EndLine, &c.ContentHash, &c.ASTHash, &c.TokenEstimate,
-			&indexedAtStr,
+			&c.StartLine, &c.EndLine, &c.ContentHash, &c.ASTHash, &callsJSON,
+			&c.TokenEstimate, &indexedAtStr,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("storage: scan chunk: %w", err)
+		}
+		if err := json.Unmarshal([]byte(callsJSON), &c.Calls); err != nil {
+			return nil, fmt.Errorf("storage: decode calls for chunk %s: %w", c.ChunkID, err)
 		}
 		c.IndexedAt, _ = time.Parse(time.RFC3339, indexedAtStr)
 		chunks = append(chunks, c)

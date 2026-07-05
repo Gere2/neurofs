@@ -211,7 +211,7 @@ func (fs *FileStore) Search(ctx context.Context, term string) ([]models.LedgerEn
 			continue
 		}
 
-		// Performance Optimization: Check if raw line contains the lowercase search term 
+		// Performance Optimization: Check if raw line contains the lowercase search term
 		// before invoking expensive JSON unmarshaling.
 		if term != "" && !strings.Contains(strings.ToLower(line), term) {
 			if err == io.EOF {

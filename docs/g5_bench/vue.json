@@ -1,0 +1,8 @@
+[
+  {"question":"How does Vue's reactivity system track and trigger dependencies?","expects":["packages/reactivity/src/dep.ts","packages/reactivity/src/effect.ts"]},
+  {"question":"How does computed caching work in Vue reactivity?","expects":["packages/reactivity/src/computed.ts"]},
+  {"question":"How does the Vue renderer mount components and patch children?","expects":["packages/runtime-core/src/renderer.ts"]},
+  {"question":"How is a Vue component instance set up with its props and setup function?","expects":["packages/runtime-core/src/component.ts"]},
+  {"question":"How does the Vue compiler transform a template AST and generate render code?","expects":["packages/compiler-core/src/compile.ts","packages/compiler-core/src/transform.ts","packages/compiler-core/src/codegen.ts"]},
+  {"question":"How do nextTick and the scheduler job queue work in Vue?","expects":["packages/runtime-core/src/scheduler.ts"]}
+]

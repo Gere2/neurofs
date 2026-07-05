@@ -1,0 +1,1 @@
+{"question":"How do nextTick and the scheduler job queue work in Vue?","expects_facts":["nextTick","queueJob","flushJobs"]}

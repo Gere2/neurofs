@@ -79,6 +79,9 @@ type ContextFragment struct {
 	Tokens         int               `json:"tokens"`
 	Score          float64           `json:"score"`
 	Reasons        []InclusionReason `json:"reasons"`
+	StartLine      int               `json:"start_line,omitempty"`
+	EndLine        int               `json:"end_line,omitempty"`
+	ContentHash    string            `json:"content_hash,omitempty"`
 }
 
 // BundleStats records measurable properties of a bundle.
@@ -137,6 +140,7 @@ type Chunk struct {
 	Content       string    `json:"content"`
 	ContentHash   string    `json:"content_hash"`
 	ASTHash       string    `json:"ast_hash"`
+	Calls         []string  `json:"calls,omitempty"`
 	TokenEstimate int       `json:"token_estimate"`
 	IndexedAt     time.Time `json:"indexed_at"`
 }

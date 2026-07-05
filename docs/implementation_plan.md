@@ -29,7 +29,7 @@ Brechas principales:
 
 Objetivo: que NeuroFS actualice solo los bloques que cambiaron y pueda responder a agentes con rangos de codigo exactos.
 
-Estado: primer slice implementado para Go y fallback de fichero completo para el resto de lenguajes.
+Estado: primer slice implementado con chunks sintacticos para Go, heuristicas por simbolo para TS/JS y Python, y fallback de fichero completo para el resto de lenguajes.
 
 Cambios propuestos:
 
@@ -99,8 +99,8 @@ Pruebas:
 
 - [x] Un cambio dentro de una funcion cambia solo el hash del chunk afectado.
 - [x] `go test ./...` pasa con chunks activados.
-- [ ] Un rename/delete debe limpiar `files`, `chunks`, `file_embeddings` y `chunk_embeddings` no referenciados.
-- [ ] Dos runs sobre el mismo repo deben producir el mismo orden y los mismos hashes en un fixture dedicado.
+- [x] Un rename/delete debe limpiar `files`, `chunks`, `file_embeddings` y `chunk_embeddings` no referenciados.
+- [x] Dos runs sobre el mismo repo deben producir el mismo orden y los mismos hashes en un fixture dedicado.
 
 ## Fase 5B - AST multi-lenguaje
 
@@ -109,8 +109,8 @@ Objetivo: igualar o superar el chunking sintactico de IDEs propietarios sin ence
 Orden recomendado:
 
 1. **Go**: consolidar el camino existente de `go/parser` para que tambien alimente `chunks`, no solo excerpts.
-2. **TypeScript/JavaScript**: integrar Tree-sitter o un parser externo rapido detras de una interfaz. Mantener fallback heuristico.
-3. **Python**: usar parser AST cuando sea viable; fallback por indentacion.
+2. **TypeScript/JavaScript**: integrar Tree-sitter o un parser externo rapido detras de una interfaz. Mantener fallback heuristico; hoy las clases se capan al encabezado y los metodos/accesores llevan `parent_id`.
+3. **Python**: usar parser AST cuando sea viable; fallback por indentacion. El fallback actual ya separa clases/metodos y conserva `parent_id`.
 4. **Rust/Java/C++**: empezar por top-level symbols y line ranges, despues scopes internos.
 
 Criterios de aceptacion:

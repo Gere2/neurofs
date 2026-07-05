@@ -79,6 +79,7 @@ type upgradeCandidate struct {
 	path              string // absolute path on disk
 	rawToks           int    // tokens needed to upgrade to full_code
 	compressedContent string // pre-compressed content
+	lines             int    // indexed file line count for full_code metadata
 }
 
 // Pack takes a ranked list of scored files and assembles an auditable Bundle.
@@ -133,6 +134,7 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 				path:              sf.Record.Path,
 				rawToks:           rawTokens,
 				compressedContent: content,
+				lines:             sf.Record.Lines,
 			})
 		}
 	}
@@ -154,6 +156,10 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 		fragments[u.idx].Representation = models.RepFullCode
 		fragments[u.idx].Content = u.compressedContent
 		fragments[u.idx].Tokens = u.rawToks
+		if u.lines > 0 {
+			fragments[u.idx].StartLine = 1
+			fragments[u.idx].EndLine = u.lines
+		}
 		budget.Consume(delta)
 	}
 
@@ -186,10 +192,11 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 // substitute an excerpt for a file that would have fit fully anyway.
 func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget *tokenbudget.Manager, opts Options, tryExcerpt bool) *models.ContextFragment {
 	base := &models.ContextFragment{
-		RelPath: sf.Record.RelPath,
-		Lang:    sf.Record.Lang,
-		Score:   sf.Score,
-		Reasons: sf.Reasons,
+		RelPath:     sf.Record.RelPath,
+		Lang:        sf.Record.Lang,
+		Score:       sf.Score,
+		Reasons:     sf.Reasons,
+		ContentHash: sf.Record.Checksum,
 	}
 
 	fullCap := fullCodeMaxTokens
@@ -203,6 +210,10 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 		f.Representation = models.RepFullCode
 		f.Content = content
 		f.Tokens = rawTokens
+		if sf.Record.Lines > 0 {
+			f.StartLine = 1
+			f.EndLine = sf.Record.Lines
+		}
 		return &f
 	}
 

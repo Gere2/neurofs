@@ -97,6 +97,9 @@ type RunOptions struct {
 	EmbClient *embeddings.Client
 	// Relations carries the semantic dependency graph relationships.
 	Relations []models.FileRelation
+	// Weights overrides the file-ranker scoring weights (nil = defaults or
+	// whatever the caller loaded from .neurofs/ranking_weights.json).
+	Weights *ranking.Weights
 }
 
 // Summary rolls up the per-question Results into headline metrics.
@@ -147,6 +150,7 @@ func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Re
 			QueryEmbedding: queryEmb,
 			Embeddings:     opts.Embeddings,
 			Relations:      opts.Relations,
+			Weights:        opts.Weights,
 		})
 
 		keep := opts.KeepTop

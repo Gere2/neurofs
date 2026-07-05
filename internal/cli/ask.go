@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/models"
 	"github.com/neuromfs/neuromfs/internal/output"
 	"github.com/neuromfs/neuromfs/internal/packager"
@@ -26,6 +25,10 @@ func newAskCmd() *cobra.Command {
 		explain   bool
 		filesOnly bool
 		machine   bool
+		limit     int
+		minScore  float64
+		jsonOut   bool
+		noEmb     bool
 	)
 
 	cmd := &cobra.Command{
@@ -75,28 +78,24 @@ Run 'neurofs scan' first to build the index.`,
 			fmt.Fprintf(os.Stderr, "  budget : %d tokens | index: %d files\n\n",
 				budget, len(files))
 
-			// Load embeddings if they exist.
-			embClient := embeddings.NewClient(cfg.HybridMode)
-			queryEmb, _ := embClient.GetEmbedding(cmd.Context(), query)
-			fileEmbs, _ := db.AllEmbeddings()
+			if !filesOnly && (limit != 0 || minScore != 0 || jsonOut || noEmb) {
+				return fmt.Errorf("ask: --limit, --min-score, --json, and --no-embeddings require --files-only")
+			}
 
-			rels, _ := db.AllRelations()
-			ranked := ranking.RankWithOptions(files, query, ranking.Options{
-				Project:        loadProjectInfo(db),
-				QueryEmbedding: queryEmb,
-				Embeddings:     fileEmbs,
-				Relations:      rels,
-			})
+			filesOpts := filesOnlyOptions{
+				Limit:        limit,
+				MinScore:     minScore,
+				JSON:         jsonOut,
+				NoEmbeddings: noEmb,
+			}
+			if err := validateFilesOnlyOptions(filesOpts); err != nil {
+				return fmt.Errorf("ask: %w", err)
+			}
+
+			ranked := rankFilesForCLI(cmd.Context(), cfg, db, query, files, filesOpts.NoEmbeddings)
 
 			if filesOnly {
-				for _, sf := range ranked {
-					if sf.Score <= 0 {
-						break
-					}
-					reasonsStr := formatReasonsSingleLine(sf.Reasons)
-					fmt.Printf("%s (score=%.2f) - Reasons: %s\n", sf.Record.RelPath, sf.Score, reasonsStr)
-				}
-				return nil
+				return writeFilesOnly(cmd.OutOrStdout(), ranked, filesOpts)
 			}
 
 			bundle, err := packager.Pack(ranked, query, packager.Options{
@@ -153,6 +152,10 @@ Run 'neurofs scan' first to build the index.`,
 	cmd.Flags().BoolVar(&explain, "explain", false, "Print the full scoring table (tokens, signals, per-file breakdown)")
 	cmd.Flags().BoolVarP(&filesOnly, "files-only", "o", false, "Only list the ranked files and their reasons, without printing the bundle/prompt content")
 	cmd.Flags().BoolVar(&machine, "machine", false, "Omit human explanations and scaffolding to save context tokens")
+	cmd.Flags().IntVar(&limit, "limit", 0, "Limit files printed by --files-only (0 = all positive scores)")
+	cmd.Flags().Float64Var(&minScore, "min-score", 0, "Minimum score printed by --files-only")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print --files-only results as JSON with symbols/imports metadata")
+	cmd.Flags().BoolVar(&noEmb, "no-embeddings", false, "Skip embedding lookups in --files-only ranking")
 
 	return cmd
 }

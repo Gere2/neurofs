@@ -30,6 +30,18 @@ type Options struct {
 	Repo  string
 	Limit int
 	Mode  string
+	// Weights overrides the scoring weights for this search. When nil the
+	// repo's tuned weights (.neurofs/weights.json) or defaults are used.
+	// The learn tuner injects candidates here to evaluate them.
+	Weights *Weights
+	// NeutralizeGitState drops the working-set boost for this query.
+	// Benchmarks and the tuner set it: the boost is deliberately
+	// situational (recently edited files rank higher), which makes
+	// measurements depend on whatever happens to be dirty — measured
+	// drift: the context bench read 9/12 on a dirty tree and 8/12 on the
+	// same code clean. Regression gates must measure the tree-independent
+	// engine; production search keeps the boost.
+	NeutralizeGitState bool
 }
 
 // Response is the JSON-serializable result returned by chunk search.
@@ -64,15 +76,128 @@ type exactSignal struct {
 }
 
 const semanticSimilarityThreshold = 0.18
-const workingSetBoost = 2.25
-const exactContentBoost = 3.75
-const exactFilenameBoost = 4.25
 const longChunkTokenThreshold = 500
 const longChunkRelativeFactor = 2
-const maxLongChunkPenalty = 4.0
 
-// Search runs chunk-level retrieval against a repo index.
+// Session holds a loaded repo index for repeated searches. Opening the
+// database, loading files/chunks/embeddings/relations, and reading file
+// contents dominate a one-shot Search; callers that run many queries
+// against the same index — the learn tuner above all, at hundreds of
+// evaluations per tune — pay that cost once here instead of per query.
+// A Session snapshots the index at creation: reindexing or file edits
+// after NewSession are not visible to it.
+type Session struct {
+	repo            string
+	hybridMode      bool
+	files           []models.FileRecord
+	chunks          []models.Chunk
+	chunkEmbeddings map[string][]float32
+	relations       []models.FileRelation
+	fileByPath      map[string]models.FileRecord
+	contentCache    map[string]string
+	changedPaths    map[string]bool
+	// exactCache memoizes rg-backed exact signals per term set: the tuner
+	// replays the same fixture questions hundreds of times per run, and
+	// the ripgrep subprocess is the dominant per-query cost once the index
+	// is loaded.
+	exactCache map[string]map[string]exactSignal
+}
+
+// NewSession loads the repo index once for repeated searches, indexing the
+// repo first when the index is empty (same behavior as one-shot Search).
+func NewSession(ctx context.Context, repoPath string) (*Session, error) {
+	repo, err := resolveRepo(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		return nil, err
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	files, err := db.AllFiles()
+	if err != nil {
+		return nil, err
+	}
+	chunks, err := db.AllChunks()
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 || len(chunks) == 0 {
+		if _, err := indexer.Run(cfg, db, indexer.Options{Logf: func(string, ...any) {}}); err != nil {
+			return nil, err
+		}
+		files, err = db.AllFiles()
+		if err != nil {
+			return nil, err
+		}
+		chunks, err = db.AllChunks()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Mock embeddings (keyless installs) are deterministic pseudo-random
+	// vectors: cosine similarity between them sits ~7 standard deviations
+	// below the 0.18 semantic threshold, so semantic_match never fires —
+	// measured identical recall/tokens with the signal on and off across
+	// three corpora (2026-07-04). Loading megabytes of them per session
+	// and running the cosine loop per query is pure cost; skip the whole
+	// semantic path unless a real provider is configured.
+	// NEUROFS_MOCK_SEMANTIC=1 keeps the path alive under the mock provider
+	// so tests can exercise the semantic plumbing with planted vectors.
+	var chunkEmbeddings map[string][]float32
+	if embeddings.NewClient(cfg.HybridMode).ProviderName() != "mock" || os.Getenv("NEUROFS_MOCK_SEMANTIC") == "1" {
+		chunkEmbeddings, err = db.AllChunkEmbeddings()
+		if err != nil {
+			return nil, fmt.Errorf("load chunk embeddings: %w", err)
+		}
+	}
+	relations, err := db.AllRelations()
+	if err != nil {
+		return nil, fmt.Errorf("load dependency graph: %w", err)
+	}
+
+	fileByPath := make(map[string]models.FileRecord, len(files))
+	for _, f := range files {
+		fileByPath[f.Path] = f
+	}
+
+	return &Session{
+		repo:            repo,
+		hybridMode:      cfg.HybridMode,
+		files:           files,
+		chunks:          chunks,
+		chunkEmbeddings: chunkEmbeddings,
+		relations:       relations,
+		fileByPath:      fileByPath,
+		contentCache:    make(map[string]string),
+		changedPaths:    changedPathSet(fsutil.GitChangedFiles(repo)),
+		exactCache:      make(map[string]map[string]exactSignal),
+	}, nil
+}
+
+// Search runs chunk-level retrieval against a repo index, loading the
+// index for this single query. For repeated queries use NewSession.
 func Search(ctx context.Context, opts Options) (Response, error) {
+	if strings.TrimSpace(opts.Query) == "" {
+		return Response{}, fmt.Errorf("query must not be empty")
+	}
+	session, err := NewSession(ctx, opts.Repo)
+	if err != nil {
+		return Response{}, err
+	}
+	return session.Search(ctx, opts)
+}
+
+// Search runs one query against the session's loaded index. Options.Repo
+// is ignored — the session is already bound to a repo.
+func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	query := strings.TrimSpace(opts.Query)
 	if query == "" {
 		return Response{}, fmt.Errorf("query must not be empty")
@@ -84,63 +209,37 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		opts.Limit = 50
 	}
 
-	repo, err := resolveRepo(opts.Repo)
-	if err != nil {
-		return Response{}, err
-	}
-	cfg, err := config.New(repo)
-	if err != nil {
-		return Response{}, err
-	}
-	db, err := storage.Open(cfg.DBPath)
-	if err != nil {
-		return Response{}, err
-	}
-	defer db.Close()
-
-	files, err := db.AllFiles()
-	if err != nil {
-		return Response{}, err
-	}
-	chunks, err := db.AllChunks()
-	if err != nil {
-		return Response{}, err
-	}
-	if len(files) == 0 || len(chunks) == 0 {
-		if _, err := indexer.Run(cfg, db, indexer.Options{Logf: func(string, ...any) {}}); err != nil {
-			return Response{}, err
-		}
-		files, err = db.AllFiles()
-		if err != nil {
-			return Response{}, err
-		}
-		chunks, err = db.AllChunks()
-		if err != nil {
-			return Response{}, err
-		}
+	repo := s.repo
+	weights := opts.Weights
+	if weights == nil {
+		// Malformed weights.json falls back to defaults on purpose: an
+		// optional tuning file must never take retrieval down. `neurofs
+		// learn status` surfaces the parse error.
+		loaded, _, _ := LoadWeights(repo)
+		weights = &loaded
 	}
 
-	chunkEmbeddings, err := db.AllChunkEmbeddings()
-	if err != nil {
-		return Response{}, fmt.Errorf("load chunk embeddings: %w", err)
-	}
-	relations, err := db.AllRelations()
-	if err != nil {
-		return Response{}, fmt.Errorf("load dependency graph: %w", err)
-	}
+	files := s.files
+	chunks := s.chunks
+	chunkEmbeddings := s.chunkEmbeddings
+	relations := s.relations
 
 	var queryEmbedding []float32
 	if len(chunkEmbeddings) > 0 {
-		embClient := embeddings.NewClient(cfg.HybridMode)
-		queryEmbedding, err = embClient.GetEmbedding(ctx, query)
-		if err != nil {
-			queryEmbedding = nil
-		}
+		queryEmbedding = cachedQueryEmbedding(ctx, s.hybridMode, query)
 	}
 
 	terms := ranking.Tokenise(query)
-	exactSignals := exactSearchSignals(ctx, repo, terms, files)
-	changedPaths := changedPathSet(fsutil.GitChangedFiles(repo))
+	exactKey := strings.Join(terms, "\x00")
+	exactSignals, cached := s.exactCache[exactKey]
+	if !cached {
+		exactSignals = exactSearchSignals(ctx, repo, terms, files)
+		s.exactCache[exactKey] = exactSignals
+	}
+	changedPaths := s.changedPaths
+	if opts.NeutralizeGitState {
+		changedPaths = nil
+	}
 
 	type structMatch struct {
 		symbolMatches []string
@@ -164,19 +263,13 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		}
 	}
 
-	fileByPath := make(map[string]models.FileRecord, len(files))
-	for _, f := range files {
-		fileByPath[f.Path] = f
-	}
-
-	contentCache := make(map[string]string)
 	candidates := make([]candidate, 0, len(chunks))
 	for _, chunk := range chunks {
-		rec, ok := fileByPath[chunk.FilePath]
+		rec, ok := s.fileByPath[chunk.FilePath]
 		if !ok {
 			continue
 		}
-		content, ok := contentCache[rec.Path]
+		content, ok := s.contentCache[rec.Path]
 		if !ok {
 			absPath, err := fsutil.ConfineToRepoStrict(repo, rec.RelPath)
 			if err != nil {
@@ -187,10 +280,10 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 				continue
 			}
 			content = string(b)
-			contentCache[rec.Path] = content
+			s.contentCache[rec.Path] = content
 		}
 		snippet := snippetForRange(content, chunk.StartLine, chunk.EndLine)
-		score, reasons := scoreChunkHit(rec, chunk, snippet, terms)
+		score, reasons := scoreChunkHit(rec, chunk, snippet, terms, weights)
 		hit := Hit{
 			Path:          rec.RelPath,
 			StartLine:     chunk.StartLine,
@@ -207,15 +300,15 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 			if len(matches.symbolMatches) > 0 {
 				var symBoost float64
 				for _, name := range matches.symbolMatches {
-					symBoost += symbolScore(name, terms)
+					symBoost += symbolScore(name, terms, weights)
 				}
-				if symBoost > 18.0 {
-					symBoost = 18.0
+				if symBoost > weights.StructuralSymbol {
+					symBoost = weights.StructuralSymbol
 				}
 				addReason(&hit, "structural_symbol", symBoost)
 			}
 			if len(matches.importMatches) > 0 {
-				impBoost := float64(len(matches.importMatches)) * 2.0
+				impBoost := float64(len(matches.importMatches)) * weights.StructuralImport
 				if impBoost > 10.0 {
 					impBoost = 10.0
 				}
@@ -225,7 +318,7 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		if len(queryEmbedding) > 0 {
 			if chunkEmbedding, ok := chunkEmbeddings[chunk.ContentHash]; ok {
 				if sim := embeddings.CosineSimilarity(queryEmbedding, chunkEmbedding); sim >= semanticSimilarityThreshold {
-					addReason(&hit, "semantic_match", semanticBoost(sim))
+					addReason(&hit, "semantic_match", semanticBoost(sim, weights))
 				}
 			}
 		}
@@ -235,11 +328,13 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		})
 	}
 
-	applyExactBoost(candidates, exactSignals)
-	applyWorkingSetBoost(candidates, changedPaths)
-	applyGraphBoost(candidates, relations)
-	applyLongChunkPenalty(candidates)
-	applyTestPenalty(candidates, query)
+	applyExactBoost(candidates, exactSignals, weights)
+	applyWorkingSetBoost(candidates, changedPaths, weights)
+	applyGraphBoost(candidates, relations, weights)
+	applyLongChunkPenalty(candidates, weights)
+	applyTinyChunkPenalty(candidates, weights)
+	applyTestPenalty(candidates, query, weights)
+	applyLegacyPathPenalty(candidates, query, weights)
 
 	hits := make([]Hit, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -261,7 +356,9 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 		}
 		return hits[i].Symbol < hits[j].Symbol
 	})
-	
+
+	hits = dedupeSameSymbol(hits)
+
 	// Enforce diversity: allow at most 3 chunks per file in the final search results
 	const maxChunksPerFile = 3
 	filteredHits := make([]Hit, 0, len(hits))
@@ -285,6 +382,41 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 	}, nil
 }
 
+// dedupeSameSymbol keeps one hit per (path, symbol) for named chunks. Python
+// @t.overload and TS .d.ts overloads index the same symbol several times as
+// near-identical stubs; left alone they fill the per-file diversity cap with
+// copies of one declaration and squeeze every other symbol in that file out
+// of the results. Among duplicates the largest chunk wins (the implementation
+// body, not a stub) with ties going to the earlier, higher-scored occurrence.
+// Hits must already be sorted by score; the kept hit stays at the position of
+// the first occurrence so ordering is preserved.
+func dedupeSameSymbol(hits []Hit) []Hit {
+	type symKey struct{ path, symbol string }
+	keptAt := make(map[symKey]int)
+	out := make([]Hit, 0, len(hits))
+	for _, h := range hits {
+		if h.Symbol == "" || h.Kind == "file" {
+			out = append(out, h)
+			continue
+		}
+		k := symKey{h.Path, h.Symbol}
+		if i, seen := keptAt[k]; seen {
+			if h.TokenEstimate > out[i].TokenEstimate {
+				// Same declaration, bigger body — replace in place, but keep
+				// the first occurrence's (higher or equal) score so the swap
+				// never promotes a duplicate above where its symbol ranked.
+				score, reasons := out[i].Score, out[i].Reasons
+				out[i] = h
+				out[i].Score, out[i].Reasons = score, reasons
+			}
+			continue
+		}
+		keptAt[k] = len(out)
+		out = append(out, h)
+	}
+	return out
+}
+
 func resolveRepo(path string) (string, error) {
 	repo := strings.TrimSpace(path)
 	if repo == "" {
@@ -301,7 +433,7 @@ func resolveRepo(path string) (string, error) {
 	return abs, nil
 }
 
-func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, terms []string) (float64, []string) {
+func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, terms []string, w *Weights) (float64, []string) {
 	var score float64
 	var reasons []string
 	add := func(reason string, weight float64) {
@@ -312,14 +444,22 @@ func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, te
 	}
 
 	if textMatchesTerms(chunk.Symbol, terms) {
-		add("symbol_match", 8.0)
+		add("symbol_match", w.SymbolMatch)
+	}
+	// A query term that *equals* the symbol name (or its last dotted
+	// component) is much stronger evidence than the substring matching
+	// above — the question literally names this identifier. This is the
+	// discriminator inside one file, where the file-level structural boosts
+	// are identical for every chunk and substring symbol matches tie.
+	if symbolExactlyNamed(chunk.Symbol, terms) {
+		add("symbol_exact", w.SymbolExact)
 	}
 	baseStem := stripExt(filepath.Base(rec.RelPath))
 	if textMatchesTerms(rec.RelPath, terms) || textMatchesTerms(baseStem, terms) {
-		add("path_match", 3.0)
+		add("path_match", w.PathMatch)
 	}
 	if textMatchesTerms(chunk.Kind, terms) {
-		add("kind_match", 1.0)
+		add("kind_match", w.KindMatch)
 	}
 
 	contentHits := 0
@@ -332,29 +472,44 @@ func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, te
 		if contentHits > 3 {
 			contentHits = 3
 		}
-		add("content_match", float64(contentHits)*2.0)
+		add("content_match", float64(contentHits)*w.ContentMatch)
 	}
 	if chunk.Kind != "file" && score > 0 {
-		add("chunk_scope", 0.5)
+		add("chunk_scope", w.ChunkScope)
+	}
+	if w.ImplKind > 0 && score > 0 && isImplementationKind(chunk.Kind) {
+		add("impl_kind", w.ImplKind)
 	}
 	return score, reasons
 }
 
-func semanticBoost(similarity float64) float64 {
+// isImplementationKind marks chunks with a function body — where facts
+// live — as opposed to declarations (types, aliases, re-export stubs).
+// Classes are deliberately neither: click's fixtures need class-header
+// chunks to compete on equal footing.
+func isImplementationKind(kind string) bool {
+	switch kind {
+	case "func", "export_func", "method", "nested_func", "get", "set":
+		return true
+	}
+	return false
+}
+
+func semanticBoost(similarity float64, w *Weights) float64 {
 	if similarity > 1 {
 		similarity = 1
 	}
-	boost := 1.0 + ((similarity - semanticSimilarityThreshold) * 8.0)
+	boost := 1.0 + ((similarity - semanticSimilarityThreshold) * w.Semantic)
 	if boost < 1.0 {
 		return 1.0
 	}
-	if boost > 8.0 {
-		return 8.0
+	if boost > w.Semantic {
+		return w.Semantic
 	}
 	return boost
 }
 
-func applyExactBoost(candidates []candidate, signals map[string]exactSignal) {
+func applyExactBoost(candidates []candidate, signals map[string]exactSignal, w *Weights) {
 	if len(candidates) == 0 || len(signals) == 0 {
 		return
 	}
@@ -364,10 +519,10 @@ func applyExactBoost(candidates []candidate, signals map[string]exactSignal) {
 			continue
 		}
 		if signal.filename {
-			addReason(&candidates[i].hit, "exact_filename", exactFilenameBoost)
+			addReason(&candidates[i].hit, "exact_filename", w.ExactFilename)
 		}
 		if linesOverlap(signal.lines, candidates[i].hit.StartLine, candidates[i].hit.EndLine) {
-			addReason(&candidates[i].hit, "exact_content", exactContentBoost)
+			addReason(&candidates[i].hit, "exact_content", w.ExactContent)
 		}
 	}
 }
@@ -516,7 +671,7 @@ func normalizeRGPath(repo, path string) string {
 	return path
 }
 
-func applyWorkingSetBoost(candidates []candidate, changedPaths map[string]bool) {
+func applyWorkingSetBoost(candidates []candidate, changedPaths map[string]bool, w *Weights) {
 	if len(candidates) == 0 || len(changedPaths) == 0 {
 		return
 	}
@@ -529,7 +684,7 @@ func applyWorkingSetBoost(candidates []candidate, changedPaths map[string]bool) 
 		if candidates[i].hit.Score <= 0 && !bridge[candidateKey(candidates[i])] {
 			continue
 		}
-		addReason(&candidates[i].hit, "working_set", workingSetBoost)
+		addReason(&candidates[i].hit, "working_set", w.WorkingSet)
 	}
 }
 
@@ -549,7 +704,7 @@ func selectWorkingSetBridgeCandidates(candidates []candidate, changedPaths map[s
 	return selected
 }
 
-func applyGraphBoost(candidates []candidate, relations []models.FileRelation) {
+func applyGraphBoost(candidates []candidate, relations []models.FileRelation, w *Weights) {
 	if len(candidates) == 0 || len(relations) == 0 {
 		return
 	}
@@ -581,11 +736,11 @@ func applyGraphBoost(candidates []candidate, relations []models.FileRelation) {
 		if candidates[i].hit.Score <= 0 && !graphBridge[candidateKey(candidates[i])] {
 			continue
 		}
-		addReason(&candidates[i].hit, reason, 1.25)
+		addReason(&candidates[i].hit, reason, w.Graph)
 	}
 }
 
-func applyLongChunkPenalty(candidates []candidate) {
+func applyLongChunkPenalty(candidates []candidate, w *Weights) {
 	if len(candidates) == 0 {
 		return
 	}
@@ -615,14 +770,63 @@ func applyLongChunkPenalty(candidates []candidate) {
 		if penalty < 1.0 {
 			penalty = 1.0
 		}
-		if penalty > maxLongChunkPenalty {
-			penalty = maxLongChunkPenalty
+		if penalty > w.LongChunkPenaltyMax {
+			penalty = w.LongChunkPenaltyMax
 		}
 		addPenalty(&candidates[i].hit, "long_chunk_penalty", penalty)
 	}
 }
 
-func applyTestPenalty(candidates []candidate, query string) {
+// applyLegacyPathPenalty downranks chunks under compat/legacy directories
+// unless the query names that surface. Mirrors the test-path penalty and
+// is neutral until the tuner moves LegacyPathKeep below 1.0.
+func applyLegacyPathPenalty(candidates []candidate, query string, w *Weights) {
+	if w.LegacyPathKeep >= 1.0 {
+		return
+	}
+	wantsLegacy := ranking.QueryWantsLegacy(query)
+	for i := range candidates {
+		if !ranking.IsLegacyLikePath(candidates[i].hit.Path) {
+			continue
+		}
+		if wantsLegacy {
+			addReason(&candidates[i].hit, "query_legacy_intent_detected", 0)
+			continue
+		}
+		if candidates[i].hit.Score <= 0 {
+			continue
+		}
+		before := candidates[i].hit.Score
+		candidates[i].hit.Score = before * w.LegacyPathKeep
+		addPenalty(&candidates[i].hit, "legacy_path_downrank", before-candidates[i].hit.Score)
+	}
+}
+
+const tinyChunkTokenThreshold = 40
+
+// applyTinyChunkPenalty downranks near-empty declaration chunks — one-line
+// re-export stubs, short type aliases — whose names collide with ordinary
+// query words. Measured on vuejs/core: `export const Vue` stubs (~14
+// tokens) and the 4-line `Renderer` type alias outranked the actual
+// renderer implementation on symbol_exact alone, crowding the per-file
+// diversity cap. Multiplicative like the test downrank, so a stub that is
+// genuinely the only match still surfaces.
+func applyTinyChunkPenalty(candidates []candidate, w *Weights) {
+	for i := range candidates {
+		hit := &candidates[i].hit
+		if hit.Score <= 0 || hit.Kind == "file" {
+			continue
+		}
+		if hit.TokenEstimate <= 0 || hit.TokenEstimate >= tinyChunkTokenThreshold {
+			continue
+		}
+		before := hit.Score
+		hit.Score = before * w.TinyChunkKeep
+		addPenalty(hit, "tiny_chunk_downrank", before-hit.Score)
+	}
+}
+
+func applyTestPenalty(candidates []candidate, query string, w *Weights) {
 	wantsTests := ranking.QueryWantsTests(query)
 	for i := range candidates {
 		if !ranking.IsTestLikePath(candidates[i].hit.Path) {
@@ -636,7 +840,7 @@ func applyTestPenalty(candidates []candidate, query string) {
 			continue
 		}
 		before := candidates[i].hit.Score
-		candidates[i].hit.Score = before * 0.72
+		candidates[i].hit.Score = before * w.TestDownrank
 		addPenalty(&candidates[i].hit, "test_like_downrank", before-candidates[i].hit.Score)
 	}
 }
@@ -753,7 +957,34 @@ func termMatchesText(term, text string) bool {
 	return false
 }
 
-func symbolScore(symbol string, terms []string) float64 {
+// symbolExactlyNamed reports whether any query term is equal (case-insensitive)
+// to the chunk's symbol or to its last dotted component, e.g. the term
+// "upgradewithslack" against symbol "UpgradeWithSlack", or "invoke" against
+// "CliRunner.invoke". Tokenise keeps the raw lowercased token alongside its
+// camelCase splits, so multi-word identifiers written verbatim in the query
+// still compare equal here.
+func symbolExactlyNamed(symbol string, terms []string) bool {
+	sym := strings.ToLower(strings.TrimSpace(symbol))
+	if sym == "" {
+		return false
+	}
+	last := sym
+	if dot := strings.LastIndex(sym, "."); dot >= 0 && dot+1 < len(sym) {
+		last = sym[dot+1:]
+	}
+	for _, term := range terms {
+		t := strings.ToLower(strings.TrimSpace(term))
+		if t == "" {
+			continue
+		}
+		if t == sym || t == last {
+			return true
+		}
+	}
+	return false
+}
+
+func symbolScore(symbol string, terms []string, w *Weights) float64 {
 	lower := strings.ToLower(symbol)
 	for _, term := range terms {
 		term = strings.ToLower(strings.TrimSpace(term))
@@ -765,12 +996,12 @@ func symbolScore(symbol string, terms []string) float64 {
 		for _, tv := range tvars {
 			for _, pv := range pvars {
 				if tv == pv {
-					return 18.0
+					return w.StructuralSymbol
 				}
 			}
 		}
 	}
-	return 3.0
+	return w.StructuralSymbolPartial
 }
 
 func stripExt(base string) string {

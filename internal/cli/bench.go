@@ -15,6 +15,7 @@ import (
 	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/embeddings"
 	"github.com/neuromfs/neuromfs/internal/mcp"
+	"github.com/neuromfs/neuromfs/internal/ranking"
 	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/storage"
 	"github.com/neuromfs/neuromfs/internal/tokenbudget"
@@ -27,6 +28,8 @@ func newBenchCmd() *cobra.Command {
 		benchArg             string
 		topK                 int
 		minTop3              float64
+		minSearchTop3        float64
+		minContextTop3       float64
 		bundle               bool
 		packBudget           int
 		preferSignatures     bool
@@ -97,7 +100,9 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 			fileEmbs, _ := db.AllEmbeddings()
 			rels, _ := db.AllRelations()
 
+			rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
 			results, summary := benchmark.Run(files, questions, benchmark.RunOptions{
+				Weights:          &rankWeights,
 				TopK:             topK,
 				Project:          loadProjectInfo(db),
 				ComputeBundle:    bundle || maxMeanBundleTokens > 0,
@@ -143,6 +148,24 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 				return fmt.Errorf("bench: top-3 precision %.1f%% below threshold %.1f%%",
 					summary.Top3, minTop3)
 			}
+			if minSearchTop3 > 0 {
+				if !search {
+					return fmt.Errorf("bench: --min-search-top3 requires --search")
+				}
+				if searchSummary.Top3 < minSearchTop3 {
+					return fmt.Errorf("bench: search top-3 precision %.1f%% below threshold %.1f%%",
+						searchSummary.Top3, minSearchTop3)
+				}
+			}
+			if minContextTop3 > 0 {
+				if !contextBench {
+					return fmt.Errorf("bench: --min-context-top3 requires --context")
+				}
+				if contextSummary.Top3 < minContextTop3 {
+					return fmt.Errorf("bench: context top-3 precision %.1f%% below threshold %.1f%%",
+						contextSummary.Top3, minContextTop3)
+				}
+			}
 			if maxMeanBundleTokens > 0 && summary.BundleMeanTokens > maxMeanBundleTokens {
 				return fmt.Errorf("bench: mean bundle tokens %d exceeds ceiling %d",
 					summary.BundleMeanTokens, maxMeanBundleTokens)
@@ -163,6 +186,8 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 	cmd.Flags().StringVar(&benchArg, "file", "", "Path to benchmark JSON (defaults to <repo>/.neurofs-bench.json)")
 	cmd.Flags().IntVar(&topK, "top-k", 3, "Rank cut-off for counting a question as a hit")
 	cmd.Flags().Float64Var(&minTop3, "min-top3", 0, "Fail with non-zero exit when top-3 precision drops below this %")
+	cmd.Flags().Float64Var(&minSearchTop3, "min-search-top3", 0, "Fail with non-zero exit when neurofs_search top-3 precision drops below this % (requires --search)")
+	cmd.Flags().Float64Var(&minContextTop3, "min-context-top3", 0, "Fail with non-zero exit when neurofs_context top-3 precision drops below this % (requires --context)")
 	cmd.Flags().BoolVar(&bundle, "bundle", false, "Also pack a bundle per question and report mean/p50/p95 tokens")
 	cmd.Flags().IntVar(&packBudget, "pack-budget", 0, "Token budget used with --bundle (default 8000)")
 	cmd.Flags().BoolVar(&preferSignatures, "prefer-signatures", false, "Mirror --for claude compression when measuring bundles")
@@ -254,10 +279,11 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 	var factQuestions int
 	for _, q := range questions {
 		start := time.Now()
-		resp, err := retrieval.Search(ctx, retrieval.Options{
-			Query: q.Question,
-			Repo:  repo,
-			Limit: limit,
+		resp, err := retrieval.SearchShared(ctx, retrieval.Options{
+			Query:              q.Question,
+			Repo:               repo,
+			Limit:              limit,
+			NeutralizeGitState: true,
 		})
 		latency := time.Since(start)
 		if err != nil {
@@ -289,10 +315,11 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 
 		stablePrefix := false
 		if checkStability {
-			again, err := retrieval.Search(ctx, retrieval.Options{
-				Query: q.Question,
-				Repo:  repo,
-				Limit: limit,
+			again, err := retrieval.SearchShared(ctx, retrieval.Options{
+				Query:              q.Question,
+				Repo:               repo,
+				Limit:              limit,
+				NeutralizeGitState: true,
 			})
 			if err != nil {
 				return nil, searchBenchSummary{}, err
@@ -371,9 +398,10 @@ func runContextBenchmark(ctx context.Context, repo string, questions []benchmark
 	for _, q := range questions {
 		start := time.Now()
 		resp, err := mcp.Context(ctx, mcp.ContextOptions{
-			Query: q.Question,
-			Repo:  repo,
-			Limit: limit,
+			NeutralizeGitState: true,
+			Query:              q.Question,
+			Repo:               repo,
+			Limit:              limit,
 		})
 		latency := time.Since(start)
 		if err != nil {

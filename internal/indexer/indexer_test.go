@@ -3,6 +3,7 @@ package indexer
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -218,6 +219,151 @@ func chunkHashesBySymbol(t *testing.T, db *storage.DB, filePath string) map[stri
 		}
 	}
 	return hashes
+}
+
+func TestScanProducesDeterministicChunkSnapshot(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+
+	tempDir := t.TempDir()
+	writeDeterministicChunkFixture(t, tempDir)
+
+	cfg, err := config.New(tempDir)
+	if err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatalf("failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	stats1, err := Run(cfg, db, Options{})
+	if err != nil {
+		t.Fatalf("first scan failed: %v", err)
+	}
+	if stats1.Chunks == 0 {
+		t.Fatal("expected fixture scan to persist chunks")
+	}
+	first := deterministicChunkSnapshot(t, db, cfg.RepoRoot)
+
+	if err := db.ClearIndex(); err != nil {
+		t.Fatalf("clear index: %v", err)
+	}
+
+	stats2, err := Run(cfg, db, Options{})
+	if err != nil {
+		t.Fatalf("second scan failed: %v", err)
+	}
+	if stats2.Chunks != stats1.Chunks {
+		t.Fatalf("chunk count changed across fresh scans: first=%d second=%d", stats1.Chunks, stats2.Chunks)
+	}
+	second := deterministicChunkSnapshot(t, db, cfg.RepoRoot)
+
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("chunk snapshot changed across fresh scans\nfirst:  %#v\nsecond: %#v", first, second)
+	}
+}
+
+type chunkSnapshotEntry struct {
+	RelPath       string
+	ChunkID       string
+	ParentID      string
+	Kind          string
+	Symbol        string
+	StartLine     int
+	EndLine       int
+	ContentHash   string
+	ASTHash       string
+	TokenEstimate int
+}
+
+func deterministicChunkSnapshot(t *testing.T, db *storage.DB, repoRoot string) []chunkSnapshotEntry {
+	t.Helper()
+
+	chunks, err := db.AllChunks()
+	if err != nil {
+		t.Fatalf("all chunks: %v", err)
+	}
+
+	out := make([]chunkSnapshotEntry, 0, len(chunks))
+	for _, c := range chunks {
+		rel, err := filepath.Rel(repoRoot, c.FilePath)
+		if err != nil {
+			t.Fatalf("relative path for %s: %v", c.FilePath, err)
+		}
+		out = append(out, chunkSnapshotEntry{
+			RelPath:       filepath.ToSlash(rel),
+			ChunkID:       c.ChunkID,
+			ParentID:      c.ParentID,
+			Kind:          c.Kind,
+			Symbol:        c.Symbol,
+			StartLine:     c.StartLine,
+			EndLine:       c.EndLine,
+			ContentHash:   c.ContentHash,
+			ASTHash:       c.ASTHash,
+			TokenEstimate: c.TokenEstimate,
+		})
+	}
+	return out
+}
+
+func writeDeterministicChunkFixture(t *testing.T, root string) {
+	t.Helper()
+
+	files := map[string]string{
+		"internal/service/service.go": `package service
+
+type Options struct {
+	Enabled bool
+}
+
+func Alpha() string {
+	return "alpha"
+}
+
+func Beta() string {
+	return Alpha() + "beta"
+}
+`,
+		"web/user.ts": `export class User {
+  constructor(public name: string) {}
+
+  greet(): string {
+    return ` + "`hello ${this.name}`" + `
+  }
+}
+
+export function normalize(input: string): string {
+  return input.trim().toLowerCase()
+}
+`,
+		"tools/calc.py": `class Calculator:
+    """Does math."""
+
+    scale = 1
+
+    def add(self, a, b):
+        return a + b
+
+def helper(value):
+    return value * 2
+`,
+		"docs/notes.md": `# Deterministic fixture
+
+This markdown file exercises the whole-file chunk fallback.
+`,
+	}
+
+	for rel, content := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
 }
 
 func TestProviderChangeInvalidatesIndex(t *testing.T) {
