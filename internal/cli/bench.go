@@ -280,9 +280,10 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 	for _, q := range questions {
 		start := time.Now()
 		resp, err := retrieval.SearchShared(ctx, retrieval.Options{
-			Query: q.Question,
-			Repo:  repo,
-			Limit: limit,
+			Query:              q.Question,
+			Repo:               repo,
+			Limit:              limit,
+			NeutralizeGitState: true,
 		})
 		latency := time.Since(start)
 		if err != nil {
@@ -315,9 +316,10 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 		stablePrefix := false
 		if checkStability {
 			again, err := retrieval.SearchShared(ctx, retrieval.Options{
-				Query: q.Question,
-				Repo:  repo,
-				Limit: limit,
+				Query:              q.Question,
+				Repo:               repo,
+				Limit:              limit,
+				NeutralizeGitState: true,
 			})
 			if err != nil {
 				return nil, searchBenchSummary{}, err
@@ -396,9 +398,10 @@ func runContextBenchmark(ctx context.Context, repo string, questions []benchmark
 	for _, q := range questions {
 		start := time.Now()
 		resp, err := mcp.Context(ctx, mcp.ContextOptions{
-			Query: q.Question,
-			Repo:  repo,
-			Limit: limit,
+			NeutralizeGitState: true,
+			Query:              q.Question,
+			Repo:               repo,
+			Limit:              limit,
 		})
 		latency := time.Since(start)
 		if err != nil {

@@ -335,6 +335,10 @@ type ContextOptions struct {
 	Intent string `json:"intent"`
 	Budget int    `json:"budget"`
 	Limit  int    `json:"limit"`
+	// NeutralizeGitState is set by benchmarks (never over MCP): routed
+	// searches skip the working-set boost so measurements are
+	// tree-independent.
+	NeutralizeGitState bool `json:"-"`
 }
 
 // ContextTraceStep records one routed operation inside the broker response.
@@ -446,10 +450,11 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 			searchLimit = 5
 		}
 		searchResponse, err := Search(ctx, SearchOptions{
-			Query: args.Query,
-			Repo:  repo,
-			Limit: searchLimit,
-			Mode:  "excerpt",
+			Query:              args.Query,
+			Repo:               repo,
+			Limit:              searchLimit,
+			Mode:               "excerpt",
+			NeutralizeGitState: args.NeutralizeGitState,
 		})
 		if err != nil {
 			return ContextResponse{}, err
@@ -530,10 +535,11 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 		}
 		searchLimit := profileSearchLimit(args.Intent, args.Limit)
 		searchResponse, err := Search(ctx, SearchOptions{
-			Query: args.Query,
-			Repo:  repo,
-			Limit: searchLimit,
-			Mode:  args.Intent,
+			Query:              args.Query,
+			Repo:               repo,
+			Limit:              searchLimit,
+			Mode:               args.Intent,
+			NeutralizeGitState: args.NeutralizeGitState,
 		})
 		if err != nil {
 			return ContextResponse{}, err
@@ -1404,6 +1410,9 @@ type SearchOptions struct {
 	Repo  string
 	Limit int
 	Mode  string
+	// NeutralizeGitState is set by benchmarks so measurements do not
+	// depend on the current working set. Not exposed over MCP.
+	NeutralizeGitState bool
 }
 
 // SearchResponse is the JSON-serializable result returned by neurofs_search.
@@ -1476,10 +1485,11 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 // index change (instead of once per query) is the whole point.
 func Search(ctx context.Context, opts SearchOptions) (SearchResponse, error) {
 	response, err := retrieval.SearchShared(ctx, retrieval.Options{
-		Query: opts.Query,
-		Repo:  opts.Repo,
-		Limit: opts.Limit,
-		Mode:  opts.Mode,
+		Query:              opts.Query,
+		Repo:               opts.Repo,
+		Limit:              opts.Limit,
+		Mode:               opts.Mode,
+		NeutralizeGitState: opts.NeutralizeGitState,
 	})
 	if err != nil {
 		return SearchResponse{}, err

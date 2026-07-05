@@ -34,6 +34,14 @@ type Options struct {
 	// repo's tuned weights (.neurofs/weights.json) or defaults are used.
 	// The learn tuner injects candidates here to evaluate them.
 	Weights *Weights
+	// NeutralizeGitState drops the working-set boost for this query.
+	// Benchmarks and the tuner set it: the boost is deliberately
+	// situational (recently edited files rank higher), which makes
+	// measurements depend on whatever happens to be dirty — measured
+	// drift: the context bench read 9/12 on a dirty tree and 8/12 on the
+	// same code clean. Regression gates must measure the tree-independent
+	// engine; production search keeps the boost.
+	NeutralizeGitState bool
 }
 
 // Response is the JSON-serializable result returned by chunk search.
@@ -229,6 +237,9 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 		s.exactCache[exactKey] = exactSignals
 	}
 	changedPaths := s.changedPaths
+	if opts.NeutralizeGitState {
+		changedPaths = nil
+	}
 
 	type structMatch struct {
 		symbolMatches []string

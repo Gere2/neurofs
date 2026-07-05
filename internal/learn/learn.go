@@ -560,9 +560,10 @@ func evaluate(ctx context.Context, c *corpusFixtures, w retrieval.Weights, limit
 	var summary EvalSummary
 	for _, fixture := range c.fixtures {
 		response, err := session.Search(ctx, retrieval.Options{
-			Query:   fixture.Question,
-			Limit:   limit,
-			Weights: &w,
+			Query:              fixture.Question,
+			Limit:              limit,
+			Weights:            &w,
+			NeutralizeGitState: true,
 		})
 		if err != nil {
 			return EvalSummary{}, fmt.Errorf("learn: search %q: %w", fixture.Question, err)
