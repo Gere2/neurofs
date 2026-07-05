@@ -29,6 +29,7 @@ func newBenchCmd() *cobra.Command {
 		topK                 int
 		minTop3              float64
 		minSearchTop3        float64
+		minContextTop3       float64
 		bundle               bool
 		packBudget           int
 		preferSignatures     bool
@@ -156,6 +157,15 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 						searchSummary.Top3, minSearchTop3)
 				}
 			}
+			if minContextTop3 > 0 {
+				if !contextBench {
+					return fmt.Errorf("bench: --min-context-top3 requires --context")
+				}
+				if contextSummary.Top3 < minContextTop3 {
+					return fmt.Errorf("bench: context top-3 precision %.1f%% below threshold %.1f%%",
+						contextSummary.Top3, minContextTop3)
+				}
+			}
 			if maxMeanBundleTokens > 0 && summary.BundleMeanTokens > maxMeanBundleTokens {
 				return fmt.Errorf("bench: mean bundle tokens %d exceeds ceiling %d",
 					summary.BundleMeanTokens, maxMeanBundleTokens)
@@ -177,6 +187,7 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 	cmd.Flags().IntVar(&topK, "top-k", 3, "Rank cut-off for counting a question as a hit")
 	cmd.Flags().Float64Var(&minTop3, "min-top3", 0, "Fail with non-zero exit when top-3 precision drops below this %")
 	cmd.Flags().Float64Var(&minSearchTop3, "min-search-top3", 0, "Fail with non-zero exit when neurofs_search top-3 precision drops below this % (requires --search)")
+	cmd.Flags().Float64Var(&minContextTop3, "min-context-top3", 0, "Fail with non-zero exit when neurofs_context top-3 precision drops below this % (requires --context)")
 	cmd.Flags().BoolVar(&bundle, "bundle", false, "Also pack a bundle per question and report mean/p50/p95 tokens")
 	cmd.Flags().IntVar(&packBudget, "pack-budget", 0, "Token budget used with --bundle (default 8000)")
 	cmd.Flags().BoolVar(&preferSignatures, "prefer-signatures", false, "Mirror --for claude compression when measuring bundles")

@@ -86,7 +86,7 @@ lint:
 ## check-retrieval: Retrieval regression gates — fact recall + top-3 precision on both surfaces (thresholds sit under the 2026-07-04 baselines: recall 88.9%, file top-3 66.7%, search top-3 75.0%; bump when an intentional change improves them)
 check-retrieval: build
 	$(OUT_DIR)/$(BINARY) learn eval --min-recall 0.80
-	$(OUT_DIR)/$(BINARY) bench --search --min-top3 60 --min-search-top3 70
+	$(OUT_DIR)/$(BINARY) bench --search --context --min-top3 60 --min-search-top3 70 --min-context-top3 65
 
 ## corpora: Clone and index the cross-shape tuning corpora (pallets/click, vuejs/core) under /tmp — required before any multi-corpus `learn tune`; /tmp is wiped on reboot so re-run as needed
 corpora: build
