@@ -470,7 +470,25 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 		res := runGetExcerptTool(ctx, excerptRaw)
 		if !res.IsError {
 			response.Route = "excerpt"
-			response.Results = searchResponse.Results[:1]
+			// The excerpt text is the token payload; the full ranked
+			// candidate list rides along with snippets stripped (paths,
+			// symbols, and scores cost almost nothing) so a consumer whose
+			// answer is NOT in the top hit still sees where to go next.
+			// Measured before this: the excerpt route returned [:1] and
+			// the router scored top-3 58% on questions raw search answers
+			// at 75% — the router was discarding candidates it had.
+			trimmed := make([]SearchResultHit, len(searchResponse.Results))
+			copy(trimmed, searchResponse.Results)
+			for i := 1; i < len(trimmed); i++ {
+				// Fallback navigation needs path, lines, symbol, and score;
+				// snippets would double-pay the excerpt and reasons +
+				// content hashes are the bulk of the remaining metadata
+				// (expand accepts path:start-end targets without a hash).
+				trimmed[i].Snippet = ""
+				trimmed[i].Reasons = nil
+				trimmed[i].ContentHash = ""
+			}
+			response.Results = trimmed
 			response.ToolTrace = append(response.ToolTrace,
 				ContextTraceStep{Tool: "neurofs_search", Reason: "find the best line-ranged chunk before expanding it"},
 				ContextTraceStep{Tool: "neurofs_get_excerpt", Reason: "expand only the selected file span"},

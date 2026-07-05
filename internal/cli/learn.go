@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/neuromfs/neuromfs/internal/config"
 	"github.com/neuromfs/neuromfs/internal/learn"
 	"github.com/neuromfs/neuromfs/internal/retrieval"
 	"github.com/neuromfs/neuromfs/internal/usage"
@@ -397,6 +398,13 @@ retrieval regression gate, the search-surface counterpart of 'neurofs gate'.`,
 			extra, err := parseCorpora(corpora)
 			if err != nil {
 				return err
+			}
+			if cfg, cerr := config.New(repo); cerr == nil {
+				if stale := staleIndexCount(cfg.DBPath, cfg.RepoRoot); stale > 0 {
+					fmt.Fprintf(os.Stderr,
+						"  WARN: index is stale — %d indexed file(s) changed on disk since the last scan; recall numbers will be distorted, run `neurofs scan` first\n",
+						stale)
+				}
 			}
 			w, custom, werr := retrieval.LoadWeights(repo)
 			summary, err := learn.Evaluate(cmd.Context(), repo, fixturesDir, w, limit, extra)
