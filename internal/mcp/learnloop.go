@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/usage"
+	"github.com/Gere2/neurofs/internal/usage"
 )
 
 // This file is the MCP half of the learn loop: every retrieval served over
@@ -78,7 +78,7 @@ func runFeedbackTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if fb.Query == "" {
 		return errResult("no query given and no logged retrieval to attach the feedback to")
 	}
-	if err := usage.AppendFeedback(repo, fb); err != nil {
+	if err := usage.AppendFeedbackContext(ctx, repo, fb); err != nil {
 		return errResult(err.Error())
 	}
 
@@ -95,7 +95,7 @@ func runFeedbackTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 // logSearchUsage appends one usage entry for a served retrieval. Logging is
 // best-effort by design: a full disk or read-only checkout must never fail
 // the retrieval the caller actually asked for.
-func logSearchUsage(repo, tool, query, mode string, hits []SearchResultHit, bundleTokens int) {
+func logSearchUsage(ctx context.Context, repo, tool, query, mode string, hits []SearchResultHit, bundleTokens int) {
 	if strings.TrimSpace(query) == "" {
 		return
 	}
@@ -117,7 +117,7 @@ func logSearchUsage(repo, tool, query, mode string, hits []SearchResultHit, bund
 			Reasons:   h.Reasons,
 		})
 	}
-	_, _ = usage.Append(repo, entry)
+	_, _ = usage.AppendContext(ctx, repo, entry)
 }
 
 func trimNonEmpty(items []string) []string {

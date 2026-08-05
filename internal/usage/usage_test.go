@@ -28,7 +28,7 @@ func TestAppendFillsIDAndTimestamp(t *testing.T) {
 	}
 }
 
-func TestLoadSkipsCorruptLines(t *testing.T) {
+func TestLoadFailsClosedOnCorruptLines(t *testing.T) {
 	repo := t.TempDir()
 	if _, err := Append(repo, Entry{Query: "good"}); err != nil {
 		t.Fatal(err)
@@ -40,17 +40,36 @@ func TestLoadSkipsCorruptLines(t *testing.T) {
 	if _, err := f.WriteString("{not json\n"); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := Append(repo, Entry{Query: "also good"}); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := Load(repo)
-	if err != nil {
-		t.Fatalf("load: %v", err)
+	if _, err := Load(repo); err == nil {
+		t.Fatal("corrupt historical evidence was silently skipped")
 	}
-	if len(entries) != 2 {
-		t.Fatalf("len = %d, want 2 (corrupt line skipped)", len(entries))
+}
+
+func TestUsageFilesRejectSymlinks(t *testing.T) {
+	repo := t.TempDir()
+	target := repo + "/target.jsonl"
+	if err := os.WriteFile(target, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := Path(repo)
+	if err := os.MkdirAll(repo+"/.neurofs", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Append(repo, Entry{Query: "must not follow"}); err == nil {
+		t.Fatal("append followed a symlink")
+	}
+	if _, err := Load(repo); err == nil {
+		t.Fatal("load followed a symlink")
 	}
 }
 

@@ -1,0 +1,132 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  LANG: C.UTF-8
+  NEUROFS_EMBEDDING_PROVIDER: mock
+  TZ: UTC
+
+jobs:
+  verify:
+    name: verify tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      - name: Verify source, modules, tests and dependencies
+        run: make fmt-check mod-check lint vet test vuln
+      - name: Verify retrieval economy and pivot readiness
+        run: make check-retrieval check-economy check-gate
+
+  build:
+    name: ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Build archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          archive="neurofs_${version}_${GOOS}_${GOARCH}"
+          package_dir="dist/${archive}"
+          binary="${package_dir}/neurofs"
+          if [ "${GOOS}" = "windows" ]; then
+            binary="${binary}.exe"
+          fi
+
+          mkdir -p "${package_dir}"
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/Gere2/neurofs/internal/cli.Version=${version}" \
+            -o "${binary}" ./cmd/neurofs
+          go version -m "${binary}" > "${package_dir}/BUILDINFO.txt"
+          cp LICENSE README.md "${package_dir}/"
+
+          if [ "${GOOS}" = "windows" ]; then
+            (cd dist && zip -qr "${archive}.zip" "${archive}")
+          else
+            tar -C dist -czf "dist/${archive}.tar.gz" "${archive}"
+          fi
+          rm -rf -- "${package_dir}"
+      - name: Upload archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: checksums, SBOM and GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Generate CycloneDX SBOM
+        run: |
+          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.9.0 \
+            mod -json -output "dist/neurofs_${GITHUB_REF_NAME}.cdx.json" .
+      - name: Generate checksums
+        run: |
+          cd dist
+          find . -maxdepth 1 -type f -name 'neurofs_*' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > checksums.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "${GITHUB_REF_NAME}"

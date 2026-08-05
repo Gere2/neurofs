@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // Mode selects one step of the context ladder.
@@ -249,37 +249,42 @@ func SHA256Hex(content string) string {
 
 // EstimateOutlineTokens estimates the rendered text form of a logic map.
 func EstimateOutlineTokens(logic contextmap.LogicMap) int {
-	var sb strings.Builder
-	WriteOutline(&sb, logic)
-	return tokenbudget.EstimateTokens(sb.String())
+	return tokenbudget.EstimateTokens(renderOutline(logic))
 }
 
-// WriteOutline renders a compact, human-readable logic map.
-func WriteOutline(w io.Writer, logic contextmap.LogicMap) {
-	fmt.Fprintf(w, "<outline path=%q lang=%q lines=%d hash=%q>\n",
+// WriteOutline renders a compact, human-readable logic map and propagates
+// output failures.
+func WriteOutline(w io.Writer, logic contextmap.LogicMap) error {
+	_, err := io.WriteString(w, renderOutline(logic))
+	return err
+}
+
+func renderOutline(logic contextmap.LogicMap) string {
+	var out strings.Builder
+	appendFormatted(&out, "<outline path=%q lang=%q lines=%d hash=%q>\n",
 		logic.Path, logic.Lang, logic.Lines, logic.Checksum)
 	if len(logic.Symbols) > 0 {
-		fmt.Fprintln(w, "symbols:")
+		out.WriteString("symbols:\n")
 		for _, sym := range logic.Symbols {
 			label := strings.TrimSpace(sym.Name)
 			if label == "" {
 				label = sym.Kind
 			}
-			fmt.Fprintf(w, "- %s %s L%d-L%d", sym.Kind, label, sym.StartLine, sym.EndLine)
+			appendFormatted(&out, "- %s %s L%d-L%d", sym.Kind, label, sym.StartLine, sym.EndLine)
 			if sym.ContentHash != "" {
-				fmt.Fprintf(w, " hash=%s", sym.ContentHash)
+				appendFormatted(&out, " hash=%s", sym.ContentHash)
 			}
 			if len(sym.Calls) > 0 {
-				fmt.Fprintf(w, " calls=%s", strings.Join(sym.Calls, ","))
+				appendFormatted(&out, " calls=%s", strings.Join(sym.Calls, ","))
 			}
-			fmt.Fprintln(w)
+			out.WriteByte('\n')
 		}
 	}
-	writeStringList(w, "imports", logic.Imports)
-	writeStringList(w, "dependencies", logic.Dependencies)
-	writeStringList(w, "dependents", logic.Dependents)
-	writeStringList(w, "related_tests", logic.RelatedTests)
-	fmt.Fprintln(w, "next:")
+	writeStringList(&out, "imports", logic.Imports)
+	writeStringList(&out, "dependencies", logic.Dependencies)
+	writeStringList(&out, "dependents", logic.Dependents)
+	writeStringList(&out, "related_tests", logic.RelatedTests)
+	out.WriteString("next:\n")
 	for _, sym := range logic.Symbols {
 		label := strings.TrimSpace(sym.Name)
 		if label == "" {
@@ -289,39 +294,48 @@ func WriteOutline(w io.Writer, logic contextmap.LogicMap) {
 		if sym.ContentHash != "" {
 			hashArg = " --hash " + sym.ContentHash
 		}
-		fmt.Fprintf(w, "- neurofs expand %s:%d-%d%s\n", logic.Path, sym.StartLine, sym.EndLine, hashArg)
+		appendFormatted(&out, "- neurofs expand %s:%d-%d%s\n", logic.Path, sym.StartLine, sym.EndLine, hashArg)
 		if label != sym.Kind {
 			break
 		}
 	}
-	fmt.Fprintf(w, "- neurofs expand %s --mode full\n", logic.Path)
-	fmt.Fprintln(w, "</outline>")
+	appendFormatted(&out, "- neurofs expand %s --mode full\n", logic.Path)
+	out.WriteString("</outline>\n")
+	return out.String()
 }
 
-func writeStringList(w io.Writer, name string, values []string) {
+func writeStringList(out *strings.Builder, name string, values []string) {
 	if len(values) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "%s:\n", name)
+	appendFormatted(out, "%s:\n", name)
 	for _, value := range values {
-		fmt.Fprintf(w, "- %s\n", value)
+		appendFormatted(out, "- %s\n", value)
 	}
 }
 
-// WriteExpandedContent renders excerpt/full content for prompt inclusion.
-func WriteExpandedContent(w io.Writer, out ExpandedContent) {
+func appendFormatted(out *strings.Builder, format string, args ...any) {
+	_, _ = fmt.Fprintf(out, format, args...)
+}
+
+// WriteExpandedContent renders excerpt/full content for prompt inclusion and
+// propagates output failures.
+func WriteExpandedContent(w io.Writer, out ExpandedContent) error {
+	var rendered strings.Builder
 	tag := "excerpt"
 	if out.Mode == ModeFull {
 		tag = "file"
 	}
-	fmt.Fprintf(w, "<%s path=%q", tag, out.Path)
+	appendFormatted(&rendered, "<%s path=%q", tag, out.Path)
 	if out.StartLine > 0 && out.EndLine >= out.StartLine {
-		fmt.Fprintf(w, " start=%d end=%d", out.StartLine, out.EndLine)
+		appendFormatted(&rendered, " start=%d end=%d", out.StartLine, out.EndLine)
 	}
 	if out.ContentHash != "" {
-		fmt.Fprintf(w, " hash=%q", out.ContentHash)
+		appendFormatted(&rendered, " hash=%q", out.ContentHash)
 	}
-	fmt.Fprintf(w, " tokens=%d>\n", out.Tokens)
-	fmt.Fprintf(w, "%s\n", out.Content)
-	fmt.Fprintf(w, "</%s>\n", tag)
+	appendFormatted(&rendered, " tokens=%d>\n", out.Tokens)
+	appendFormatted(&rendered, "%s\n", out.Content)
+	appendFormatted(&rendered, "</%s>\n", tag)
+	_, err := io.WriteString(w, rendered.String())
+	return err
 }

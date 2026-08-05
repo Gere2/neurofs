@@ -1,0 +1,37 @@
+NeuroFS — benchmark on /tmp/neurofs-g5-v2.SmV8fP/click
+  questions : /Users/gere/NeuroMFS/docs/g5_bench/click.json
+
+  questions : 5
+  top-k     : 3
+
+  [✓] "How does click create and manage the Context object during command invocation?"
+       expects : src/click/core.py
+       matched : src/click/core.py (rank 1)
+       top 5   : src/click/core.py(15.69), docs/commands-and-groups.md(15.63), src/click/_termui_impl.py(13.62), src/click/exceptions.py(13.28), src/click/decorators.py(13.25)
+
+  [✓] "How do click command and option decorators work?"
+       expects : src/click/decorators.py
+       matched : src/click/decorators.py (rank 1)
+       top 5   : src/click/decorators.py(21.71), src/click/exceptions.py(15.77), docs/option-decorators.md(15.72), src/click/__init__.py(12.41), src/click/core.py(12.12)
+
+  [✓] "How does click parse command line arguments?"
+       expects : src/click/core.py, src/click/parser.py
+       matched : src/click/parser.py (rank 1)
+       top 5   : src/click/parser.py(17.00), src/click/exceptions.py(16.75), src/click/core.py(16.60), src/click/decorators.py(14.09), docs/arguments.md(13.65)
+
+  [✓] "How does the click testing runner invoke commands and capture output?"
+       expects : src/click/testing.py
+       matched : src/click/testing.py (rank 1)
+       top 5   : src/click/testing.py(29.25), tests/test_testing.py(23.63), docs/testing.md(21.73), tests/test_command_decorators.py(21.04), tests/test_commands.py(19.01)
+
+  [✓] "How are option parameter types defined and converted in click?"
+       expects : src/click/types.py
+       matched : src/click/types.py (rank 1)
+       top 5   : src/click/types.py(23.66), docs/parameter-types.md(15.74), src/click/core.py(15.48), src/click/exceptions.py(15.32), tests/test_options.py(14.16)
+
+  summary:
+    hits      : 5 / 5
+    top-1     : 100.0%
+    top-3     : 100.0%
+    top-5     : 100.0%
+    mean rank : 1.00 (hits only)

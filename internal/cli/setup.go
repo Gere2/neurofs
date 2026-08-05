@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -73,24 +73,17 @@ Run it from any repo you want agents to work in:
 			}
 
 			// 2. CLAUDE.md contract.
-			claudePath := filepath.Join(cfg.RepoRoot, "CLAUDE.md")
-			existing, err := os.ReadFile(claudePath)
-			switch {
-			case err == nil && strings.Contains(string(existing), claudeMDMarker):
-				fmt.Printf("  CLAUDE.md : already wired (mentions %s)\n", claudeMDMarker)
-			case err == nil:
-				if werr := os.WriteFile(claudePath, append(existing, []byte(claudeMDBlock)...), 0o644); werr != nil {
-					return fmt.Errorf("setup: CLAUDE.md: %w", werr)
-				}
-				fmt.Printf("  CLAUDE.md : retrieval block appended\n")
-			case os.IsNotExist(err):
-				content := "# " + filepath.Base(cfg.RepoRoot) + "\n" + claudeMDBlock
-				if werr := os.WriteFile(claudePath, []byte(content), 0o644); werr != nil {
-					return fmt.Errorf("setup: CLAUDE.md: %w", werr)
-				}
-				fmt.Printf("  CLAUDE.md : created with the retrieval block\n")
-			default:
+			status, err := wireClaudeMD(cfg.RepoRoot)
+			if err != nil {
 				return fmt.Errorf("setup: CLAUDE.md: %w", err)
+			}
+			switch status {
+			case "already":
+				fmt.Printf("  CLAUDE.md : already wired (mentions %s)\n", claudeMDMarker)
+			case "appended":
+				fmt.Printf("  CLAUDE.md : retrieval block appended\n")
+			case "created":
+				fmt.Printf("  CLAUDE.md : created with the retrieval block\n")
 			}
 
 			// 3. MCP registration hint (one-time, global for every repo).
@@ -108,4 +101,31 @@ Run it from any repo you want agents to work in:
 	}
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository path (default: cwd)")
 	return cmd
+}
+
+func wireClaudeMD(repoRoot string) (string, error) {
+	claudePath := filepath.Join(repoRoot, "CLAUDE.md")
+	info, err := regularFileInfo(claudePath)
+	switch {
+	case err == nil:
+		existing, readErr := os.ReadFile(claudePath)
+		if readErr != nil {
+			return "", readErr
+		}
+		if strings.Contains(string(existing), claudeMDMarker) {
+			return "already", nil
+		}
+		if writeErr := atomicWriteFile(claudePath, append(existing, []byte(claudeMDBlock)...), info.Mode().Perm()); writeErr != nil {
+			return "", writeErr
+		}
+		return "appended", nil
+	case os.IsNotExist(err):
+		content := "# " + filepath.Base(repoRoot) + "\n" + claudeMDBlock
+		if writeErr := atomicWriteFile(claudePath, []byte(content), 0o644); writeErr != nil {
+			return "", writeErr
+		}
+		return "created", nil
+	default:
+		return "", err
+	}
 }

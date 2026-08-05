@@ -6,14 +6,57 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/usage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/usage"
 )
+
+func TestWriteFixtureExclusiveDoesNotOverwriteDuringRace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "learned-race.json")
+	payloads := [][]byte{[]byte("first\n"), []byte("second\n")}
+	errs := make([]error, len(payloads))
+
+	var start sync.WaitGroup
+	start.Add(1)
+	var writers sync.WaitGroup
+	for i := range payloads {
+		writers.Add(1)
+		go func(i int) {
+			defer writers.Done()
+			start.Wait()
+			errs[i] = writeFixtureExclusive(path, payloads[i])
+		}(i)
+	}
+	start.Done()
+	writers.Wait()
+
+	successes, existing := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			successes++
+		case os.IsExist(err):
+			existing++
+		default:
+			t.Fatalf("unexpected writer error: %v", err)
+		}
+	}
+	if successes != 1 || existing != 1 {
+		t.Fatalf("successes=%d existing=%d, want 1 and 1 (errs=%v)", successes, existing, errs)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(payloads[0]) && string(got) != string(payloads[1]) {
+		t.Fatalf("partial or unexpected fixture content: %q", got)
+	}
+}
 
 func TestCollectFactsPrefersIdentifiers(t *testing.T) {
 	fb := usage.Feedback{
@@ -30,6 +73,35 @@ func TestCollectFactsPrefersIdentifiers(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("facts = %v, want %v", got, want)
 		}
+	}
+}
+
+func TestLoadFixturesFromHonorsAppendOnlySupersession(t *testing.T) {
+	dir := t.TempDir()
+	fixtures := map[string]Fixture{
+		"old.json": {
+			Question: "old question", ExpectsFacts: []string{"obsolete"},
+		},
+		"correction.json": {
+			Question: "corrected question", ExpectsFacts: []string{"current"},
+			Source: "correction", Supersedes: "old.json",
+		},
+	}
+	for name, fixture := range fixtures {
+		data, err := json.Marshal(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := LoadFixturesFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Question != "corrected question" {
+		t.Fatalf("active fixtures = %+v", got)
 	}
 }
 
@@ -191,6 +263,21 @@ func TestPromoteDropsFactsAbsentFromRepo(t *testing.T) {
 	}
 }
 
+func TestFactsPresentTreatsLeadingDashAsPattern(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not installed")
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := factsPresentInRepo(repo, []string{"--version"})
+	if len(got) != 0 {
+		t.Fatalf("leading-dash fact was not treated as a literal pattern: %v", got)
+	}
+}
+
 func TestCandidateValuesProbesZeroWeights(t *testing.T) {
 	mults := []float64{0.5, 1.5}
 	got := candidateValues(8.0, mults)
@@ -253,7 +340,11 @@ func newIndexedRepo(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
 		t.Fatal(err)
 	}

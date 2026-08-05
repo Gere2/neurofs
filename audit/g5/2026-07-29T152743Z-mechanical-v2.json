@@ -1,0 +1,115 @@
+{
+  "schema_version": 2,
+  "measured_at": "2026-07-29T15:27:43Z",
+  "actor_kind": "agent",
+  "signal_kind": "mechanical_cross_shape",
+  "binary_sha256": "31fee3c096126a124e38cac213b19c3179fb3051eb998d0cbd6c0bec4426fb45",
+  "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+  "source_tree_sha256": "ca37e1d7092d7ea1a51f2946b8cd8c3353d95f54edd225a4c5da5cfc19a4b8bc",
+  "run_config": {
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "economy_search_limit": 8,
+    "fixture_budget": 8000,
+    "no_chunks": false,
+    "mock_semantic": false
+  },
+  "shapes": [
+    {
+      "name": "NeuroFS",
+      "kind": "go_service",
+      "repo_url": "https://github.com/Gere2/neurofs.git",
+      "commit_sha": "2d347b01b1508a6766164e603b2591f92a2ef816",
+      "fixture_set_sha256": "a61a8990ed851c1a8514627b21da7231ac16db7f62394fd7244829fb0b4e4197",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.6370556450128512,
+        "overall_recall": 0.769230769230769,
+        "miss_rate": 0.07692307692307693,
+        "report_sha256": "89af2ac26c5a5c6d13fa9e584297e441193cd85fb417b5295a35078c1fc75652"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 13,
+        "overshoots": 0,
+        "report_sha256": "def861efd4b1a4336877caf8b1a27db3192de2f2d80e52ac7de5fb5da019b197"
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.8782051282051282,
+        "fixtures": 13,
+        "perfect": 9,
+        "report_sha256": "def861efd4b1a4336877caf8b1a27db3192de2f2d80e52ac7de5fb5da019b197"
+      },
+      "bench": {
+        "questions": 12,
+        "top3_percent": 66.7,
+        "report_sha256": "61a758b31509aa735919530a1c0126ae07296ed3a6d6c122c52165a9fd8f0456"
+      }
+    },
+    {
+      "name": "pallets/click",
+      "kind": "python_library",
+      "repo_url": "https://github.com/pallets/click.git",
+      "commit_sha": "00e592cea702e0b2caa0dee42489fdb1c22cd845",
+      "fixture_set_sha256": "d4d207777871fddc83ededbee0af22dab85ca21bc645c5296a88bbcd225e68c4",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.7146885693968417,
+        "overall_recall": 0.6666666666666666,
+        "miss_rate": 0,
+        "report_sha256": "b26629461b59c19ad91da6647517dc66474a67d72dacf2c57e186719362d7af2"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 5,
+        "overshoots": 0,
+        "report_sha256": "612670b365cd7895fbd2d05d1a5c6bf3ca5a9e3390f877d0de717d131443f299"
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.7999999999999999,
+        "fixtures": 5,
+        "perfect": 2,
+        "report_sha256": "612670b365cd7895fbd2d05d1a5c6bf3ca5a9e3390f877d0de717d131443f299"
+      },
+      "bench": {
+        "questions": 5,
+        "top3_percent": 100,
+        "report_sha256": "7fb4e1980cac0e690b0141a49f7a5369676c9dba1468dbbf042d7130a6bc4455"
+      }
+    },
+    {
+      "name": "vuejs/core",
+      "kind": "typescript_frontend",
+      "repo_url": "https://github.com/vuejs/core.git",
+      "commit_sha": "b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5",
+      "fixture_set_sha256": "92733dbc37ce5e75306f4d4cc72e21f3886cbf66a9a7927391aadc70a583ddaa",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.7280460934180363,
+        "overall_recall": 0.7222222222222222,
+        "miss_rate": 0,
+        "report_sha256": "0ff02eee7995918efd61095efa8b4bfabb2635d476cdf90b5c4161582c124a42"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 6,
+        "overshoots": 0,
+        "report_sha256": "2e0adc226308d2bfce73962557e09981053c80e15b50c9bd3d6d6e91a5fba97d"
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.8333333333333334,
+        "fixtures": 6,
+        "perfect": 4,
+        "report_sha256": "2e0adc226308d2bfce73962557e09981053c80e15b50c9bd3d6d6e91a5fba97d"
+      },
+      "bench": {
+        "questions": 6,
+        "top3_percent": 100,
+        "report_sha256": "41308c1d0f239203cfefd99f4fb7dccb1a8e292d84c2c73d8f5f3643b7c7e6e8"
+      }
+    }
+  ]
+}

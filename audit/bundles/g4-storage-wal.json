@@ -1,0 +1,573 @@
+{
+  "query": "how does storage open the sqlite database and configure WAL journaling",
+  "budget": 4000,
+  "fragments": [
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 115-153\n// chunk: Open\n// content_hash: 16b1fd7d36c12adf64b530ae890b9860ed1af2c7e6a33f6e262719ba32e46a70\n\n// Open opens (or creates) the NeuroFS index database at the given path.\nfunc Open(dbPath string) (*DB, error) {\n  if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {\n    return nil, fmt.Errorf(\"storage: create db dir: %w\", err)\n  }\n\n  db, err := sql.Open(\"sqlite\", dbPath)\n  if err != nil {\n    return nil, fmt.Errorf(\"storage: open sqlite: %w\", err)\n  }\n\n  // busy_timeout must be set before journal_mode so the WAL switch\n  // itself waits when another process is mid-switch. WAL lets readers\n  // proceed during writes; synchronous=NORMAL is the documented safe\n  // pair for WAL. Without these, two concurrent `neurofs scan`\n  // invocations collide instantly with SQLITE_BUSY.\n  pragmas := []string{\n    \"PRAGMA busy_timeout = 5000\",\n    \"PRAGMA journal_mode = WAL\",\n    \"PRAGMA synchronous = NORMAL\",\n    \"PRAGMA foreign_keys = ON\",\n  }\n  for _, p := range pragmas {\n    if err := execWithBusyRetry(db, p); err != nil {\n      return nil, fmt.Errorf(\"storage: %s: %w\", p, err)\n    }\n  }\n\n  db.SetMaxOpenConns(1) // SQLite is single-writer\n\n  if err := execWithBusyRetry(db, schema); err != nil {\n    return nil, fmt.Errorf(\"storage: apply schema: %w\", err)\n  }\n  if err := ensureColumn(db, \"chunks\", \"calls\", `ALTER TABLE chunks ADD COLUMN calls TEXT NOT NULL DEFAULT '[]'`); err != nil {\n    return nil, fmt.Errorf(\"storage: migrate chunks.calls: %w\", err)\n  }\n\n  return \u0026DB{db: db, path: dbPath}, nil\n}",
+      "tokens": 394,
+      "score": 54.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "symbol_exact",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:115-153",
+          "weight": 1
+        }
+      ],
+      "start_line": 115,
+      "end_line": 153,
+      "content_hash": "16b1fd7d36c12adf64b530ae890b9860ed1af2c7e6a33f6e262719ba32e46a70"
+    },
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 199-207\n// chunk: isSQLiteBusy\n// content_hash: 59b79955d3c0323c7b284ada69ded2ba797415cbe44d8d9e3239f0b1040f463a\n\nfunc isSQLiteBusy(err error) bool {\n  if err == nil {\n    return false\n  }\n  text := strings.ToLower(err.Error())\n  return strings.Contains(text, \"sqlite_busy\") ||\n    strings.Contains(text, \"database is locked\") ||\n    strings.Contains(text, \"database table is locked\")\n}",
+      "tokens": 109,
+      "score": 46.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:199-207",
+          "weight": 1
+        }
+      ],
+      "start_line": 199,
+      "end_line": 207,
+      "content_hash": "59b79955d3c0323c7b284ada69ded2ba797415cbe44d8d9e3239f0b1040f463a"
+    },
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 380-434\n// chunk: DB.DeleteRemovedFiles\n// content_hash: b81d04045a50af2b930763cdc20eb2e5dbebcdb1ee70496689d91dc11fc3e63a\n\n// DeleteRemovedFiles deletes records whose paths are no longer present on\n// disk and returns the number of records deleted. The deletes run inside a\n// single transaction so an error partway through rolls back to the original\n// state — otherwise the caller's reported \"Removed\" count and the actual\n// on-disk index would diverge on failure.\nfunc (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {\n  rows, err := s.db.Query(`SELECT path FROM files`)\n  if err != nil {\n    return 0, err\n  }\n  defer rows.Close()\n\n  var toDelete []string\n  for rows.Next() {\n    var p string\n    if err := rows.Scan(\u0026p); err != nil {\n      return 0, err\n    }\n    if !existingPaths[p] {\n      toDelete = append(toDelete, p)\n    }\n  }\n  if err := rows.Err(); err != nil {\n    return 0, err\n  }\n  // rows must be closed before opening a write transaction on the same\n  // single-connection SQLite handle; otherwise the tx would deadlock\n  // waiting for the cursor.\n  rows.Close()\n\n  if len(toDelete) == 0 {\n    return 0, nil\n  }\n\n  tx, err := s.db.Begin()\n  if err != nil {\n    return 0, fmt.Errorf(\"storage: begin tx: %w\", err)\n  }\n  stmt, err := tx.Prepare(`DELETE FROM files WHERE path = ?`)\n  if err != nil {\n    _ = tx.Rollback()\n    return 0, fmt.Errorf(\"storage: prepare delete: %w\", err)\n  }\n  defer stmt.Close()\n  for _, p := range toDelete {\n    if _, err := stmt.Exec(p); err != nil {\n      _ = tx.Rollback()\n      return 0, fmt.Errorf(\"storage: delete %s: %w\", p, err)\n    }\n  }\n  if err := tx.Commit(); err != nil {\n    return 0, fmt.Errorf(\"storage: commit delete: %w\", err)\n  }\n  return len(toDelete), nil\n}",
+      "tokens": 450,
+      "score": 40.75,
+      "reasons": [
+        {
+          "signal": "path_match",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:380-434",
+          "weight": 1
+        }
+      ],
+      "start_line": 380,
+      "end_line": 434,
+      "content_hash": "b81d04045a50af2b930763cdc20eb2e5dbebcdb1ee70496689d91dc11fc3e63a"
+    },
+    {
+      "rel_path": "internal/memory/sqlitestore.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/memory/sqlitestore.go\n// lines: 38-83\n// chunk: SqliteStore.openDB\n// content_hash: d9759802be6e2530eb393e9990ba0eddb39be5d40d20301d18f478fd658ee5a2\n\n// openDB opens the SQLite connection, sets pragmas, and ensures the table exists.\nfunc (s *SqliteStore) openDB(ctx context.Context) (*sql.DB, error) {\n  if err := os.MkdirAll(filepath.Dir(s.dbPath), 0755); err != nil {\n    return nil, fmt.Errorf(\"create db dir: %w\", err)\n  }\n\n  db, err := sql.Open(\"sqlite\", s.dbPath)\n  if err != nil {\n    return nil, fmt.Errorf(\"open sqlite: %w\", err)\n  }\n\n  // WAL mode and busy timeout are critical for process-level concurrency safety\n  pragmas := []string{\n    \"PRAGMA busy_timeout = 5000\",\n    \"PRAGMA journal_mode = WAL\",\n    \"PRAGMA synchronous = NORMAL\",\n    \"PRAGMA foreign_keys = ON\",\n  }\n  for _, p := range pragmas {\n    if _, err := db.ExecContext(ctx, p); err != nil {\n      db.Close()\n      return nil, fmt.Errorf(\"pragma %s: %w\", p, err)\n    }\n  }\n\n  schema := `\n  CREATE TABLE IF NOT EXISTS session_ledger (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    timestamp TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    query TEXT,\n    bundle_hash TEXT,\n    files TEXT,\n    command TEXT,\n    outcome TEXT,\n    notes TEXT\n  );\n  CREATE INDEX IF NOT EXISTS idx_ledger_session_timestamp ON session_ledger (session_id, timestamp DESC);\n  `\n  if _, err := db.ExecContext(ctx, schema); err != nil {\n    db.Close()\n    return nil, fmt.Errorf(\"create schema: %w\", err)\n  }\n\n  return db, nil\n}",
+      "tokens": 375,
+      "score": 34.25,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/memory/sqlitestore.go:38-83",
+          "weight": 1
+        }
+      ],
+      "start_line": 38,
+      "end_line": 83,
+      "content_hash": "d9759802be6e2530eb393e9990ba0eddb39be5d40d20301d18f478fd658ee5a2"
+    },
+    {
+      "rel_path": "internal/ui/proxy.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/proxy.go\n// lines: 221-368\n// chunk: handleProxyOpenAIMessages\n// content_hash: fa30547641e2ebabcf2a65e78afcef45da93c687f27aa89f38e3a9dd7eaf7e13\n\n// handleProxyOpenAIMessages acts as a transparent proxy for OpenAI Chat Completions API.\n// It intercepts the client prompt, retrieves repository context using NeuroFS,\n// injects the XML context bundle as a system message, and forwards the request.\nfunc handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {\n  // 1. Read and decode the client payload\n  bodyBytes, err := io.ReadAll(r.Body)\n  if err != nil {\n    writeErr(w, http.StatusBadRequest, \"failed to read body: \"+err.Error())\n    return\n  }\n\n  var payload openAIChatReq\n  if err := json.Unmarshal(bodyBytes, \u0026payload); err != nil {\n    // If it doesn't parse as an OpenAI request, just forward the raw bytes to OpenAI\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // 2. Extract the last user message to use as a search query\n  var query string\n  for i := len(payload.Messages) - 1; i \u003e= 0; i-- {\n    if payload.Messages[i].Role == \"user\" {\n      query = extractOpenAIText(payload.Messages[i])\n      break\n    }\n  }\n\n  // If no query is found, just forward the raw request\n  if strings.TrimSpace(query) == \"\" {\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // 3. Gather repository context\n  repoDir := startupDir\n  if sandboxActive \u0026\u0026 pinnedRepo != \"\" {\n    repoDir = pinnedRepo\n  }\n  if repoDir == \"\" {\n    if cwd, err := os.Getwd(); err == nil {\n      repoDir = cwd\n    }\n  }\n\n  cfg, err := config.New(repoDir)\n  if err != nil {\n    fmt.Fprintf(os.Stderr, \"proxy: failed to initialize config at %s: %v\\n\", repoDir, err)\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // Auto-scan if the database is missing or empty. Also, schedule a background scan check.\n  dbPath := cfg.DBPath\n  if _, err := os.Stat(dbPath); os.IsNotExist(err) {\n    db, err := storage.Open(dbPath)\n    if err == nil {\n      _, _ = indexer.Run(cfg, db, indexer.Options{})\n      db.Close()\n    }\n  } else {\n    triggerBackgroundScan(cfg)\n  }\n\n  db, err := storage.Open(dbPath)\n  if err != nil {\n    fmt.Fprintf(os.Stderr, \"proxy: failed to open database at %s: %v\\n\", dbPath, err)\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n  defer db.Close()\n\n  files, err := db.AllFiles()\n  if err != nil || len(files) == 0 {\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // Get query embedding and all file embeddings\n  embClient := embeddings.NewClient(cfg.HybridMode)\n  queryEmb, _ := embClient.GetEmbedding(context.Background(), query)\n  fileEmbs, _ := db.AllEmbeddings()\n  rels, _ := db.AllRelations()\n\n  // 4. Rank and package the context bundle\n  rankOpts := ranking.Options{\n    Project:        taskflow.LoadProjectInfo(db),\n    ChangedFiles:   gitChangedFiles(cfg.RepoRoot),\n    QueryEmbedding: queryEmb,\n    Embeddings:     fileEmbs,\n    Relations:      rels,\n  }\n  ranked := ranking.RankWithOptions(files, query, rankOpts)\n\n  budget := config.DefaultBudget\n  bundle, err := packager.Pack(ranked, query, packager.Options{\n    Budget:           budget,\n    UpgradeWithSlack: true,\n    QueryTerms:       ranking.Tokenise(query),\n  })\n  if err != nil {\n    fmt.Fprintf(os.Stderr, \"proxy: pack error: %v\\n\", err)\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  var promptBuf bytes.Buffer\n  if err := output.WriteClaude(\u0026promptBuf, bundle, taskflow.BuildRepoSummary(cfg.RepoRoot, files, taskflow.LoadProjectInfo(db))); err != nil {\n    fmt.Fprintf(os.Stderr, \"proxy: render prompt error: %v\\n\", err)\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // 5. Inject the context bundle as a system message at the beginning of messages\n  contextText := promptBuf.String()\n  contextJSON, _ := json.Marshal(contextText)\n  systemMsg := openAIMessage{\n    Role:    \"system\",\n    Content: contextJSON,\n  }\n  payload.Messages = append([]openAIMessage{systemMsg}, payload.Messages...)\n\n  // Log proxy request statistics to DB and in-memory\n  totalBytes := int64(0)\n  for _, f := range files {\n    totalBytes += f.Size\n  }\n  before := int(totalBytes / 4)\n  after := bundle.Stats.TokensUsed\n  saved := before - after\n  if saved \u003c 0 {\n    saved = 0\n  }\n  // GPT-4o input tokens cost $2.50 per million\n  usd := float64(saved) * 2.50 / 1000000.0\n  _ = db.InsertProxyLog(time.Now(), payload.Model, query, before, after, saved, usd)\n\n  logProxyRequest(payload.Model, query, before, after)\n\n  // 6. Marshal the updated payload back to JSON\n  newBodyBytes, err := json.Marshal(payload)\n  if err != nil {\n    forwardOpenAIRequest(w, r, bodyBytes)\n    return\n  }\n\n  // 7. Forward the modified request to OpenAI\n  forwardOpenAIRequest(w, r, newBodyBytes)\n}",
+      "tokens": 1181,
+      "score": 32.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        },
+        {
+          "signal": "long_chunk_penalty",
+          "detail": "internal/ui/proxy.go:221-368",
+          "weight": 1
+        }
+      ],
+      "start_line": 221,
+      "end_line": 368,
+      "content_hash": "fa30547641e2ebabcf2a65e78afcef45da93c687f27aa89f38e3a9dd7eaf7e13"
+    },
+    {
+      "rel_path": "internal/memory/sqlitestore.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/memory/sqlitestore.go\n// lines: 85-122\n// chunk: SqliteStore.GetSessionID\n// content_hash: 9f67563764f9d5f52b16b0a461f5fa77ae8b6b089e908a97478d53d9e5997e81\n\n// GetSessionID resolves the current active session ID.\nfunc (s *SqliteStore) GetSessionID(ctx context.Context) (string, error) {\n  if envID := os.Getenv(\"NEUROFS_SESSION_ID\"); envID != \"\" {\n    return strings.TrimSpace(envID), nil\n  }\n\n  s.mu.Lock()\n  defer s.mu.Unlock()\n\n  sessionFile := filepath.Join(s.repoRoot, \".neurofs\", \"session.txt\")\n  if info, err := os.Stat(sessionFile); err == nil {\n    if time.Since(info.ModTime()) \u003c sessionDuration {\n      f, err := os.Open(sessionFile)\n      if err == nil {\n        defer f.Close()\n        data := make([]byte, 256)\n        n, _ := io.ReadAtLeast(f, data, 1)\n        id := strings.TrimSpace(string(data[:n]))\n        if id != \"\" {\n          return id, nil\n        }\n      }\n    }\n  }\n\n  // Generate a secure, random session ID\n  b := make([]byte, 8)\n  if _, err := rand.Read(b); err != nil {\n    return \"\", fmt.Errorf(\"generate random bytes: %w\", err)\n  }\n  newID := fmt.Sprintf(\"sess-%s\", hex.EncodeToString(b))\n\n  _ = os.MkdirAll(filepath.Dir(sessionFile), 0755)\n  if err := os.WriteFile(sessionFile, []byte(newID), 0644); err != nil {\n    return \"\", fmt.Errorf(\"write session file: %w\", err)\n  }\n  return newID, nil\n}",
+      "tokens": 337,
+      "score": 32.25,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/memory/sqlitestore.go:85-122",
+          "weight": 1
+        }
+      ],
+      "start_line": 85,
+      "end_line": 122,
+      "content_hash": "9f67563764f9d5f52b16b0a461f5fa77ae8b6b089e908a97478d53d9e5997e81"
+    },
+    {
+      "rel_path": "internal/memory/sqlitestore.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/memory/sqlitestore.go\n// lines: 134-176\n// chunk: SqliteStore.Append\n// content_hash: 26d25c1914682063b811b6178e5b6e52ed33d9f912d2db03a97e323a38ea7a23\n\n// Append logs a models.LedgerEntry to SQLite.\nfunc (s *SqliteStore) Append(ctx context.Context, entry models.LedgerEntry) error {\n  db, err := s.openDB(ctx)\n  if err != nil {\n    return err\n  }\n  defer db.Close()\n\n  // Reset sliding session window by touching session.txt\n  sessionFile := filepath.Join(s.repoRoot, \".neurofs\", \"session.txt\")\n  if _, err := os.Stat(sessionFile); err == nil {\n    now := time.Now()\n    _ = os.Chtimes(sessionFile, now, now)\n  }\n\n  filesJSON := \"[]\"\n  if len(entry.Files) \u003e 0 {\n    b, err := json.Marshal(entry.Files)\n    if err == nil {\n      filesJSON = string(b)\n    }\n  }\n\n  _, err = db.ExecContext(ctx, `\n    INSERT INTO session_ledger (timestamp, session_id, query, bundle_hash, files, command, outcome, notes)\n    VALUES (?, ?, ?, ?, ?, ?, ?, ?)\n  `,\n    entry.Timestamp.UTC().Format(time.RFC3339),\n    entry.SessionID,\n    entry.Query,\n    entry.BundleHash,\n    filesJSON,\n    entry.Command,\n    entry.Outcome,\n    entry.Notes,\n  )\n  if err != nil {\n    return fmt.Errorf(\"insert ledger entry: %w\", err)\n  }\n\n  s.checkAutoPrune(ctx)\n  return nil\n}",
+      "tokens": 315,
+      "score": 32.25,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/memory/sqlitestore.go:134-176",
+          "weight": 1
+        }
+      ],
+      "start_line": 134,
+      "end_line": 176,
+      "content_hash": "26d25c1914682063b811b6178e5b6e52ed33d9f912d2db03a97e323a38ea7a23"
+    },
+    {
+      "rel_path": "internal/ui/static/app.js",
+      "lang": "javascript",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/static/app.js\n// lines: 1703-1716\n// chunk: openInJournal\n// content_hash: 7753d09569136d671a19bbfdec881cf8512fec56e4f321b03f68d56a53713cd0\n\nasync function openInJournal(path, target = null) {\n state.journalFilter = \"all\";\n state.journalSearch = \"\";\n document.querySelectorAll(\"#journal-filter button\")\n  .forEach(b =\u003e b.classList.toggle(\"active\", b.dataset.filter === \"all\"));\n\n const searchInput = document.getElementById(\"journal-search\");\n if (searchInput) searchInput.value = \"\";\n\n state.pendingJournalFocus = path;\n switchTab(\"journal\");\n await loadJournal();\n await focusJournalCard(path, target);\n}",
+      "tokens": 157,
+      "score": 30.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/static/app.js:1703-1716",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/static/app.js:1703-1716",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/static/app.js:1703-1716",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/static/app.js:1703-1716",
+          "weight": 1
+        }
+      ],
+      "start_line": 1703,
+      "end_line": 1716,
+      "content_hash": "7753d09569136d671a19bbfdec881cf8512fec56e4f321b03f68d56a53713cd0"
+    },
+    {
+      "rel_path": "internal/ui/proxy.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/proxy.go\n// lines: 42-45\n// chunk: openAIMessage\n// content_hash: 342ceed2f49f88592f04d4af8186f9693c1d9391134bffedacd0a228b1b3419b\n\ntype openAIMessage struct {\n  Role    string          `json:\"role\"`\n  Content json.RawMessage `json:\"content\"`\n}",
+      "tokens": 67,
+      "score": 28.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/proxy.go:42-45",
+          "weight": 1
+        }
+      ],
+      "start_line": 42,
+      "end_line": 45,
+      "content_hash": "342ceed2f49f88592f04d4af8186f9693c1d9391134bffedacd0a228b1b3419b"
+    },
+    {
+      "rel_path": "internal/ui/proxy.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/proxy.go\n// lines: 47-52\n// chunk: openAIChatReq\n// content_hash: 4e60d1915c1fc80eb591b7385a7f8c396ab9f91f19f8f22d9084e7353fc29d18\n\ntype openAIChatReq struct {\n  Model       string          `json:\"model\"`\n  Messages    []openAIMessage `json:\"messages\"`\n  Temperature *float64        `json:\"temperature,omitempty\"`\n  Stream      bool            `json:\"stream,omitempty\"`\n}",
+      "tokens": 98,
+      "score": 28.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/proxy.go:47-52",
+          "weight": 1
+        }
+      ],
+      "start_line": 47,
+      "end_line": 52,
+      "content_hash": "4e60d1915c1fc80eb591b7385a7f8c396ab9f91f19f8f22d9084e7353fc29d18"
+    },
+    {
+      "rel_path": "internal/ui/static/app.js",
+      "lang": "javascript",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/static/app.js\n// lines: 1013-1038\n// chunk: loadJournal\n// content_hash: c8bd300cb54618ffa51d3580c5858660ea95793880f3b42199ec1f116d319221\n\nasync function loadJournal() {\n if (!state.repo) {\n  document.getElementById(\"journal-status\").textContent =\n   \"Set a repo in the Workspace tab.\";\n  document.getElementById(\"journal-body\").innerHTML =\n   `\u003cdiv class=\"journal-empty\"\u003eno workspace\u003c/div\u003e`;\n  return;\n }\n const status = document.getElementById(\"journal-status\");\n // If we already have records in memory (e.g. Records was visited first)\n // render from that cache so tab switches feel instant. The Refresh\n // button always forces a new fetch.\n if (!state.records.length) {\n  status.textContent = \"loading…\";\n  try {\n   const r = await j(\"GET\", `/api/records?repo=${encodeURIComponent(state.repo)}`);\n   state.records = r.records || [];\n  } catch (e) {\n   status.textContent = \"error: \" + e.message;\n   document.getElementById(\"journal-body\").innerHTML =\n    `\u003cdiv class=\"journal-empty\"\u003e${esc(e.message)}\u003c/div\u003e`;\n   return;\n  }\n }\n renderJournal();\n}",
+      "tokens": 269,
+      "score": 28.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/static/app.js:1013-1038",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/static/app.js:1013-1038",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/static/app.js:1013-1038",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/static/app.js:1013-1038",
+          "weight": 1
+        }
+      ],
+      "start_line": 1013,
+      "end_line": 1038,
+      "content_hash": "c8bd300cb54618ffa51d3580c5858660ea95793880f3b42199ec1f116d319221"
+    },
+    {
+      "rel_path": "internal/ui/static/app.js",
+      "lang": "javascript",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/static/app.js\n// lines: 1047-1063\n// chunk: journalMatches\n// content_hash: ccebfe60c521ea4f4ef6c96644a4e4e4775003880977d9ad9e6b4b6f073e78b8\n\nfunction journalMatches(rec) {\n const mode = (rec.mode || \"\").toLowerCase();\n const filter = state.journalFilter;\n if (filter !== \"all\") {\n  if (filter === \"unknown\" \u0026\u0026 mode) return false;\n  if (filter !== \"unknown\" \u0026\u0026 mode !== filter) return false;\n }\n const q = state.journalSearch;\n if (!q) return true;\n const hay = [\n  rec.title || \"\",\n  rec.brief || \"\",\n  rec.note  || \"\",\n  rec.question || \"\",\n ].join(\" \\u0001 \").toLowerCase();\n return hay.includes(q);\n}",
+      "tokens": 157,
+      "score": 28.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/static/app.js:1047-1063",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/static/app.js:1047-1063",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/static/app.js:1047-1063",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/static/app.js:1047-1063",
+          "weight": 1
+        }
+      ],
+      "start_line": 1047,
+      "end_line": 1063,
+      "content_hash": "ccebfe60c521ea4f4ef6c96644a4e4e4775003880977d9ad9e6b4b6f073e78b8"
+    }
+  ],
+  "stats": {
+    "files_considered": 12,
+    "files_included": 12,
+    "tokens_used": 3989,
+    "tokens_budget": 4000,
+    "compression_ratio": 0.8488104374520338
+  },
+  "repo": "/Users/gere/NeuroMFS",
+  "commit_sha": "6c7597d9d67e10e33143cbf7e5554946cb6674c1",
+  "generated_at": "2026-06-12T09:12:45.869802Z",
+  "bundle_hash": "49147c71eac4bcd94149102c8bdcfa056c6322699d657e9fe5617d076cf6a12a"
+}

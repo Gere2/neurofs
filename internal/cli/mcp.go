@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"runtime/debug"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/mcp"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/mcp"
 	"github.com/spf13/cobra"
 )
 

@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/contextladder"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/contextladder"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestParseExpandSpec(t *testing.T) {

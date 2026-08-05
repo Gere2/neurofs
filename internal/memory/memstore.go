@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // MemStore implements the Store interface in-memory for testing.
@@ -32,6 +32,10 @@ func (ms *MemStore) GetSessionID(ctx context.Context) (string, error) {
 
 // SaveSessionID overrides the active session ID.
 func (ms *MemStore) SaveSessionID(ctx context.Context, id string) error {
+	id, err := normalizeSessionID(id)
+	if err != nil {
+		return err
+	}
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 	ms.sessionID = id
@@ -40,6 +44,9 @@ func (ms *MemStore) SaveSessionID(ctx context.Context, id string) error {
 
 // Append logs a models.LedgerEntry to the in-memory store.
 func (ms *MemStore) Append(ctx context.Context, entry models.LedgerEntry) error {
+	if err := bindLedgerEntry(ctx, &entry); err != nil {
+		return err
+	}
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 	ms.entries = append(ms.entries, entry)
@@ -80,6 +87,10 @@ func (ms *MemStore) Search(ctx context.Context, term string) ([]models.LedgerEnt
 			strings.Contains(strings.ToLower(entry.Outcome), term) ||
 			strings.Contains(strings.ToLower(entry.Notes), term) ||
 			strings.Contains(strings.ToLower(entry.SessionID), term) ||
+			strings.Contains(strings.ToLower(entry.RunID.String()), term) ||
+			strings.Contains(strings.ToLower(string(entry.Correlation)), term) ||
+			strings.Contains(strings.ToLower(entry.Reason), term) ||
+			strings.Contains(strings.ToLower(entry.BundlePath), term) ||
 			strings.Contains(strings.ToLower(entry.BundleHash), term) {
 			match = true
 		} else {

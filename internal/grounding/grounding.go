@@ -21,30 +21,39 @@ package grounding
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/runid"
+	"github.com/Gere2/neurofs/internal/safefile"
 )
 
 // Kind classifies a grounding observation.
 const (
 	KindEdit     = "edit"
 	KindResponse = "response"
+
+	maxLedgerLineBytes = 1024 * 1024
 )
 
 // Event is one continuous-grounding observation. It is the persistence unit
 // the supervisor feed aggregates.
 type Event struct {
+	runid.Availability
 	Timestamp   time.Time `json:"timestamp"`
 	SessionID   string    `json:"session_id,omitempty"`
 	Origin      string    `json:"origin"` // e.g. "PostToolUse:Edit", "Stop", "manual"
 	Kind        string    `json:"kind"`   // KindEdit | KindResponse
+	BundlePath  string    `json:"bundle_path,omitempty"`
 	BundleHash  string    `json:"bundle_hash,omitempty"`
 	BundleQuery string    `json:"bundle_query,omitempty"`
 	Files       []string  `json:"files,omitempty"` // edited files, or cited files for a response
@@ -82,53 +91,89 @@ func Path(repoRoot string) string {
 
 // Append writes one event to the ledger, creating it if missing.
 func Append(repoRoot string, e Event) error {
+	return AppendContext(context.Background(), repoRoot, e)
+}
+
+// AppendContext appends an event after binding its run attribution. Existing
+// ledgers remain readable because the new fields are optional on decode.
+func AppendContext(ctx context.Context, repoRoot string, e Event) error {
+	attribution, err := runid.Bind(ctx, e.Availability)
+	if err != nil {
+		return fmt.Errorf("grounding: bind run identity: %w", err)
+	}
+	e.Availability = attribution
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
+	encoded, err := json.Marshal(e)
+	if err != nil {
+		return fmt.Errorf("grounding: encode event: %w", err)
+	}
 	p := Path(repoRoot)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return err
+		return fmt.Errorf("grounding: create ledger directory: %w", err)
 	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := safefile.OpenAppend(p, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("grounding: open ledger: %w", err)
 	}
-	defer f.Close()
-	enc, err := json.Marshal(e)
-	if err != nil {
-		return err
+	if _, err := f.Write(append(encoded, '\n')); err != nil {
+		return errors.Join(
+			fmt.Errorf("grounding: append ledger: %w", err),
+			closeLedger(f),
+		)
 	}
-	_, err = f.Write(append(enc, '\n'))
-	return err
+	if err := f.Sync(); err != nil {
+		return errors.Join(
+			fmt.Errorf("grounding: sync ledger: %w", err),
+			closeLedger(f),
+		)
+	}
+	return closeLedger(f)
 }
 
 // Read loads every event from the ledger. A missing file is "no events yet",
 // not an error.
-func Read(repoRoot string) ([]Event, error) {
+func Read(repoRoot string) (events []Event, retErr error) {
 	p := Path(repoRoot)
-	f, err := os.Open(p)
+	f, err := safefile.OpenRead(p)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("grounding: open ledger: %w", err)
 	}
-	defer f.Close()
-	var events []Event
+	defer func() {
+		if err := closeLedger(f); err != nil {
+			events = nil
+			retErr = errors.Join(retErr, err)
+		}
+	}()
+
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), maxLedgerLineBytes)
 	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
 			continue
 		}
 		var e Event
-		if err := json.Unmarshal([]byte(line), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
 			return nil, fmt.Errorf("grounding: decode %s: %w", p, err)
 		}
 		events = append(events, e)
 	}
-	return events, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("grounding: scan %s (line limit %d bytes): %w", p, maxLedgerLineBytes, err)
+	}
+	return events, nil
+}
+
+func closeLedger(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("grounding: close ledger: %w", err)
+	}
+	return nil
 }
 
 // ScoreEdit grounds an agent edit against the context bundle it was given:

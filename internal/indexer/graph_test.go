@@ -1,9 +1,12 @@
 package indexer
 
 import (
+	"fmt"
+	"reflect"
+	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestBuildRelationsRelativeTSImport(t *testing.T) {
@@ -104,5 +107,117 @@ func TestBuildRelationsUnresolvedImport(t *testing.T) {
 	rels := BuildRelations(files)
 	if len(rels) != 0 {
 		t.Errorf("expected 0 relations when imports cannot be resolved, got %v", rels)
+	}
+}
+
+func TestBuildRelationsAmbiguousFolderMatchesAreDeterministic(t *testing.T) {
+	files := []models.FileRecord{
+		{Path: "/repo/app/main.py", RelPath: "app/main.py", Lang: models.LangPython, Imports: []string{"crypto"}},
+		{Path: "/repo/vendor/crypto/second.py", RelPath: "vendor/crypto/second.py", Lang: models.LangPython},
+		{Path: "/repo/lib/crypto/first.py", RelPath: "lib/crypto/first.py", Lang: models.LangPython},
+		{Path: "/repo/vendor/crypto/third.py", RelPath: "vendor/crypto/third.py", Lang: models.LangPython},
+	}
+
+	want := []models.FileRelation{
+		{SourcePath: "/repo/app/main.py", TargetPath: "/repo/vendor/crypto/second.py", RelType: "import"},
+		{SourcePath: "/repo/app/main.py", TargetPath: "/repo/vendor/crypto/third.py", RelType: "import"},
+		{SourcePath: "/repo/app/main.py", TargetPath: "/repo/lib/crypto/first.py", RelType: "import"},
+	}
+	for run := 0; run < 20; run++ {
+		if got := BuildRelations(files); !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %d: ambiguous folder matches changed order:\n got: %#v\nwant: %#v", run, got, want)
+		}
+	}
+}
+
+func TestBuildRelationsAmbiguousFileFallbackIsDeterministic(t *testing.T) {
+	files := []models.FileRecord{
+		{Path: "/repo/app/main.py", RelPath: "app/main.py", Lang: models.LangPython, Imports: []string{"crypto"}},
+		{Path: "/repo/vendor/crypto.py", RelPath: "vendor/crypto.py", Lang: models.LangPython},
+		{Path: "/repo/lib/crypto.py", RelPath: "lib/crypto.py", Lang: models.LangPython},
+	}
+
+	want := []models.FileRelation{
+		{SourcePath: "/repo/app/main.py", TargetPath: "/repo/vendor/crypto.py", RelType: "import"},
+		{SourcePath: "/repo/app/main.py", TargetPath: "/repo/lib/crypto.py", RelType: "import"},
+	}
+	if got := BuildRelations(files); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ambiguous file fallback order:\n got: %#v\nwant: %#v", got, want)
+	}
+}
+
+func TestMatchingPathIndexEquivalentToSuffixPredicate(t *testing.T) {
+	paths := []string{
+		"crypto",
+		"lib/crypto",
+		"vendor/lib/crypto",
+		"foo/bar",
+		"bar",
+		"a//bar",
+		".",
+	}
+	exact := make(map[string][]int)
+	bySuffix := make(map[string][]int)
+	for id, path := range paths {
+		addPathIndex(exact, bySuffix, path, id)
+	}
+
+	imports := []string{
+		"crypto",
+		"example.com/acme/lib/crypto",
+		"lib/crypto",
+		"bar",
+		"x/foo/bar",
+		"/bar",
+		"a//bar",
+		"missing",
+	}
+	for _, imp := range imports {
+		var want []int
+		for id, path := range paths {
+			if path == imp ||
+				strings.HasSuffix(path, "/"+imp) ||
+				strings.HasSuffix(imp, "/"+path) {
+				want = append(want, id)
+			}
+		}
+		if got := matchingPathIDs(imp, exact, bySuffix); !reflect.DeepEqual(got, want) {
+			t.Errorf("import %q: got IDs %v, want %v", imp, got, want)
+		}
+	}
+}
+
+func BenchmarkBuildRelationsIndexedSuffixes(b *testing.B) {
+	const (
+		packageCount = 2_000
+		importCount  = 400
+	)
+	files := make([]models.FileRecord, 0, packageCount+1)
+	imports := make([]string, importCount)
+	for i := 0; i < packageCount; i++ {
+		dir := fmt.Sprintf("internal/pkg%04d", i)
+		files = append(files, models.FileRecord{
+			Path:    "/repo/" + dir + "/pkg.go",
+			RelPath: dir + "/pkg.go",
+			Lang:    models.LangGo,
+		})
+		if i < importCount {
+			imports[i] = "example.com/acme/project/" + dir
+		}
+	}
+	files = append(files, models.FileRecord{
+		Path:    "/repo/cmd/app/main.go",
+		RelPath: "cmd/app/main.go",
+		Lang:    models.LangGo,
+		Imports: imports,
+	})
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		relations := BuildRelations(files)
+		if len(relations) != importCount {
+			b.Fatalf("got %d relations, want %d", len(relations), importCount)
+		}
 	}
 }

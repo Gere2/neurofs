@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // ignoredDirsAnywhere contains directory names that should be skipped
@@ -243,9 +243,14 @@ type IgnoreMatcher struct {
 	patterns []string
 }
 
+const maxIgnoreFileSize int64 = 1 << 20
+
 // LoadIgnoreMatcher loads patterns from .neurofsignore in the repo root.
 func LoadIgnoreMatcher(repoRoot string) *IgnoreMatcher {
-	data, err := os.ReadFile(filepath.Join(repoRoot, ".neurofsignore"))
+	data, _, err := ReadRegularFileBounded(
+		filepath.Join(repoRoot, ".neurofsignore"),
+		maxIgnoreFileSize,
+	)
 	if err != nil {
 		return &IgnoreMatcher{}
 	}
@@ -331,6 +336,13 @@ func Walk(root string, fn func(path string, info os.FileInfo) error) error {
 			if ShouldSkipDirAt(root, path) {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+		// Never follow or index links and special files. filepath.Walk uses
+		// Lstat, so this check happens before any downstream os.ReadFile can
+		// follow a target outside the repository. Restricting callbacks to
+		// regular files also avoids blocking on FIFOs and device nodes.
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 			return nil
 		}
 		if matcher.Match(relPath, false) {

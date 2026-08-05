@@ -8,8 +8,9 @@ import (
 
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
 	"github.com/spf13/cobra"
 )
 
@@ -92,8 +93,8 @@ func newMemoryLogCmd(repoPath *string) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("resolve session: %w", err)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Successfully appended log entry to session %s.\n", sessionID)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Successfully appended log entry to session %s.\n", sessionID)
+			return err
 		},
 	}
 
@@ -120,35 +121,36 @@ func newMemorySearchCmd(repoPath *string) *cobra.Command {
 				return fmt.Errorf("memory search: %w", err)
 			}
 
+			w := newReportWriter(cmd.OutOrStdout())
 			if len(results) == 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "No matching entries found.\n")
-				return nil
+				w.printf("No matching entries found.\n")
+				return w.err
 			}
 
 			for _, e := range results {
 				tStr := e.Timestamp.Format("2006-01-02 15:04:05")
-				fmt.Fprintf(cmd.OutOrStdout(), "--- [%s] Session: %s ---\n", tStr, e.SessionID)
+				w.printf("--- [%s] Session: %s ---\n", tStr, e.SessionID)
 				if e.Query != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Query:   %s\n", e.Query)
+					w.printf("  Query:   %s\n", e.Query)
 				}
 				if e.BundleHash != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Bundle:  %s\n", e.BundleHash)
+					w.printf("  Bundle:  %s\n", e.BundleHash)
 				}
 				if len(e.Files) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Files:   %s\n", strings.Join(e.Files, ", "))
+					w.printf("  Files:   %s\n", strings.Join(e.Files, ", "))
 				}
 				if e.Command != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Command: %s\n", e.Command)
+					w.printf("  Command: %s\n", e.Command)
 				}
 				if e.Outcome != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Outcome: %s\n", e.Outcome)
+					w.printf("  Outcome: %s\n", e.Outcome)
 				}
 				if e.Notes != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Notes:   %s\n", e.Notes)
+					w.printf("  Notes:   %s\n", e.Notes)
 				}
 			}
 
-			return nil
+			return w.err
 		},
 	}
 
@@ -177,13 +179,16 @@ func newMemoryExportCmd(repoPath *string) *cobra.Command {
 			}
 
 			if outPath != "" {
-				err = os.WriteFile(outPath, []byte(res), 0644)
-				if err != nil {
+				if err := atomicfile.WriteFile(outPath, []byte(res), 0o600); err != nil {
 					return fmt.Errorf("memory export write file: %w", err)
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "Successfully exported session context to %s.\n", outPath)
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Successfully exported session context to %s.\n", outPath); err != nil {
+					return fmt.Errorf("memory export report: %w", err)
+				}
 			} else {
-				fmt.Fprint(cmd.OutOrStdout(), res)
+				if _, err := fmt.Fprint(cmd.OutOrStdout(), res); err != nil {
+					return fmt.Errorf("memory export: %w", err)
+				}
 			}
 
 			return nil
@@ -220,35 +225,36 @@ func newMemoryListCmd(repoPath *string) *cobra.Command {
 				return fmt.Errorf("read entries: %w", err)
 			}
 
+			w := newReportWriter(cmd.OutOrStdout())
 			found := false
 			for _, e := range entries {
 				found = true
 				tStr := e.Timestamp.Format("2006-01-02 15:04:05")
-				fmt.Fprintf(cmd.OutOrStdout(), "--- [%s] ---\n", tStr)
+				w.printf("--- [%s] ---\n", tStr)
 				if e.Query != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Query:   %s\n", e.Query)
+					w.printf("  Query:   %s\n", e.Query)
 				}
 				if e.BundleHash != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Bundle:  %s\n", e.BundleHash)
+					w.printf("  Bundle:  %s\n", e.BundleHash)
 				}
 				if len(e.Files) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Files:   %s\n", strings.Join(e.Files, ", "))
+					w.printf("  Files:   %s\n", strings.Join(e.Files, ", "))
 				}
 				if e.Command != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Command: %s\n", e.Command)
+					w.printf("  Command: %s\n", e.Command)
 				}
 				if e.Outcome != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Outcome: %s\n", e.Outcome)
+					w.printf("  Outcome: %s\n", e.Outcome)
 				}
 				if e.Notes != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  Notes:   %s\n", e.Notes)
+					w.printf("  Notes:   %s\n", e.Notes)
 				}
 			}
 
 			if !found {
-				fmt.Fprintf(cmd.OutOrStdout(), "No entries found for session ID: %s\n", sessionID)
+				w.printf("No entries found for session ID: %s\n", sessionID)
 			}
-			return nil
+			return w.err
 		},
 	}
 
@@ -277,8 +283,8 @@ func newMemoryPruneCmd(repoPath *string) *cobra.Command {
 				return fmt.Errorf("memory prune: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Successfully pruned %d entries older than %d days.\n", count, days)
-			return nil
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "Successfully pruned %d entries older than %d days.\n", count, days)
+			return err
 		},
 	}
 

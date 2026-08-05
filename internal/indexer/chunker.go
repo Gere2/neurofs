@@ -13,12 +13,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	codeParser "github.com/neuromfs/neuromfs/internal/parser"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/models"
+	codeParser "github.com/Gere2/neurofs/internal/parser"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 var chunkIDUnsafe = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
@@ -256,14 +256,18 @@ func parentSymbol(symbol string) (string, bool) {
 
 func persistChunks(ctx context.Context, db *storage.DB, embClient *embeddings.Client, rec models.FileRecord, content string) (int, error) {
 	chunks := BuildChunks(rec.Path, rec.RelPath, rec.Lang, content, rec.IndexedAt)
-	if err := db.UpdateChunks(rec.Path, chunks); err != nil {
+	if err := db.UpsertFileAndChunks(rec, chunks); err != nil {
 		return 0, err
 	}
 	for _, chunk := range chunks {
 		if strings.TrimSpace(chunk.Content) == "" {
 			continue
 		}
-		if _, ok, err := db.GetChunkEmbedding(chunk.ContentHash); err != nil {
+		if _, ok, err := db.GetChunkEmbeddingForProvider(
+			chunk.ContentHash,
+			embClient.ProviderName(),
+			embClient.ModelName(),
+		); err != nil {
 			return len(chunks), err
 		} else if ok {
 			continue
@@ -564,12 +568,20 @@ func findJSDeclEnd(content string, startOffset int) (braceOffset int, semiOffset
 	var quote byte
 	inLineComment := false
 	inBlockComment := false
+	parenDepth := 0
+	bracketDepth := 0
+	var lastSignificant byte
 
 	for i := startOffset; i < len(content); i++ {
 		c := content[i]
 		if inLineComment {
 			if c == '\n' {
 				inLineComment = false
+				if parenDepth == 0 && bracketDepth == 0 &&
+					!jsDeclarationContinuesAfter(lastSignificant) &&
+					nextJSDeclarationStart(content, i+1) >= 0 {
+					return -1, i
+				}
 			}
 			continue
 		}
@@ -606,18 +618,139 @@ func findJSDeclEnd(content string, startOffset int) (braceOffset int, semiOffset
 		if c == '"' || c == '\'' || c == '`' {
 			inString = true
 			quote = c
+			lastSignificant = c
 			continue
 		}
 
-		// check for brace or semicolon
-		if c == '{' {
-			return i, -1
-		}
-		if c == ';' {
-			return -1, i
+		switch c {
+		case '(':
+			parenDepth++
+		case ')':
+			if parenDepth > 0 {
+				parenDepth--
+			}
+		case '[':
+			bracketDepth++
+		case ']':
+			if bracketDepth > 0 {
+				bracketDepth--
+			}
+		case '{':
+			// Object literals and destructuring patterns in a parameter list
+			// are part of the signature, not the declaration's body.
+			if parenDepth == 0 && bracketDepth == 0 {
+				return i, -1
+			}
+		case ';':
+			if parenDepth == 0 && bracketDepth == 0 {
+				return -1, i
+			}
+		case '\n':
+			// TypeScript commonly omits semicolons. Stop an unbraced
+			// declaration before the next top-level declaration instead of
+			// borrowing that declaration's first body brace.
+			if parenDepth == 0 && bracketDepth == 0 &&
+				!jsDeclarationContinuesAfter(lastSignificant) &&
+				nextJSDeclarationStart(content, i+1) >= 0 {
+				return -1, i
+			}
+		default:
+			if !isJSSpace(c) {
+				lastSignificant = c
+			}
 		}
 	}
 	return -1, -1
+}
+
+func jsDeclarationContinuesAfter(last byte) bool {
+	switch last {
+	case '=', '>', ',', '.', '(', '[', '|', '&', '?', ':', '+', '-', '*', '/', '%', '!':
+		return true
+	default:
+		return false
+	}
+}
+
+func nextJSDeclarationStart(content string, offset int) int {
+	for offset < len(content) {
+		for offset < len(content) && isJSSpace(content[offset]) {
+			offset++
+		}
+		if offset >= len(content) {
+			return -1
+		}
+		if offset+1 < len(content) && content[offset] == '/' {
+			switch content[offset+1] {
+			case '/':
+				offset += 2
+				for offset < len(content) && content[offset] != '\n' {
+					offset++
+				}
+				continue
+			case '*':
+				end := strings.Index(content[offset+2:], "*/")
+				if end < 0 {
+					return -1
+				}
+				offset += end + 4
+				continue
+			}
+		}
+		break
+	}
+
+	if offset >= len(content) {
+		return -1
+	}
+	rest := content[offset:]
+	if hasJSWordPrefix(rest, "export") ||
+		hasJSWordPrefix(rest, "import") ||
+		hasJSWordPrefix(rest, "function") ||
+		hasJSWordPrefix(rest, "class") ||
+		hasJSWordPrefix(rest, "interface") ||
+		hasJSWordPrefix(rest, "type") ||
+		hasJSWordPrefix(rest, "enum") ||
+		hasJSWordPrefix(rest, "namespace") ||
+		hasJSWordPrefix(rest, "module") ||
+		hasJSWordPrefix(rest, "const") ||
+		hasJSWordPrefix(rest, "let") ||
+		hasJSWordPrefix(rest, "var") ||
+		hasJSWordPrefix(rest, "declare") ||
+		hasJSWordPrefix(rest, "abstract") ||
+		hasJSWordPrefix(rest, "async") {
+		return offset
+	}
+	return -1
+}
+
+func hasJSWordPrefix(s, word string) bool {
+	if !strings.HasPrefix(s, word) {
+		return false
+	}
+	if len(s) == len(word) {
+		return true
+	}
+	next := s[len(word)]
+	switch {
+	case next >= 'a' && next <= 'z',
+		next >= 'A' && next <= 'Z',
+		next >= '0' && next <= '9',
+		next == '_',
+		next == '$':
+		return false
+	default:
+		return true
+	}
+}
+
+func isJSSpace(c byte) bool {
+	switch c {
+	case ' ', '\t', '\r', '\n':
+		return true
+	default:
+		return false
+	}
 }
 
 func lineOffsets(content string) []int {
@@ -707,8 +840,14 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 			baseIndent = 0
 		}
 
+		// A Python signature can span multiple lines, with the closing
+		// parenthesis back at the declaration's indentation. Do not mistake
+		// that closing line for the next declaration: first locate the
+		// top-level colon that opens the suite, then apply indentation rules
+		// only to the body that follows.
+		headerEnd := pythonHeaderEndLine(lines, sym.Line)
 		endLine := len(lines)
-		for L := sym.Line + 1; L <= len(lines); L++ {
+		for L := headerEnd + 1; L <= len(lines); L++ {
 			line := lines[L-1]
 			indent := indentationLevel(line)
 			if indent >= 0 && indent <= baseIndent {
@@ -763,6 +902,51 @@ func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) [
 		return chunks[i].ChunkID < chunks[j].ChunkID
 	})
 	return chunks
+}
+
+func pythonHeaderEndLine(lines []string, startLine int) int {
+	if startLine < 1 || startLine > len(lines) {
+		return startLine
+	}
+	depth := 0
+	var quote rune
+	escaped := false
+	for lineNo := startLine; lineNo <= len(lines); lineNo++ {
+		for _, r := range lines[lineNo-1] {
+			if escaped {
+				escaped = false
+				continue
+			}
+			if quote != 0 {
+				if r == '\\' {
+					escaped = true
+					continue
+				}
+				if r == quote {
+					quote = 0
+				}
+				continue
+			}
+			switch r {
+			case '\'', '"':
+				quote = r
+			case '#':
+				goto nextLine
+			case '(', '[', '{':
+				depth++
+			case ')', ']', '}':
+				if depth > 0 {
+					depth--
+				}
+			case ':':
+				if depth == 0 {
+					return lineNo
+				}
+			}
+		}
+	nextLine:
+	}
+	return startLine
 }
 
 func indentationLevel(line string) int {

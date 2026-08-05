@@ -4,16 +4,16 @@ package agentcontext
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // Transport controls how expansion instructions are rendered.
@@ -63,7 +63,7 @@ func BuildPatchPrompt(repoRoot, sessionID string, result taskflow.Result, opts O
 	if err != nil {
 		return PatchPrompt{}, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -96,7 +96,7 @@ func BuildPatchPrompt(repoRoot, sessionID string, result taskflow.Result, opts O
 			continue
 		}
 		if !seen[rec.RelPath] {
-			contentBytes, err := os.ReadFile(rec.Path)
+			contentBytes, _, err := fsutil.ReadIndexedFileBounded(rec, config.MaxFileSize)
 			if err == nil {
 				baselineTokens += tokenbudget.EstimateTokens(string(contentBytes))
 			}
@@ -127,7 +127,7 @@ func BuildPatchPrompt(repoRoot, sessionID string, result taskflow.Result, opts O
 	for relPath := range seen {
 		rec := records[relPath]
 		chunks, _ := db.GetChunksForFile(rec.Path)
-		contentBytes, _ := os.ReadFile(rec.Path)
+		contentBytes, _, _ := fsutil.ReadIndexedFileBounded(rec, config.MaxFileSize)
 		logic := contextmap.Build(rec, files, chunks, rels, string(contentBytes))
 		for _, test := range logic.RelatedTests {
 			probableTests[test] = true

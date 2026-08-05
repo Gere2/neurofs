@@ -1,8 +1,5 @@
-# CI runs the same gates a local `make check-retrieval` enforces, so a PR
-# cannot silently regress the retrieval quality the loop has accumulated.
-# The tuned weight files (.neurofs/*.json) are committed on purpose — the
-# thresholds below assume the tuned engine (defaults measure ~28 recall
-# points lower on this repo; see docs/self_improvement.md).
+# CI keeps source hygiene, runtime safety, coverage, retrieval economics and
+# the pivot-readiness oracle reproducible from one clean checkout.
 name: ci
 
 on:
@@ -10,31 +7,83 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  LANG: C.UTF-8
+  NEUROFS_EMBEDDING_PROVIDER: mock
+  TZ: UTC
+
 jobs:
-  test:
+  quality:
+    name: quality
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Install ripgrep (fact-validation guards under test depend on it)
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
-      - name: Unit tests
-        run: go test ./...
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      - name: Formatting
+        run: make fmt-check
+      - name: Module consistency
+        run: make mod-check
+      - name: Static analysis
+        run: make lint
+      - name: Vet
+        run: make vet
+      - name: Race detector
+        run: make race
+      - name: Coverage
+        run: make coverage COVERAGE_MIN=60.0
+      - name: Reachable vulnerability scan
+        run: make vuln
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.out
+          if-no-files-found: warn
+          retention-days: 14
 
   retrieval-gates:
+    name: retrieval and economy
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: Install ripgrep (exact-signal dependency of retrieval)
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
-      - name: Build
-        run: make build
-      - name: Index the repo
-        run: ./bin/neurofs scan .
-      - name: Retrieval regression gates
-        run: make check-retrieval
+          cache: true
+          cache-dependency-path: go.sum
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+      - name: Retrieval and iso-recall economy gates
+        run: make check-retrieval check-economy
+      - name: Pivot-readiness oracle
+        run: |
+          set -o pipefail
+          ./bin/neurofs gate --json | tee gate-report.json
+      - name: Upload pivot-readiness report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pivot-readiness
+          path: gate-report.json
+          if-no-files-found: warn
+          retention-days: 30

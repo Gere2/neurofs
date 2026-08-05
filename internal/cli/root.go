@@ -40,6 +40,7 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newProxyCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newG5SourceHashCmd())
 
 	return root
 }

@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/Gere2/neurofs/internal/config"
 )
 
 // registerAPI wires every endpoint onto mux. The routes are flat and match
@@ -72,7 +72,10 @@ func getOnly(fn http.HandlerFunc) http.HandlerFunc {
 // caught by either Origin or Sec-Fetch-Site.
 func safeOrigin(allowedOrigins map[string]bool, fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && !allowedOrigins[origin] {
+		if origin := r.Header.Get("Origin"); origin != "" &&
+			!allowedOrigins[origin] &&
+			origin != "http://"+r.Host &&
+			origin != "https://"+r.Host {
 			writeErr(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
@@ -176,7 +179,7 @@ func mustRepo(w http.ResponseWriter, repo string) (*config.Config, bool) {
 // client that smuggles a second object (or junk) after the payload cannot
 // slip past a handler that only reads the first.
 func decode(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, 8<<20) // 8 MB
+	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -186,4 +189,23 @@ func decode(r *http.Request, v any) error {
 		return fmt.Errorf("body must contain a single JSON object")
 	}
 	return nil
+}
+
+func readLimitedBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	if r.ContentLength > maxRequestBodyBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return nil, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err == nil {
+		return body, true
+	}
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+	} else {
+		writeErr(w, http.StatusBadRequest, "failed to read body: "+err.Error())
+	}
+	return nil, false
 }

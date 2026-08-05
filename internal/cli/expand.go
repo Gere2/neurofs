@@ -2,15 +2,16 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextladder"
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/contextusage"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextladder"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/contextusage"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -30,7 +31,7 @@ func newExpandCmd() *cobra.Command {
 outline by default, line-ranged excerpt when a range/hash is provided, or
 full file when explicitly requested.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			cfg, err := config.New(repoPath)
 			if err != nil {
 				return fmt.Errorf("expand: %w", err)
@@ -46,7 +47,11 @@ full file when explicitly requested.`,
 			if err != nil {
 				return fmt.Errorf("expand: open index: %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("expand: close index: %w", err))
+				}
+			}()
 
 			files, err := db.AllFiles()
 			if err != nil {
@@ -66,7 +71,7 @@ full file when explicitly requested.`,
 			if err != nil {
 				return fmt.Errorf("expand: load chunks: %w", err)
 			}
-			contentBytes, err := os.ReadFile(rec.Path)
+			contentBytes, _, err := fsutil.ReadIndexedFileBounded(rec, config.MaxFileSize)
 			if err != nil {
 				return fmt.Errorf("expand: read %s: %w", rec.RelPath, err)
 			}
@@ -87,7 +92,9 @@ full file when explicitly requested.`,
 						return err
 					}
 				} else {
-					contextladder.WriteOutline(cmd.OutOrStdout(), logic)
+					if err := contextladder.WriteOutline(cmd.OutOrStdout(), logic); err != nil {
+						return fmt.Errorf("expand: write outline: %w", err)
+					}
 				}
 			case contextladder.ModeExcerpt:
 				out, err := contextladder.BuildExcerpt(rec, chunks, content, spec)
@@ -100,7 +107,9 @@ full file when explicitly requested.`,
 						return err
 					}
 				} else {
-					contextladder.WriteExpandedContent(cmd.OutOrStdout(), out)
+					if err := contextladder.WriteExpandedContent(cmd.OutOrStdout(), out); err != nil {
+						return fmt.Errorf("expand: write excerpt: %w", err)
+					}
 				}
 			case contextladder.ModeFull:
 				out, err := contextladder.BuildFull(rec, content, spec)
@@ -113,7 +122,9 @@ full file when explicitly requested.`,
 						return err
 					}
 				} else {
-					contextladder.WriteExpandedContent(cmd.OutOrStdout(), out)
+					if err := contextladder.WriteExpandedContent(cmd.OutOrStdout(), out); err != nil {
+						return fmt.Errorf("expand: write full file: %w", err)
+					}
 				}
 			}
 			if session != "" {

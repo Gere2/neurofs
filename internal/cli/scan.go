@@ -1,12 +1,13 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ source files, and persists the index in .neurofs/index.db.
 
 Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			if len(args) > 0 {
 				repoPath = args[0]
 			}
@@ -41,7 +42,11 @@ Run this once before using 'ask' or 'pack'. Re-running updates the index.`,
 			if err != nil {
 				return fmt.Errorf("scan: %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("scan: close index: %w", err))
+				}
+			}()
 
 			fmt.Fprintf(os.Stderr, "NeuroFS — scanning %s\n", cfg.RepoRoot)
 

@@ -1,0 +1,633 @@
+{
+  "query": "how does the gate pool replay drift samples from records pairs and the grounding ledger",
+  "budget": 4000,
+  "fragments": [
+    {
+      "rel_path": "internal/grounding/grounding.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/grounding/grounding.go\n// lines: 187-203\n// chunk: Aggregate\n// content_hash: 21a7129a7693b0b93d665f55a1fccb256c1a1473d8c79c1fd9c5806fba1b2ad4\n\n// Aggregate is the rolled-up supervisor view of the grounding ledger.\ntype Aggregate struct {\n  Events int `json:\"events\"`\n\n  Edits          int     `json:\"edits\"`\n  EditsInContext int     `json:\"edits_in_context\"`\n  EditCoverage   float64 `json:\"edit_coverage\"` // edits_in_context / edits\n  MeanEditDrift  float64 `json:\"mean_edit_drift\"`\n\n  Responses        int     `json:\"responses\"`\n  MeanGroundedResp float64 `json:\"mean_grounded_response\"`\n  MeanRespDrift    float64 `json:\"mean_response_drift\"`\n\n  // Concerning is the count of events that did not clear the per-event bar\n  // (an edit outside context, or a poorly grounded response).\n  Concerning int `json:\"concerning\"`\n}",
+      "tokens": 211,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/grounding/grounding.go:187-203",
+          "weight": 1
+        }
+      ],
+      "start_line": 187,
+      "end_line": 203,
+      "content_hash": "21a7129a7693b0b93d665f55a1fccb256c1a1473d8c79c1fd9c5806fba1b2ad4"
+    },
+    {
+      "rel_path": "internal/ui/api_replay.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/api_replay.go\n// lines: 131-157\n// chunk: recordRow\n// content_hash: 04ce46393107624b79c8289651bbc4867b8c11b4518d2bc3476767b026a6ffa3\n\ntype recordRow struct {\n  Path          string  `json:\"path\"`\n  Timestamp     string  `json:\"timestamp\"`\n  Question      string  `json:\"question\"`\n  Model         string  `json:\"model\"`\n  Mode          string  `json:\"mode\"` // \"\" for legacy records — always emitted so the UI can filter\n  BundleHash    string  `json:\"bundle_hash\"`\n  GroundedRatio float64 `json:\"grounded_ratio\"`\n  DriftRate     float64 `json:\"drift_rate\"`\n  AnswerRecall  float64 `json:\"answer_recall\"`\n  ExpectsFacts  bool    `json:\"expects_facts\"`\n\n  // Human annotations. Always emitted (possibly \"\"), trimmed server-side\n  // to keep the records listing payload small; the UI truncates further\n  // for its table rows and gets the full text via the Compare endpoint.\n  Title string `json:\"title\"`\n  Brief string `json:\"brief\"`\n  Note  string `json:\"note\"`\n\n  // Parent linkage. Always emitted (possibly \"\"). ParentRecord is the\n  // absolute path of the record this run was resumed from, so the UI can\n  // match it against another row's Path to render a clickable breadcrumb.\n  // ParentTitle is a frozen snapshot captured at resume time — survives\n  // if the parent record is later renamed or deleted.\n  ParentRecord string `json:\"parent_record\"`\n  ParentTitle  string `json:\"parent_title\"`\n}",
+      "tokens": 357,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/api_replay.go:131-157",
+          "weight": 1
+        }
+      ],
+      "start_line": 131,
+      "end_line": 157,
+      "content_hash": "04ce46393107624b79c8289651bbc4867b8c11b4518d2bc3476767b026a6ffa3"
+    },
+    {
+      "rel_path": "internal/ui/api_replay.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/api_replay.go\n// lines: 159-203\n// chunk: handleRecords\n// content_hash: addeb17fa96e4eb0a5c74809d135862185b04b1ca21bf4fecae6671ac717ee8a\n\nfunc handleRecords(w http.ResponseWriter, r *http.Request) {\n  repo := r.URL.Query().Get(\"repo\")\n  cfg, ok := mustRepo(w, repo)\n  if !ok {\n    return\n  }\n  dir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)\n  paths, err := audit.ListRecords(dir)\n  if err != nil {\n    writeErr(w, http.StatusInternalServerError, err.Error())\n    return\n  }\n\n  rows := make([]recordRow, 0, len(paths))\n  for _, p := range paths {\n    rec, err := audit.LoadRecord(p)\n    if err != nil {\n      continue\n    }\n    rows = append(rows, recordRow{\n      Path:          p,\n      Timestamp:     rec.Timestamp.Local().Format(\"2006-01-02 15:04:05\"),\n      Question:      rec.Question,\n      Model:         rec.Model,\n      Mode:          rec.Mode,\n      BundleHash:    rec.BundleHash,\n      GroundedRatio: rec.GroundedRatio,\n      DriftRate:     rec.Drift.Rate,\n      AnswerRecall:  rec.AnswerRecall,\n      ExpectsFacts:  len(rec.ExpectsFacts) \u003e 0,\n      Title:         rec.Title,\n      // Brief/Note can be long; ship a short preview on the list\n      // endpoint. The Compare endpoint loads the full record so the\n      // UI never truly loses the original text.\n      Brief:        previewText(rec.Brief, 280),\n      Note:         previewText(rec.Note, 280),\n      ParentRecord: rec.ParentRecord,\n      ParentTitle:  rec.ParentTitle,\n    })\n  }\n  // Most recent first — ListRecords returns sorted ascending by name/time.\n  sort.Slice(rows, func(i, j int) bool { return rows[i].Path \u003e rows[j].Path })\n\n  writeJSON(w, http.StatusOK, map[string]any{\"records\": rows})\n}",
+      "tokens": 428,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/api_replay.go:159-203",
+          "weight": 1
+        }
+      ],
+      "start_line": 159,
+      "end_line": 203,
+      "content_hash": "addeb17fa96e4eb0a5c74809d135862185b04b1ca21bf4fecae6671ac717ee8a"
+    },
+    {
+      "rel_path": "internal/grounding/grounding.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/grounding/grounding.go\n// lines: 63-75\n// chunk: Event.Grounded\n// content_hash: 00ab143a33730deb1b085ccf25c188bc0851c24afb2199912b15de016f5f3eeb\n\n// Grounded reports whether this event clears a simple per-event bar: for an\n// edit, the file was in context; for a response, grounded \u003e= 0.5 and drift is\n// not dominant. It is a coarse flag for the feed's ✓/· marks, not the verdict.\nfunc (e Event) Grounded() bool {\n  switch e.Kind {\n  case KindEdit:\n    return e.FileInContext != nil \u0026\u0026 *e.FileInContext\n  case KindResponse:\n    return e.GroundedRatio \u003e= 0.5 \u0026\u0026 e.DriftRate \u003c 0.5\n  default:\n    return false\n  }\n}",
+      "tokens": 159,
+      "score": 42.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/grounding/grounding.go:63-75",
+          "weight": 1
+        }
+      ],
+      "start_line": 63,
+      "end_line": 75,
+      "content_hash": "00ab143a33730deb1b085ccf25c188bc0851c24afb2199912b15de016f5f3eeb"
+    },
+    {
+      "rel_path": "internal/ui/api_replay.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/api_replay.go\n// lines: 19-41\n// chunk: replayReq\n// content_hash: 29707eabbdd20e3c38ad33cb5340617024c49b74708e13eb3c99f275fb478afc\n\ntype replayReq struct {\n  Repo       string `json:\"repo\"`\n  BundlePath string `json:\"bundle_path\"`\n  Response   string `json:\"response\"`\n  Model      string `json:\"model\"`\n  Mode       string `json:\"mode\"`  // strategy | build | review | \"\"\n  Facts      string `json:\"facts\"` // comma-separated\n  Save       bool   `json:\"save\"`\n\n  // Human annotations captured from the UI. All optional; empty strings\n  // simply leave the corresponding field on the record unset. Length\n  // caps are applied server-side so a textarea paste cannot bloat the\n  // on-disk JSON past a reasonable limit.\n  Title string `json:\"title\"`\n  Brief string `json:\"brief\"`\n  Note  string `json:\"note\"`\n\n  // Parent linkage. Both optional; an empty ParentRecord leaves the\n  // child record unstamped (legacy behaviour). Validated server-side\n  // against the repo's records dir — a forged path is silently dropped.\n  ParentRecord   string   `json:\"parent_record\"`\n  InheritedFocus []string `json:\"inherited_focus\"`\n}",
+      "tokens": 287,
+      "score": 42.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/ui/api_replay.go:19-41",
+          "weight": 1
+        }
+      ],
+      "start_line": 19,
+      "end_line": 41,
+      "content_hash": "29707eabbdd20e3c38ad33cb5340617024c49b74708e13eb3c99f275fb478afc"
+    },
+    {
+      "rel_path": "internal/gate/gate.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/gate/gate.go\n// lines: 333-339\n// chunk: DriftSample\n// content_hash: 49e296d978ef1d904db5b975f022b9deb39ced806dddbaedc55a142cf8c5218f\n\n// DriftSample is one drift observation feeding G4, tagged with where it came\n// from so the verdict can say which pipeline produced the evidence.\ntype DriftSample struct {\n  Origin string  // \"record\" | \"pair\" | \"grounding\"\n  Label  string  // human handle: question, pair stem, or session id\n  Rate   float64 // unknown / (known + unknown), as produced by audit.DetectDrift\n}",
+      "tokens": 133,
+      "score": 41.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/gate/gate.go:333-339",
+          "weight": 1
+        }
+      ],
+      "start_line": 333,
+      "end_line": 339,
+      "content_hash": "49e296d978ef1d904db5b975f022b9deb39ced806dddbaedc55a142cf8c5218f"
+    },
+    {
+      "rel_path": "internal/gate/gate.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/gate/gate.go\n// lines: 341-348\n// chunk: SamplesFromRecords\n// content_hash: afea055fea574265976a4fdea399b106615dea99fd54614ee3b242a5db12cf5c\n\n// SamplesFromRecords projects persisted audit records onto drift samples.\nfunc SamplesFromRecords(records []audit.AuditRecord) []DriftSample {\n  out := make([]DriftSample, 0, len(records))\n  for _, r := range records {\n    out = append(out, DriftSample{Origin: \"record\", Label: r.Question, Rate: r.Drift.Rate})\n  }\n  return out\n}",
+      "tokens": 123,
+      "score": 41.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/gate/gate.go:341-348",
+          "weight": 1
+        }
+      ],
+      "start_line": 341,
+      "end_line": 348,
+      "content_hash": "afea055fea574265976a4fdea399b106615dea99fd54614ee3b242a5db12cf5c"
+    },
+    {
+      "rel_path": "internal/gate/gate.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/gate/gate.go\n// lines: 350-387\n// chunk: CollectPairDrift\n// content_hash: af0a5d9984c72455554bb563ca69d05416c371372b8d267f984072eac87a6cab\n\n// CollectPairDrift walks responsesDir for saved model responses and pairs each\n// one by file stem with a bundle snapshot in bundlesDir (responses/x.md ↔\n// bundles/x.json). Each pair is re-scored with audit.DetectDrift against the\n// bundle bytes on disk, so the gate measures the history itself rather than\n// trusting a verdict persisted earlier. Responses without a matching bundle\n// are skipped — there is nothing hermetic to score them against.\nfunc CollectPairDrift(bundlesDir, responsesDir string) ([]DriftSample, error) {\n  entries, err := os.ReadDir(responsesDir)\n  if os.IsNotExist(err) {\n    return nil, nil\n  }\n  if err != nil {\n    return nil, fmt.Errorf(\"gate: read responses dir: %w\", err)\n  }\n  var samples []DriftSample\n  for _, ent := range entries {\n    if ent.IsDir() {\n      continue\n    }\n    stem := strings.TrimSuffix(ent.Name(), filepath.Ext(ent.Name()))\n    if stem == \"\" {\n      continue\n    }\n    bundlePath := filepath.Join(bundlesDir, stem+\".json\")\n    bundle, err := loadBundleFile(bundlePath)\n    if err != nil {\n      continue // orphan response or unreadable bundle — not scoreable\n    }\n    respBytes, err := os.ReadFile(filepath.Join(responsesDir, ent.Name()))\n    if err != nil {\n      continue\n    }\n    drift := audit.DetectDrift(string(respBytes), bundle)\n    samples = append(samples, DriftSample{Origin: \"pair\", Label: stem, Rate: drift.Rate})\n  }\n  sort.Slice(samples, func(i, j int) bool { return samples[i].Label \u003c samples[j].Label })\n  return samples, nil\n}",
+      "tokens": 418,
+      "score": 41.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/gate/gate.go:350-387",
+          "weight": 1
+        }
+      ],
+      "start_line": 350,
+      "end_line": 387,
+      "content_hash": "af0a5d9984c72455554bb563ca69d05416c371372b8d267f984072eac87a6cab"
+    },
+    {
+      "rel_path": "internal/grounding/grounding.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/grounding/grounding.go\n// lines: 246-255\n// chunk: sampleUnknown\n// content_hash: 27134defe09e733b4b7c36d524b35603abde3b9c0e2a5a7d56b58de3781b539f\n\nfunc sampleUnknown(d audit.DriftReport, limit int) []string {\n  var all []string\n  all = append(all, d.UnknownPaths...)\n  all = append(all, d.UnknownAPIs...)\n  all = append(all, d.UnknownSymbols...)\n  if len(all) \u003e limit {\n    all = all[:limit]\n  }\n  return all\n}",
+      "tokens": 108,
+      "score": 39,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/grounding/grounding.go:246-255",
+          "weight": 1
+        }
+      ],
+      "start_line": 246,
+      "end_line": 255,
+      "content_hash": "27134defe09e733b4b7c36d524b35603abde3b9c0e2a5a7d56b58de3781b539f"
+    },
+    {
+      "rel_path": "internal/cli/ground.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/cli/ground.go\n// lines: 278-316\n// chunk: printGroundFeed\n// content_hash: f2d5563c9206fbdd5fc4980b31a19d2862686e3342ffd6bb6eca3b0b32c0a47f\n\nfunc printGroundFeed(w io.Writer, repoRoot string, jsonOut bool, limit int) error {\n  events, err := grounding.Read(repoRoot)\n  if err != nil {\n    return fmt.Errorf(\"ground: read ledger: %w\", err)\n  }\n  agg := grounding.Summarize(events)\n\n  if jsonOut {\n    return json.NewEncoder(w).Encode(struct {\n      Aggregate grounding.Aggregate `json:\"aggregate\"`\n      Recent    []grounding.Event   `json:\"recent_concerning\"`\n    }{agg, recentConcerning(events, limit)})\n  }\n\n  fmt.Fprintf(w, \"NeuroFS — grounding feed (%s)\\n\", grounding.Path(repoRoot))\n  if agg.Events == 0 {\n    fmt.Fprintf(w, \"  no grounding events yet — wire the hook with `neurofs ground --print-hook`\\n\")\n    return nil\n  }\n  fmt.Fprintf(w, \"  events       : %d\\n\", agg.Events)\n  if agg.Edits \u003e 0 {\n    fmt.Fprintf(w, \"  edits        : %d, %.0f%% in provided context (mean added-code drift %.0f%%)\\n\",\n      agg.Edits, agg.EditCoverage*100, agg.MeanEditDrift*100)\n  }\n  if agg.Responses \u003e 0 {\n    fmt.Fprintf(w, \"  responses    : %d, mean grounded %.0f%%, mean drift %.0f%%\\n\",\n      agg.Responses, agg.MeanGroundedResp*100, agg.MeanRespDrift*100)\n  }\n  fmt.Fprintf(w, \"  concerning   : %d (%.0f%% of events)\\n\", agg.Concerning, pctOf(agg.Concerning, agg.Events))\n\n  recent := recentConcerning(events, limit)\n  if len(recent) \u003e 0 {\n    fmt.Fprintf(w, \"\\n  recent concerning:\\n\")\n    for _, e := range recent {\n      fmt.Fprintf(w, \"    [%s] %s\\n\", e.Timestamp.Local().Format(\"01-02 15:04\"), oneLineEvent(e))\n    }\n  }\n  return nil\n}",
+      "tokens": 416,
+      "score": 36.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/cli/ground.go:278-316",
+          "weight": 1
+        }
+      ],
+      "start_line": 278,
+      "end_line": 316,
+      "content_hash": "f2d5563c9206fbdd5fc4980b31a19d2862686e3342ffd6bb6eca3b0b32c0a47f"
+    },
+    {
+      "rel_path": "internal/ui/static/app.js",
+      "lang": "javascript",
+      "representation": "excerpt",
+      "content": "// file: internal/ui/static/app.js\n// lines: 910-950\n// chunk: renderRecords\n// content_hash: c6eab7dab71cf436e45bb371ef99714986b6519c7796f883e5a482334075a10a\n\nfunction renderRecords() {\n const tbody = document.querySelector(\"#records-table tbody\");\n const filter = state.recordsFilter;\n const all = state.records || [];\n const visible = all.filter(rec =\u003e {\n  if (filter === \"all\") return true;\n  const m = (rec.mode || \"\").toLowerCase();\n  if (filter === \"unknown\") return !m;\n  return m === filter;\n });\n\n if (!visible.length) {\n  const msg = all.length\n   ? `no records match filter \"${esc(filter)}\"`\n   : `no records yet — run a replay and enable \"persist\"`;\n  tbody.innerHTML = `\u003ctr\u003e\u003ctd colspan=\"9\" class=\"muted\" style=\"padding:1rem;text-align:center\"\u003e${msg}\u003c/td\u003e\u003c/tr\u003e`;\n } else {\n  tbody.innerHTML = visible.map(rec =\u003e `\n   \u003ctr\u003e\n    \u003ctd\u003e\u003cinput type=\"checkbox\" data-path=\"${esc(rec.path)}\" class=\"rec-check\"\n             ${state.selectedRecords.includes(rec.path) ? \"checked\" : \"\"}\u003e\u003c/td\u003e\n    \u003ctd\u003e${esc(rec.timestamp)}\u003c/td\u003e\n    \u003ctd\u003e${modeBadge(rec.mode)}\u003c/td\u003e\n    \u003ctd\u003e${renderContextCell(rec)}\u003c/td\u003e\n    \u003ctd\u003e${esc(rec.model)}\u003c/td\u003e\n    \u003ctd\u003e${fmtPct(rec.grounded_ratio)}\u003c/td\u003e\n    \u003ctd\u003e${fmtPct(rec.drift_rate)}\u003c/td\u003e\n    \u003ctd\u003e${rec.expects_facts ? fmtPct(rec.answer_recall) : \"—\"}\u003c/td\u003e\n    \u003ctd\u003e\u003ccode\u003e${esc((rec.bundle_hash || \"\").slice(0, 10))}\u003c/code\u003e\u003c/td\u003e\n   \u003c/tr\u003e`).join(\"\");\n  document.querySelectorAll(\".rec-check\").forEach(c =\u003e\n   c.addEventListener(\"change\", onRecSelect));\n }\n\n const countEl = document.getElementById(\"records-status\");\n if (all.length) {\n  countEl.textContent = filter === \"all\"\n   ? `${all.length} records`\n   : `${visible.length} / ${all.length} records (filter: ${filter})`;\n }\n}",
+      "tokens": 428,
+      "score": 36.25,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/ui/static/app.js:910-950",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/ui/static/app.js:910-950",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/ui/static/app.js:910-950",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/ui/static/app.js:910-950",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/ui/static/app.js:910-950",
+          "weight": 1
+        }
+      ],
+      "start_line": 910,
+      "end_line": 950,
+      "content_hash": "c6eab7dab71cf436e45bb371ef99714986b6519c7796f883e5a482334075a10a"
+    },
+    {
+      "rel_path": "internal/cli/ground.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/cli/ground.go\n// lines: 142-177\n// chunk: buildGroundingEvent\n// content_hash: 830d6b4383069b2d182d6dab0781a3ca5da9f46c5aafd9b4f443160564290e06\n\n// buildGroundingEvent maps a hook event to a grounding event. The bool reports\n// whether the event was actionable (and should be recorded).\nfunc buildGroundingEvent(repoRoot string, ev hookEvent, bundle models.Bundle) (grounding.Event, bool) {\n  origin := strings.TrimSpace(ev.HookEventName)\n  switch strings.ToLower(ev.ToolName) {\n  case \"edit\", \"write\", \"multiedit\":\n    var ti toolInput\n    _ = json.Unmarshal(ev.ToolInput, \u0026ti)\n    added := ti.NewString\n    if ti.Content != \"\" {\n      added = ti.Content\n    }\n    for _, e := range ti.Edits {\n      added += \"\\n\" + e.NewString\n    }\n    rel := toRepoRel(repoRoot, ev.CWD, ti.FilePath)\n    event := grounding.ScoreEdit(bundle, rel, added)\n    event.Origin = joinOrigin(origin, ev.ToolName)\n    return event, true\n  }\n\n  // Stop / SubagentStop / no tool: ground the agent's final message.\n  if strings.EqualFold(origin, \"Stop\") || strings.EqualFold(origin, \"SubagentStop\") || ev.ToolName == \"\" {\n    resp := lastAssistantMessage(ev.TranscriptPath)\n    if strings.TrimSpace(resp) == \"\" {\n      return grounding.Event{}, false\n    }\n    event := grounding.ScoreResponse(bundle, resp)\n    event.Origin = origin\n    if event.Origin == \"\" {\n      event.Origin = \"Stop\"\n    }\n    return event, true\n  }\n  return grounding.Event{}, false\n}",
+      "tokens": 363,
+      "score": 34.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/cli/ground.go:142-177",
+          "weight": 1
+        }
+      ],
+      "start_line": 142,
+      "end_line": 177,
+      "content_hash": "830d6b4383069b2d182d6dab0781a3ca5da9f46c5aafd9b4f443160564290e06"
+    }
+  ],
+  "stats": {
+    "files_considered": 12,
+    "files_included": 12,
+    "tokens_used": 3511,
+    "tokens_budget": 4000,
+    "compression_ratio": 0.8417371028854561
+  },
+  "repo": "/Users/gere/NeuroMFS",
+  "commit_sha": "6c7597d9d67e10e33143cbf7e5554946cb6674c1",
+  "generated_at": "2026-06-12T09:13:43.694986Z",
+  "bundle_hash": "509361e48a0d2cc5ba2770030c3b135e62cc92d6ceb06655775e667c245846cd"
+}

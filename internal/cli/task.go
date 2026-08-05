@@ -2,19 +2,20 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/agentcontext"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextusage"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/quality"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/agentcontext"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextusage"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/quality"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -64,7 +65,7 @@ Examples:
   neurofs task "review my ranking changes" --budget 3000 > prompt.md
   neurofs task "resume work on seed UI" --force`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			query := strings.TrimSpace(args[0])
 			if query == "" {
 				return fmt.Errorf("task: query must not be empty")
@@ -76,10 +77,6 @@ Examples:
 					return fmt.Errorf("task: %w", err)
 				}
 				repoPath = cwd
-			}
-
-			if err := validateBudget(budget); err != nil {
-				return fmt.Errorf("task: %w", err)
 			}
 
 			if _, err := os.Stat(repoPath); os.IsNotExist(err) {
@@ -96,10 +93,17 @@ Examples:
 			// the dbPath probe, so we print the banner unconditionally
 			// when the index file is missing.
 			cfg, err := config.New(repoPath)
-			if err == nil {
-				if st, statErr := os.Stat(cfg.DBPath); statErr != nil || (st != nil && st.Size() == 0) {
-					fmt.Fprintf(os.Stderr, "NeuroFS — no index yet, scanning %s ...\n", cfg.RepoRoot)
-				}
+			if err != nil {
+				return fmt.Errorf("task: config: %w", err)
+			}
+			if !cmd.Flags().Changed("budget") {
+				budget = cfg.Budget
+			}
+			if err := validateBudget(budget); err != nil {
+				return fmt.Errorf("task: %w", err)
+			}
+			if st, statErr := os.Stat(cfg.DBPath); statErr != nil || (st != nil && st.Size() == 0) {
+				fmt.Fprintf(os.Stderr, "NeuroFS — no index yet, scanning %s ...\n", cfg.RepoRoot)
 			}
 
 			// Ensure the index is fresh (auto-scans if empty or older than 24h)
@@ -126,7 +130,11 @@ Examples:
 				if err != nil {
 					return fmt.Errorf("task: open index: %w", err)
 				}
-				defer db.Close()
+				defer func() {
+					if err := db.Close(); err != nil {
+						retErr = errors.Join(retErr, fmt.Errorf("task: close index: %w", err))
+					}
+				}()
 
 				files, err := db.AllFiles()
 				if err != nil {
@@ -138,6 +146,7 @@ Examples:
 			}
 
 			result, err := taskflow.Run(taskflow.Opts{
+				Context:       cmd.Context(),
 				RepoRoot:      repoPath,
 				Query:         query,
 				Budget:        budget,
@@ -159,18 +168,23 @@ Examples:
 					return fmt.Errorf("task: agent context: %w", err)
 				}
 				outputPrompt = agentPrompt.Text
-				_ = contextusage.Append(result.RepoRoot, contextusage.Entry{
+				entry := contextusage.Entry{
 					SessionID:      agentSession,
 					Phase:          "initial_bundle",
 					Command:        "task --agent",
 					Query:          query,
 					Tokens:         agentPrompt.InitialTokens,
 					BaselineTokens: agentPrompt.BaselineTokens,
-				})
+				}
+				if result.JoinKey != nil {
+					entry.BundlePath = result.JoinKey.BundlePath
+					entry.BundleHash = result.JoinKey.BundleHash
+				}
+				_ = contextusage.AppendContext(cmd.Context(), result.RepoRoot, entry)
 			}
 
 			// Stdout: the prompt, for pipes.
-			if _, err := os.Stdout.WriteString(outputPrompt); err != nil {
+			if _, err := io.WriteString(cmd.OutOrStdout(), outputPrompt); err != nil {
 				return fmt.Errorf("task: write stdout: %w", err)
 			}
 
@@ -206,7 +220,10 @@ Examples:
 			fmt.Fprintf(os.Stderr, "  clipboard : %s\n", clipStatus)
 
 			if rate {
-				rating, comment := promptRating(os.Stderr, os.Stdin)
+				rating, comment, err := promptRating(os.Stderr, os.Stdin)
+				if err != nil {
+					return fmt.Errorf("task: collect rating: %w", err)
+				}
 				topPaths := make([]string, len(result.TopPicks))
 				for i, p := range result.TopPicks {
 					topPaths[i] = p.RelPath
@@ -214,15 +231,20 @@ Examples:
 				entry := quality.Entry{
 					Query:         query,
 					Repo:          repoPath,
+					BundleHash:    result.Bundle.BundleHash,
 					TokensUsed:    result.Stats.TokensUsed,
 					TokensBudget:  result.Stats.TokensBudget,
 					FilesIncluded: result.Stats.FilesIncluded,
 					TopPicks:      topPaths,
 					Reused:        result.Reused,
 					Rating:        rating,
+					Source:        quality.SourceHuman,
 					Comment:       comment,
 				}
-				if err := quality.Append(repoPath, entry); err != nil {
+				if result.JoinKey != nil {
+					entry.BundlePath = result.JoinKey.BundlePath
+				}
+				if err := quality.AppendContext(cmd.Context(), repoPath, entry); err != nil {
 					// A failed log line is annoying, not fatal — the prompt
 					// itself already went out, so we degrade to a warning.
 					fmt.Fprintf(os.Stderr, "  quality   : warn: %v\n", err)
@@ -236,7 +258,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root (defaults to current directory)")
-	cmd.Flags().IntVar(&budget, "budget", config.DefaultBudget, "Token budget for the prompt")
+	cmd.Flags().IntVar(&budget, "budget", 0, "Token budget (defaults to .neurofs/config.json, then 8000)")
 	cmd.Flags().BoolVar(&force, "force", false, "Ignore the cache and regenerate")
 	cmd.Flags().BoolVar(&rate, "rate", false, "After generating, ask y/n + comment and append to .neurofs/quality.jsonl")
 	cmd.Flags().BoolVar(&noChunks, "no-chunks", false, "Build the prompt from ranked whole files instead of code chunks")
@@ -256,19 +278,29 @@ Examples:
 // prompt never contaminates the stdout pipe carrying the prompt
 // itself. EOF or a blank rating answer counts as skip — handy when
 // the caller forgets they passed --rate inside a script.
-func promptRating(out io.Writer, in io.Reader) (rating, comment string) {
+func promptRating(out io.Writer, in io.Reader) (rating, comment string, err error) {
 	r := bufio.NewReader(in)
-	fmt.Fprint(out, "  rate this prompt? [y/n/skip] (Enter to skip): ")
-	line, _ := r.ReadString('\n')
+	if _, err := fmt.Fprint(out, "  rate this prompt? [y/n/skip] (Enter to skip): "); err != nil {
+		return quality.RatingSkip, "", err
+	}
+	line, readErr := r.ReadString('\n')
+	if readErr != nil && readErr != io.EOF {
+		return quality.RatingSkip, "", readErr
+	}
 	switch strings.ToLower(strings.TrimSpace(line)) {
 	case "y", "yes":
 		rating = quality.RatingYes
 	case "n", "no":
 		rating = quality.RatingNo
 	default:
-		return quality.RatingSkip, ""
+		return quality.RatingSkip, "", nil
 	}
-	fmt.Fprint(out, "  comment (optional, one line, Enter to skip): ")
-	c, _ := r.ReadString('\n')
-	return rating, strings.TrimSpace(c)
+	if _, err := fmt.Fprint(out, "  comment (optional, one line, Enter to skip): "); err != nil {
+		return quality.RatingSkip, "", err
+	}
+	c, readErr := r.ReadString('\n')
+	if readErr != nil && readErr != io.EOF {
+		return quality.RatingSkip, "", readErr
+	}
+	return rating, strings.TrimSpace(c), nil
 }

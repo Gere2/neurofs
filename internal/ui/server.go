@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/runid"
 )
 
 // startupDir is the absolute path where the binary was launched. The UI
@@ -27,6 +29,8 @@ type Options struct {
 	OpenBrowser bool
 	RepoRoot    string
 	Sandbox     bool
+	AllowRemote bool
+	AuthToken   string
 }
 
 // Run starts the local UI server and blocks until the process is interrupted
@@ -37,8 +41,9 @@ type Options struct {
 // opens the repo index on its own, mirroring the CLI commands' per-
 // invocation pattern.
 func Run(opts Options) error {
-	if opts.Addr == "" {
-		opts.Addr = "127.0.0.1:7777"
+	remote, err := normalizeServerOptions(&opts)
+	if err != nil {
+		return err
 	}
 
 	if opts.Sandbox {
@@ -60,14 +65,14 @@ func Run(opts Options) error {
 		startupDir = cwd
 	}
 
-	mux, err := buildMux(opts.Addr)
+	handler, err := buildMux(opts, remote)
 	if err != nil {
 		return err
 	}
 
 	srv := &http.Server{
 		Addr:    opts.Addr,
-		Handler: withJSONLogger(mux),
+		Handler: withJSONLogger(handler),
 		// WriteTimeout is deliberately longer than contextFor's 2-minute
 		// handler budget so a slow-but-legitimate scan/pack completes its
 		// response instead of being killed mid-flush.
@@ -81,6 +86,9 @@ func Run(opts Options) error {
 	// even if OpenBrowser is disabled (e.g. on a headless machine).
 	url := "http://" + opts.Addr
 	fmt.Printf("NeuroFS UI listening at %s\n", url)
+	if remote {
+		fmt.Printf("Remote access enabled; API requests require the %s header.\n", remoteTokenHeader)
+	}
 
 	if opts.OpenBrowser {
 		// Best-effort; a failure here is logged but never blocks the server.
@@ -96,7 +104,7 @@ func Run(opts Options) error {
 // buildMux builds the common multiplexer for both the UI and Proxy
 // servers. addr is the listen address; it is used to derive the
 // allowed-Origin allowlist for state-changing endpoints.
-func buildMux(addr string) (*http.ServeMux, error) {
+func buildMux(opts Options, remote bool) (http.Handler, error) {
 	mux := http.NewServeMux()
 
 	sub, err := fs.Sub(assets, "static")
@@ -132,20 +140,21 @@ func buildMux(addr string) (*http.ServeMux, error) {
 		_, _ = w.Write(data)
 	})
 
-	registerAPI(mux, originsForAddr(addr))
+	registerAPI(mux, originsForAddr(opts.Addr))
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	return mux, nil
+	return secureServerHandler(mux, remote, opts.AuthToken), nil
 }
 
 // RunProxy starts a dedicated Anthropic-compatible proxy server.
 func RunProxy(opts Options) error {
-	if opts.Addr == "" {
-		opts.Addr = "127.0.0.1:7777"
+	remote, err := normalizeServerOptions(&opts)
+	if err != nil {
+		return err
 	}
 
 	if opts.Sandbox {
@@ -164,14 +173,14 @@ func RunProxy(opts Options) error {
 		startupDir = cwd
 	}
 
-	mux, err := buildMux(opts.Addr)
+	handler, err := buildMux(opts, remote)
 	if err != nil {
 		return err
 	}
 
 	srv := &http.Server{
 		Addr:              opts.Addr,
-		Handler:           withProxyLogger(mux),
+		Handler:           withProxyLogger(handler),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      3 * time.Minute,
@@ -183,6 +192,9 @@ func RunProxy(opts Options) error {
 	fmt.Printf("  For Anthropic (Claude Code, etc.), set: ANTHROPIC_BASE_URL=http://%s/v1\n", opts.Addr)
 	fmt.Printf("  For OpenAI (Cursor IDE, Copilot, etc.), set: OPENAI_BASE_URL=http://%s/v1\n", opts.Addr)
 	fmt.Printf("  Open your browser at http://%s to monitor savings\n", opts.Addr)
+	if remote {
+		fmt.Printf("  Remote requests require the %s header.\n", remoteTokenHeader)
+	}
 
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -237,5 +249,11 @@ func withJSONLogger(h http.Handler) http.Handler {
 // endpoint is local, but scan + pack do disk I/O and we would rather fail
 // fast than hang a browser tab forever.
 func contextFor(r *http.Request) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, err := runid.WithAvailability(r.Context(), runid.ForPersistentServer())
+	if err != nil {
+		// The built-in declaration is constant and validated by runid tests;
+		// retain a safe unavailable context even if that invariant regresses.
+		ctx = r.Context()
+	}
+	return context.WithTimeout(ctx, 2*time.Minute)
 }

@@ -6,12 +6,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/benchmark"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/benchmark"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 // The file-level ranker (internal/ranking) shapes the bundle path — a
@@ -58,13 +58,13 @@ type FilesCorpusScore struct {
 
 // TuneFilesResult reports a full file-ranker tuning run.
 type TuneFilesResult struct {
-	Questions int                 `json:"questions"`
-	Baseline  FilesEvalSummary    `json:"baseline"`
-	Tuned     FilesEvalSummary    `json:"tuned"`
-	Weights   ranking.Weights     `json:"weights"`
-	Changed   []FileWeightChange  `json:"changed"`
-	Applied   bool                `json:"applied"`
-	Warning   string              `json:"warning,omitempty"`
+	Questions int                `json:"questions"`
+	Baseline  FilesEvalSummary   `json:"baseline"`
+	Tuned     FilesEvalSummary   `json:"tuned"`
+	Weights   ranking.Weights    `json:"weights"`
+	Changed   []FileWeightChange `json:"changed"`
+	Applied   bool               `json:"applied"`
+	Warning   string             `json:"warning,omitempty"`
 }
 
 // FileWeightChange records one tuned file-ranker weight.
@@ -133,12 +133,16 @@ func loadBenchCorpora(repoRoot, primaryBench string, extra []BenchCorpus) ([]*lo
 		}
 		files, err := db.AllFiles()
 		if err != nil {
-			db.Close()
+			if closeErr := db.Close(); closeErr != nil {
+				return nil, 0, fmt.Errorf("%w; close index: %v", err, closeErr)
+			}
 			return nil, 0, err
 		}
 		relations, _ := db.AllRelations()
 		info := taskflow.LoadProjectInfo(db)
-		db.Close()
+		if err := db.Close(); err != nil {
+			return nil, 0, fmt.Errorf("learn: close index for %s: %w", c.Repo, err)
+		}
 		if len(files) == 0 {
 			return nil, 0, fmt.Errorf("learn: empty index for %s — run 'neurofs scan' there first", c.Repo)
 		}

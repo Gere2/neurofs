@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"os"
@@ -27,17 +26,21 @@ type Client struct {
 	endpoint string
 }
 
-// NewClient returns a new Client based on environment variables, config, and auto-detection.
+// NewClient returns a new Client based on environment variables and config.
+//
+// Cloud providers are opt-in: merely having a provider API key in the
+// environment must not make an indexing command send repository contents over
+// the network. Set NEUROFS_EMBEDDING_PROVIDER explicitly to openai, gemini, or
+// voyage to enable a cloud provider. Without an explicit provider, NeuroFS
+// prefers a reachable local Ollama instance and otherwise uses the deterministic
+// mock provider.
 func NewClient(hybridMode ...bool) *Client {
-	forceLocal := false
-	if len(hybridMode) > 0 && hybridMode[0] {
-		forceLocal = true
-	}
+	forceLocal := len(hybridMode) > 0 && hybridMode[0]
 	if os.Getenv("NEUROFS_HYBRID_MODE") == "true" {
 		forceLocal = true
 	}
 
-	provider := os.Getenv("NEUROFS_EMBEDDING_PROVIDER")
+	provider := strings.ToLower(strings.TrimSpace(os.Getenv("NEUROFS_EMBEDDING_PROVIDER")))
 	apiKeyOpenAI := os.Getenv("OPENAI_API_KEY")
 	apiKeyGemini := os.Getenv("GEMINI_API_KEY")
 	apiKeyVoyage := os.Getenv("VOYAGE_API_KEY")
@@ -48,15 +51,16 @@ func NewClient(hybridMode ...bool) *Client {
 
 	netClient := &http.Client{Timeout: 15 * time.Second}
 
-	// Auto-detect provider if not explicitly configured
+	// Hybrid mode is a local-only boundary even when a cloud provider was
+	// accidentally left configured in the environment.
+	if forceLocal && isCloudProvider(provider) {
+		provider = ""
+	}
+
+	// Auto-detection is deliberately local-only. Cloud use requires the
+	// explicit provider setting above.
 	if provider == "" {
-		if !forceLocal && apiKeyOpenAI != "" {
-			provider = "openai"
-		} else if !forceLocal && apiKeyGemini != "" {
-			provider = "gemini"
-		} else if !forceLocal && apiKeyVoyage != "" {
-			provider = "voyage"
-		} else if isOllamaAvailable(netClient, ollamaHost) {
+		if isOllamaAvailable(netClient, ollamaHost) {
 			provider = "ollama"
 		} else {
 			provider = "mock"
@@ -89,9 +93,14 @@ func NewClient(hybridMode ...bool) *Client {
 		if model == "" {
 			model = "nomic-embed-text"
 		}
-	default:
+	case "mock":
 		provider = "mock"
 		model = "mock-lcg"
+	default:
+		// Keep an invalid explicit provider visible. Silently converting a typo
+		// to mock would make the persisted provider metadata disagree with user
+		// intent and hide a configuration error.
+		model = "invalid"
 	}
 
 	endpoint := ""
@@ -126,6 +135,36 @@ func (c *Client) HasAPIKey() bool {
 	return c.apiKey != ""
 }
 
+// Validate checks provider configuration without sending any content or
+// making a network request. Indexing calls this before clearing or mutating a
+// previous index so a typo or missing cloud credential cannot destroy a valid
+// generation and then enter an endless partial-reindex loop.
+func (c *Client) Validate() error {
+	switch c.provider {
+	case "mock":
+		if c.model == "" {
+			return fmt.Errorf("mock embedding model is empty")
+		}
+	case "ollama":
+		if c.model == "" {
+			return fmt.Errorf("ollama embedding model is empty")
+		}
+		if strings.TrimSpace(c.endpoint) == "" {
+			return fmt.Errorf("ollama endpoint is empty")
+		}
+	case "openai", "gemini", "voyage":
+		if c.model == "" {
+			return fmt.Errorf("%s embedding model is empty", c.provider)
+		}
+		if strings.TrimSpace(c.apiKey) == "" {
+			return fmt.Errorf("%s embedding API key is not set", c.provider)
+		}
+	default:
+		return fmt.Errorf("unsupported embedding provider %q", c.provider)
+	}
+	return nil
+}
+
 // GetEmbedding returns the embedding vector for the text based on the active provider.
 func (c *Client) GetEmbedding(ctx context.Context, text string) ([]float32, error) {
 	var emb []float32
@@ -140,32 +179,22 @@ func (c *Client) GetEmbedding(ctx context.Context, text string) ([]float32, erro
 		emb, err = c.getVoyageEmbedding(ctx, text)
 	case "ollama":
 		emb, err = c.getOllamaEmbedding(ctx, text)
-	default:
+	case "mock":
 		return c.getMockEmbedding(text), nil
-	}
-
-	if err != nil && (c.provider == "openai" || c.provider == "gemini" || c.provider == "voyage") {
-		fmt.Fprintf(os.Stderr, "embeddings: cloud provider %s failed (%v), falling back to local embeddings\n", c.provider, err)
-		ollamaHost := os.Getenv("OLLAMA_HOST")
-		if ollamaHost == "" {
-			ollamaHost = "http://localhost:11434"
-		}
-		if isOllamaAvailable(c.client, ollamaHost) {
-			c.provider = "ollama"
-			c.endpoint = ollamaHost
-			c.model = os.Getenv("OLLAMA_MODEL")
-			if c.model == "" {
-				c.model = "nomic-embed-text"
-			}
-			return c.getOllamaEmbedding(ctx, text)
-		} else {
-			c.provider = "mock"
-			c.model = "mock-lcg"
-			return c.getMockEmbedding(text), nil
-		}
+	default:
+		return nil, fmt.Errorf("unsupported embedding provider %q", c.provider)
 	}
 
 	return emb, err
+}
+
+func isCloudProvider(provider string) bool {
+	switch provider {
+	case "openai", "gemini", "voyage":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) getOpenAIEmbedding(ctx context.Context, text string) ([]float32, error) {
@@ -199,16 +228,12 @@ func (c *Client) getOpenAIEmbedding(ctx context.Context, text string) ([]float32
 	if err != nil {
 		return nil, fmt.Errorf("openai request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		var errData struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errData)
-		return nil, fmt.Errorf("openai error (status %d): %s", resp.StatusCode, errData.Error.Message)
+		// Provider bodies are untrusted and may echo repository text or
+		// credential material. The status is sufficient for diagnosis.
+		return nil, fmt.Errorf("openai error (status %d)", resp.StatusCode)
 	}
 
 	var respData struct {
@@ -254,28 +279,29 @@ func (c *Client) getGeminiEmbedding(ctx context.Context, text string) ([]float32
 	if host == "" {
 		host = "https://generativelanguage.googleapis.com"
 	}
-	url := fmt.Sprintf("%s/v1beta/%s:embedContent?key=%s", strings.TrimSuffix(host, "/"), modelName, c.apiKey)
+	endpoint := fmt.Sprintf("%s/v1beta/%s:embedContent", strings.TrimSuffix(host, "/"), modelName)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gemini embedding: create request")
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", c.apiKey)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("gemini request: %w", err)
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("gemini request canceled: %w", ctxErr)
+		}
+		// net/http transport errors often include the request URL. Keep Gemini
+		// endpoint and credential material out of user-facing/logged errors.
+		return nil, fmt.Errorf("gemini request failed")
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		var errData struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errData)
-		return nil, fmt.Errorf("gemini error (status %d): %s", resp.StatusCode, errData.Error.Message)
+		// Provider error bodies are untrusted and may echo request details.
+		return nil, fmt.Errorf("gemini error (status %d)", resp.StatusCode)
 	}
 
 	var respData struct {
@@ -325,18 +351,10 @@ func (c *Client) getVoyageEmbedding(ctx context.Context, text string) ([]float32
 	if err != nil {
 		return nil, fmt.Errorf("voyage request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		var errData struct {
-			Detail string `json:"detail"`
-		}
-		_ = json.NewDecoder(resp.Body).Decode(&errData)
-		if errData.Detail != "" {
-			return nil, fmt.Errorf("voyage error (status %d): %s", resp.StatusCode, errData.Detail)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("voyage error (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("voyage error (status %d)", resp.StatusCode)
 	}
 
 	var respData struct {
@@ -377,11 +395,10 @@ func (c *Client) getOllamaEmbedding(ctx context.Context, text string) ([]float32
 	if err != nil {
 		return nil, fmt.Errorf("ollama request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("ollama error (status %d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("ollama error (status %d)", resp.StatusCode)
 	}
 
 	var respData struct {
@@ -477,6 +494,6 @@ func isOllamaAvailable(client *http.Client, host string) bool {
 	if err != nil {
 		return false
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }

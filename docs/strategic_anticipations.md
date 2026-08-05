@@ -42,7 +42,7 @@ flowchart LR
     Watch --> Graph["Grafo de simbolos/imports"]
     Chunks --> Retrieve["Retrieval hibrido"]
     Graph --> Retrieve
-    RG["ripgrep / lexical"] --> Retrieve
+    Snapshot["Lexical exacto sobre snapshot indexada"] --> Retrieve
     Retrieve --> Broker["MCP broker local"]
     Ledger["Session ledger"] --> Broker
     Broker --> Agents["Claude / Codex / Copilot / Gemini / Zed"]

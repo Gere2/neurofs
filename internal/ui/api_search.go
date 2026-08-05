@@ -1,15 +1,16 @@
 package ui
 
 import (
+	"log"
 	"net/http"
 	"path/filepath"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 // --------------------- /api/search ---------------------
@@ -376,7 +377,11 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "open index: "+err.Error())
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("neurofs ui: close stats database: %v", err)
+		}
+	}()
 
 	files, err := db.AllFiles()
 	if err != nil {

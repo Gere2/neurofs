@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // fixtureBundle returns a small bundle good enough to exercise every audit
@@ -23,6 +23,8 @@ func fixtureBundle() models.Bundle {
 				Representation: models.RepFullCode,
 				Tokens:         120,
 				Content:        "export function verifyToken(t: string) { return jwt.verify(t, SECRET); }\nexport const AuthMiddleware = () => {}",
+				StartLine:      1,
+				EndLine:        50,
 			},
 			{
 				RelPath:        "src/crypto.ts",
@@ -30,6 +32,8 @@ func fixtureBundle() models.Bundle {
 				Representation: models.RepSignature,
 				Tokens:         40,
 				Content:        "export function hashPassword(p: string): string",
+				StartLine:      1,
+				EndLine:        10,
 			},
 		},
 	}
@@ -82,6 +86,67 @@ func TestValidateCitationsMarksValid(t *testing.T) {
 	}
 }
 
+func TestParseCitationsUsesScannerLanguageRegistry(t *testing.T) {
+	text := "src/lib.rs:9 include/api.hpp:4 web/page.mdx:2 prose.txt:1"
+	cs := audit.ParseCitations(text)
+	if len(cs) != 3 {
+		t.Fatalf("expected Rust, C++ and MDX citations only, got %+v", cs)
+	}
+}
+
+func TestValidateCitationsRequiresVisibleLine(t *testing.T) {
+	b := fixtureBundle()
+	cs := audit.ValidateCitations(audit.ParseCitations(
+		"src/auth.ts:12 src/auth.ts:80 src/crypto.ts",
+	), b)
+	if len(cs) != 3 {
+		t.Fatalf("citations = %+v", cs)
+	}
+	if !cs[0].Valid {
+		t.Fatalf("visible source line should validate: %+v", cs[0])
+	}
+	if cs[1].Valid || cs[1].Reason != "line not present in bundle" {
+		t.Fatalf("out-of-range line should fail: %+v", cs[1])
+	}
+	if !cs[2].Valid {
+		t.Fatalf("bare path should validate when present: %+v", cs[2])
+	}
+}
+
+func TestValidateCitationsRejectsElidedExcerptMiddle(t *testing.T) {
+	b := models.Bundle{Fragments: []models.ContextFragment{{
+		RelPath:        "router/router.go",
+		Lang:           models.LangGo,
+		Representation: models.RepExcerpt,
+		Content: `// ── router/router.go:10-17 (configureRouter; head) ──
+func configureRouter() {
+	// visible head
+}
+// ... 80 lines elided in extracted excerpt ...
+// ── router/router.go:98-101 (configureRouter; tail) ──
+return nil
+}`,
+	}}}
+	cs := audit.ValidateCitations(
+		audit.ParseCitations("router/router.go:12 router/router.go:50 router/router.go:100"),
+		b,
+	)
+	if len(cs) != 3 || !cs[0].Valid || cs[1].Valid || !cs[2].Valid {
+		t.Fatalf("visible excerpt ranges were not enforced: %+v", cs)
+	}
+}
+
+func TestValidateCitationsDeduplicatesBasenamePaths(t *testing.T) {
+	b := fixtureBundle()
+	b.Fragments = append(b.Fragments, models.ContextFragment{
+		RelPath: "src/auth.ts", StartLine: 51, EndLine: 100,
+	})
+	cs := audit.ValidateCitations(audit.ParseCitations("auth.ts:75"), b)
+	if len(cs) != 1 || !cs[0].Valid || cs[0].RelPath != "src/auth.ts" {
+		t.Fatalf("multiple fragments of one path must not be ambiguous: %+v", cs)
+	}
+}
+
 func TestValidateCitationsBasenameFallback(t *testing.T) {
 	b := fixtureBundle()
 	// Model refers to auth.ts without a directory — bundle has exactly one,
@@ -98,8 +163,8 @@ func TestGroundedRatio(t *testing.T) {
 	if got := audit.GroundedRatio(cs); got != 0.75 {
 		t.Errorf("grounded ratio 3/4 = 0.75, got %v", got)
 	}
-	if got := audit.GroundedRatio(nil); got != 1.0 {
-		t.Errorf("no-citations default should be 1.0, got %v", got)
+	if got := audit.GroundedRatio(nil); got != 0 {
+		t.Errorf("no-citations default should be 0, got %v", got)
 	}
 }
 
@@ -183,12 +248,12 @@ func TestScoreFacts_PunctuationAnchorStillMatches(t *testing.T) {
 	}
 }
 
-func TestBundleHashStableAcrossFragmentOrder(t *testing.T) {
+func TestBundleHashChangesAcrossFragmentOrder(t *testing.T) {
 	b1 := fixtureBundle()
 	b2 := fixtureBundle()
 	b2.Fragments[0], b2.Fragments[1] = b2.Fragments[1], b2.Fragments[0]
-	if audit.BundleHash(b1) != audit.BundleHash(b2) {
-		t.Errorf("hash should be invariant under fragment order")
+	if audit.BundleHash(b1) == audit.BundleHash(b2) {
+		t.Errorf("hash must identify the exact ordered prompt")
 	}
 }
 
@@ -198,6 +263,25 @@ func TestBundleHashChangesWithContent(t *testing.T) {
 	b.Fragments[0].Content += " // tweak"
 	if audit.BundleHash(b) == h1 {
 		t.Errorf("hash should change when content changes")
+	}
+}
+
+func TestBundleHashIncludesDuplicateFragmentsAndMetadata(t *testing.T) {
+	b := fixtureBundle()
+	b.Fragments = append(b.Fragments, models.ContextFragment{
+		RelPath: "src/auth.ts", Lang: models.LangTypeScript,
+		Representation: models.RepExcerpt, Content: "second chunk",
+		StartLine: 60, EndLine: 70,
+	})
+	h1 := audit.BundleHash(b)
+	b.Fragments[2].Content = "changed second chunk"
+	if audit.BundleHash(b) == h1 {
+		t.Fatal("changing a repeated-path fragment must change the prompt hash")
+	}
+	h2 := audit.BundleHash(b)
+	b.Fragments[2].Lang = models.LangJavaScript
+	if audit.BundleHash(b) == h2 {
+		t.Fatal("changing prompt-visible language metadata must change the hash")
 	}
 }
 
@@ -226,6 +310,9 @@ func TestRunEndToEndWithStubModel(t *testing.T) {
 	}
 	if rec.BundleHash == "" || len(rec.BundleHash) != 64 {
 		t.Errorf("expected sha256 hex bundle hash, got %q", rec.BundleHash)
+	}
+	if rec.HashAlgorithm != audit.BundleHashAlgorithm || rec.MetricVersion != audit.GroundingMetricVersion {
+		t.Errorf("missing audit algorithm versions: %+v", rec)
 	}
 	if len(rec.Citations) != 2 {
 		t.Errorf("expected 2 citations, got %+v", rec.Citations)

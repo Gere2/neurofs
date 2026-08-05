@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 var licenseKeywords = []string{
@@ -186,15 +186,17 @@ func compressIndentation(lang models.Lang, content string) string {
 		spaces := 0
 		tabs := 0
 		idx := 0
+	indent:
 		for idx < len(runes) {
-			if runes[idx] == ' ' {
+			switch runes[idx] {
+			case ' ':
 				spaces++
 				idx++
-			} else if runes[idx] == '\t' {
+			case '\t':
 				tabs++
 				idx++
-			} else {
-				break
+			default:
+				break indent
 			}
 		}
 

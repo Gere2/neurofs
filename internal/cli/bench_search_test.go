@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/benchmark"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/benchmark"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 func TestRunSearchBenchmarkReportsHitsTokensAndStability(t *testing.T) {
@@ -34,7 +34,11 @@ func VerifyJWT() string {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -90,7 +94,11 @@ func VerifyJWT() string {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
 		t.Fatalf("scan: %v", err)
 	}

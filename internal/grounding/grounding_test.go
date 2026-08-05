@@ -1,9 +1,12 @@
 package grounding
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func bundle() models.Bundle {
@@ -11,8 +14,8 @@ func bundle() models.Bundle {
 		Query:      "how does auth work",
 		BundleHash: "abc123",
 		Fragments: []models.ContextFragment{
-			{RelPath: "src/auth.ts", Content: "export function verifyToken(t: string) { return jwtVerify(t) }"},
-			{RelPath: "src/user.ts", Content: "export class UserRepository { findById(id) {} }"},
+			{RelPath: "src/auth.ts", Content: "export function verifyToken(t: string) { return jwtVerify(t) }", StartLine: 1, EndLine: 1},
+			{RelPath: "src/user.ts", Content: "export class UserRepository { findById(id) {} }", StartLine: 1, EndLine: 1},
 		},
 	}
 }
@@ -104,6 +107,13 @@ func TestAppendReadRoundtrip(t *testing.T) {
 	if got[0].Origin != "PostToolUse:Edit" || got[1].Origin != "Stop" {
 		t.Fatalf("origins not preserved: %q %q", got[0].Origin, got[1].Origin)
 	}
+	info, err := os.Stat(Path(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("ledger permissions = %o, want 600", got)
+	}
 }
 
 func TestReadMissingIsEmpty(t *testing.T) {
@@ -113,6 +123,72 @@ func TestReadMissingIsEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("expected no events, got %d", len(got))
+	}
+}
+
+func TestLedgerRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "target.jsonl")
+	if err := os.WriteFile(target, []byte(`{"kind":"edit"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, Path(dir)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Append(dir, Event{Kind: KindEdit}); err == nil {
+		t.Fatal("Append followed a symlink ledger")
+	}
+	if events, err := Read(dir); err == nil || events != nil {
+		t.Fatalf("Read symlink = (%v, %v), want nil events and an error", events, err)
+	}
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(content), `{"kind":"edit"}`+"\n"; got != want {
+		t.Fatalf("symlink target changed: got %q, want %q", got, want)
+	}
+}
+
+func TestReadCorruptLedgerFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"kind":"edit"}` + "\n" + `{"kind":` + "\n"
+	if err := os.WriteFile(Path(dir), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := Read(dir)
+	if err == nil {
+		t.Fatal("corrupt JSONL must return an error")
+	}
+	if events != nil {
+		t.Fatalf("corrupt JSONL returned partial events: %#v", events)
+	}
+}
+
+func TestReadOversizedLedgerLineFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Dir(Path(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"kind":"edit"}` + "\n" + strings.Repeat("x", maxLedgerLineBytes+1) + "\n"
+	if err := os.WriteFile(Path(dir), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	events, err := Read(dir)
+	if err == nil {
+		t.Fatal("oversized ledger line must return an error")
+	}
+	if events != nil {
+		t.Fatalf("oversized ledger returned partial events: %#v", events)
 	}
 }
 

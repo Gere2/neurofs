@@ -3,8 +3,8 @@ package cli
 import (
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/retrieval"
 )
 
 func TestChunkHitsFromSearchMapsLanguageAndRange(t *testing.T) {

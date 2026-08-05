@@ -3,24 +3,32 @@ package contextusage
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/runid"
+	"github.com/Gere2/neurofs/internal/safefile"
 )
 
 // Entry is one context event in a patch session.
 type Entry struct {
+	runid.Availability
 	Timestamp      time.Time `json:"timestamp"`
 	SessionID      string    `json:"session_id"`
 	Phase          string    `json:"phase"`
 	Command        string    `json:"command"`
 	Query          string    `json:"query,omitempty"`
+	BundlePath     string    `json:"bundle_path,omitempty"`
+	BundleHash     string    `json:"bundle_hash,omitempty"`
 	Path           string    `json:"path,omitempty"`
 	Mode           string    `json:"mode,omitempty"`
 	StartLine      int       `json:"start_line,omitempty"`
@@ -73,6 +81,17 @@ func NewSessionID(query string, now time.Time) string {
 
 // Append writes one usage entry.
 func Append(repoRoot string, entry Entry) error {
+	return AppendContext(context.Background(), repoRoot, entry)
+}
+
+// AppendContext writes one context-usage event with immutable run
+// attribution derived from ctx (or the one-shot process environment).
+func AppendContext(ctx context.Context, repoRoot string, entry Entry) error {
+	attribution, err := runid.Bind(ctx, entry.Availability)
+	if err != nil {
+		return fmt.Errorf("context usage: bind run identity: %w", err)
+	}
+	entry.Availability = attribution
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
@@ -80,34 +99,47 @@ func Append(repoRoot string, entry Entry) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := safefile.OpenAppend(p, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("open context usage log: %w", err)
 	}
-	defer f.Close()
 	enc, err := json.Marshal(entry)
 	if err != nil {
+		_ = f.Close()
 		return err
 	}
 	if _, err := f.Write(append(enc, '\n')); err != nil {
+		_ = f.Close()
 		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync context usage log: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close context usage log: %w", err)
 	}
 	return nil
 }
 
 // Read loads usage entries, optionally filtering by session id.
-func Read(repoRoot, sessionID string) ([]Entry, error) {
+func Read(repoRoot, sessionID string) (entries []Entry, retErr error) {
 	p := Path(repoRoot)
-	f, err := os.Open(p)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
+	f, err := safefile.OpenRead(p)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
-	defer f.Close()
-	var entries []Entry
+	defer func() {
+		if err := f.Close(); err != nil {
+			entries = nil
+			retErr = errors.Join(retErr, fmt.Errorf("close context usage log: %w", err))
+		}
+	}()
 	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		var entry Entry
 		if err := json.Unmarshal(sc.Bytes(), &entry); err != nil {
@@ -117,7 +149,10 @@ func Read(repoRoot, sessionID string) ([]Entry, error) {
 			entries = append(entries, entry)
 		}
 	}
-	return entries, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return entries, nil
 }
 
 // Summarise aggregates one session. BaselineTokens can be the full-file

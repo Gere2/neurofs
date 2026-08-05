@@ -2,12 +2,13 @@ package storage
 
 import (
 	"math"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func newTempDB(t *testing.T) *DB {
@@ -41,6 +42,114 @@ func TestOpenEnablesWAL(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsSymlinkDatabasePath(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, ".neurofs")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.db")
+	const sentinel = "external file must remain unchanged"
+	if err := os.WriteFile(outside, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(stateDir, "index.db")
+	if err := os.Symlink(outside, dbPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if db, err := Open(dbPath); err == nil {
+		_ = db.Close()
+		t.Fatal("Open followed a database symlink")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != sentinel {
+		t.Fatalf("external target changed: %q", got)
+	}
+}
+
+func TestOpenReadOnlyDoesNotCreateMissingDatabase(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "missing", "index.db")
+
+	if db, err := OpenReadOnly(dbPath); err == nil {
+		_ = db.Close()
+		t.Fatal("OpenReadOnly created a missing database")
+	}
+	if _, err := os.Lstat(filepath.Dir(dbPath)); !os.IsNotExist(err) {
+		t.Fatalf("OpenReadOnly created state for a missing index: %v", err)
+	}
+}
+
+func TestOpenReadOnlyRejectsPendingWAL(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath+"-wal", []byte("pending"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if readOnly, err := OpenReadOnly(dbPath); err == nil {
+		_ = readOnly.Close()
+		t.Fatal("OpenReadOnly accepted an index with a non-empty WAL")
+	}
+}
+
+func TestOpenMigratesGenerationAndEmbeddingColumns(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE files DROP COLUMN mtime_ns`,
+		`ALTER TABLE file_embeddings DROP COLUMN checksum`,
+		`ALTER TABLE file_embeddings DROP COLUMN provider`,
+		`ALTER TABLE file_embeddings DROP COLUMN model`,
+		`ALTER TABLE chunks DROP COLUMN calls`,
+	} {
+		if _, err := db.db.Exec(stmt); err != nil {
+			_ = db.Close()
+			t.Fatalf("prepare legacy schema (%s): %v", stmt, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("open legacy database: %v", err)
+	}
+	defer func() {
+		if err := migrated.Close(); err != nil {
+			t.Errorf("close migrated database: %v", err)
+		}
+	}()
+	record := models.FileRecord{
+		Path: "/repo/migrated.go", RelPath: "migrated.go", Lang: models.LangGo,
+		ModTimeUnixNano: 123, Checksum: "sum", IndexedAt: time.Now(),
+	}
+	if err := migrated.UpsertFileAndChunks(record, []models.Chunk{{
+		ChunkID: "chunk", FilePath: record.Path, ContentHash: "hash", Calls: []string{"Call"},
+	}}); err != nil {
+		t.Fatalf("write migrated columns: %v", err)
+	}
+	if err := migrated.SaveEmbeddingWithMetadata(
+		record.Path, []float32{1}, record.Checksum, "mock", "mock-lcg",
+	); err != nil {
+		t.Fatalf("write migrated embedding columns: %v", err)
+	}
+}
+
 func TestConcurrentWritersDoNotFail(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "concurrent.db")
 
@@ -59,7 +168,7 @@ func TestConcurrentWritersDoNotFail(t *testing.T) {
 				errCh <- err
 				return
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 			for i := 0; i < opsPerWriter; i++ {
 				p := filepath.Join("/fake", string(rune('a'+id)), string(rune('a'+i%26)))
 				if err := db.UpsertFile(models.FileRecord{
@@ -253,7 +362,7 @@ func TestMetadataOperations(t *testing.T) {
 	if err := db.SetMeta("version", "1.1.0"); err != nil {
 		t.Fatalf("SetMeta override: %v", err)
 	}
-	val, ok, _ = db.GetMeta("version")
+	val, _, _ = db.GetMeta("version")
 	if val != "1.1.0" {
 		t.Errorf("expected updated metadata 1.1.0, got %q", val)
 	}
@@ -578,6 +687,132 @@ func TestDeleteFilePrunesUnreferencedChunkEmbeddings(t *testing.T) {
 	}
 	if len(rels) != 0 {
 		t.Fatalf("expected relations touching deleted file to be removed: %+v", rels)
+	}
+}
+
+func TestUpsertFileAndChunksPublishesOneGeneration(t *testing.T) {
+	db := newTempDB(t)
+	path := filepath.Join("/repo", "generation.go")
+	oldRecord := models.FileRecord{
+		Path: path, RelPath: "generation.go", Lang: models.LangGo,
+		Size: 10, ModTimeUnixNano: 100, Checksum: "old-checksum", IndexedAt: time.Now(),
+	}
+	oldChunks := []models.Chunk{{
+		ChunkID: "old", FilePath: path, ContentHash: "old-hash", Symbol: "Old",
+	}}
+	if err := db.UpsertFileAndChunks(oldRecord, oldChunks); err != nil {
+		t.Fatalf("initial generation: %v", err)
+	}
+	if err := db.SaveEmbeddingWithMetadata(
+		path, []float32{1}, oldRecord.Checksum, "mock", "mock-lcg",
+	); err != nil {
+		t.Fatalf("save old file embedding: %v", err)
+	}
+	if err := db.SaveChunkEmbedding("old-hash", []float32{1}, "mock", "mock-lcg"); err != nil {
+		t.Fatalf("save old chunk embedding: %v", err)
+	}
+
+	newRecord := oldRecord
+	newRecord.Size = 20
+	newRecord.ModTimeUnixNano = 200
+	newRecord.Checksum = "new-checksum"
+	newRecord.IndexedAt = time.Now().Add(time.Second)
+	newChunks := []models.Chunk{{
+		ChunkID: "new", FilePath: path, ContentHash: "new-hash", Symbol: "New",
+	}}
+	if err := db.UpsertFileAndChunks(newRecord, newChunks); err != nil {
+		t.Fatalf("replace generation: %v", err)
+	}
+
+	got, err := db.GetFileByRelPath("generation.go")
+	if err != nil {
+		t.Fatalf("get new file record: %v", err)
+	}
+	if got.Checksum != newRecord.Checksum || got.ModTimeUnixNano != newRecord.ModTimeUnixNano {
+		t.Fatalf("file generation = %+v, want checksum/mtime from new generation", got)
+	}
+	chunks, err := db.GetChunksForFile(path)
+	if err != nil {
+		t.Fatalf("get new chunks: %v", err)
+	}
+	if len(chunks) != 1 || chunks[0].ChunkID != "new" || chunks[0].ContentHash != "new-hash" {
+		t.Fatalf("chunks = %+v, want only new generation", chunks)
+	}
+	if _, found, err := db.GetEmbedding(path); err != nil || found {
+		t.Fatalf("stale file embedding found=%t err=%v", found, err)
+	}
+
+	if err := db.PruneUnreferencedChunkEmbeddings(); err != nil {
+		t.Fatalf("prune old chunk embeddings: %v", err)
+	}
+	if _, found, err := db.GetChunkEmbedding("old-hash"); err != nil || found {
+		t.Fatalf("stale chunk embedding found=%t err=%v", found, err)
+	}
+}
+
+func TestEmbeddingReadsFilterChecksumAndProvider(t *testing.T) {
+	db := newTempDB(t)
+	records := []models.FileRecord{
+		{Path: "/repo/match.go", RelPath: "match.go", Lang: models.LangGo, Checksum: "match", IndexedAt: time.Now()},
+		{Path: "/repo/provider.go", RelPath: "provider.go", Lang: models.LangGo, Checksum: "provider", IndexedAt: time.Now()},
+		{Path: "/repo/stale.go", RelPath: "stale.go", Lang: models.LangGo, Checksum: "current", IndexedAt: time.Now()},
+	}
+	for _, record := range records {
+		if err := db.UpsertFile(record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.SaveEmbeddingWithMetadata("/repo/match.go", []float32{1}, "match", "mock", "mock-lcg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveEmbeddingWithMetadata("/repo/provider.go", []float32{2}, "provider", "openai", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveEmbeddingWithMetadata("/repo/stale.go", []float32{3}, "old", "mock", "mock-lcg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetMeta("embedding_provider", "mock:mock-lcg"); err != nil {
+		t.Fatal(err)
+	}
+
+	embeddings, err := db.AllEmbeddings()
+	if err != nil {
+		t.Fatalf("AllEmbeddings: %v", err)
+	}
+	if len(embeddings) != 1 || len(embeddings["/repo/match.go"]) != 1 {
+		t.Fatalf("filtered embeddings = %+v, want only exact checksum/provider match", embeddings)
+	}
+}
+
+func TestDeletePathTreeDoesNotDeletePrefixSibling(t *testing.T) {
+	db := newTempDB(t)
+	paths := []string{
+		filepath.Join("/repo", "pkg", "a.go"),
+		filepath.Join("/repo", "pkg", "nested", "b.go"),
+		filepath.Join("/repo", "pkg2", "keep.go"),
+	}
+	for _, path := range paths {
+		if err := db.UpsertFile(models.FileRecord{
+			Path: path, RelPath: path, Lang: models.LangGo,
+			Checksum: path, IndexedAt: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	deleted, err := db.DeletePathTree(filepath.Join("/repo", "pkg"))
+	if err != nil {
+		t.Fatalf("DeletePathTree: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("deleted = %d, want 2 descendants", deleted)
+	}
+	files, err := db.AllFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Path != filepath.Join("/repo", "pkg2", "keep.go") {
+		t.Fatalf("remaining files = %+v, want prefix sibling only", files)
 	}
 }
 

@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestLangForPath(t *testing.T) {
@@ -197,5 +197,58 @@ apps/noise.py
 	}
 	if matcher.Match("other/noise.py", false) {
 		t.Error("expected other/noise.py NOT to match")
+	}
+}
+
+func TestIgnoreMatcherRejectsSymlinkAndOversizedFile(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		repo := t.TempDir()
+		outside := filepath.Join(t.TempDir(), "outside.ignore")
+		if err := os.WriteFile(outside, []byte("secret-dir/\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(repo, ".neurofsignore")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if fsutil.LoadIgnoreMatcher(repo).Match("secret-dir", true) {
+			t.Fatal("symlinked ignore rules were loaded")
+		}
+	})
+
+	t.Run("oversized", func(t *testing.T) {
+		repo := t.TempDir()
+		content := make([]byte, (1<<20)+1)
+		copy(content, "secret-dir/\n")
+		if err := os.WriteFile(filepath.Join(repo, ".neurofsignore"), content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if fsutil.LoadIgnoreMatcher(repo).Match("secret-dir", true) {
+			t.Fatal("oversized ignore rules were loaded")
+		}
+	})
+}
+
+func TestWalkRejectsSymlinksAndSpecialFiles(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	if err := os.WriteFile(outside, []byte("package outside\nconst Secret = 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "inside.go"), []byte("package inside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "linked.go")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var visited []string
+	if err := fsutil.Walk(root, func(path string, _ os.FileInfo) error {
+		visited = append(visited, filepath.Base(path))
+		return nil
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(visited) != 1 || visited[0] != "inside.go" {
+		t.Fatalf("visited = %v; symlink target must stay outside scan", visited)
 	}
 }

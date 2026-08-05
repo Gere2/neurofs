@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "measured_at": "2026-07-29T13:51:26Z",
+  "actor_kind": "agent",
+  "signal_kind": "mechanical_cross_shape",
+  "binary_sha256": "15fc1c8600ef98062aa4a3c4bc13e941762626412336314cbed85dc4b5d83e6f",
+  "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+  "source_tree_sha256": "a89a5a1af42d19a7a17ea916357137d98d3f4e3c4037dd09aad69fbbf66b927d",
+  "shapes": [
+    {
+      "name": "NeuroFS",
+      "kind": "go_service",
+      "repo_url": "https://github.com/Gere2/neurofs",
+      "commit_sha": "2d347b01b1508a6766164e603b2591f92a2ef816",
+      "fixture_set_sha256": "08a8d3f7c0c8c814053ac498431b2f272c180e90dbafbbdc30268adb66c232d2",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.48351848102585265,
+        "overall_recall": 0.685897435897436,
+        "miss_rate": 0.07692307692307693,
+        "report_sha256": "039d8b742924d5cfa39e41bec61e8d6275b1bcda74faf219408c4c3cc2f5ade5"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 17,
+        "overshoots": 0
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.9038461538461537,
+        "fixtures": 13,
+        "perfect": 9
+      },
+      "bench": {
+        "questions": 12,
+        "top3_percent": 66.7,
+        "report_sha256": "e52aae8595e91d030384819c2c5aa1598c875cb348877af101d68802f2fb9daf"
+      }
+    },
+    {
+      "name": "pallets/click",
+      "kind": "python_library",
+      "repo_url": "https://github.com/pallets/click",
+      "commit_sha": "00e592cea702e0b2caa0dee42489fdb1c22cd845",
+      "fixture_set_sha256": "d4d207777871fddc83ededbee0af22dab85ca21bc645c5296a88bbcd225e68c4",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.7170758380106823,
+        "overall_recall": 0.6666666666666666,
+        "miss_rate": 0,
+        "report_sha256": "58ce0de8de6ce8336ee7f9dfeebd4fce963b077cfc9985e1794e307b51bab240"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 5,
+        "overshoots": 0
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.7999999999999999,
+        "fixtures": 5,
+        "perfect": 2
+      },
+      "bench": {
+        "questions": 5,
+        "top3_percent": 100,
+        "report_sha256": "b624614d0dc9b95736da802b6480432a23bb3416ac4a8c93837d2692f9716ce3"
+      }
+    },
+    {
+      "name": "vuejs/core",
+      "kind": "typescript_frontend",
+      "repo_url": "https://github.com/vuejs/core",
+      "commit_sha": "b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5",
+      "fixture_set_sha256": "92733dbc37ce5e75306f4d4cc72e21f3886cbf66a9a7927391aadc70a583ddaa",
+      "economy": {
+        "verdict": "PASS",
+        "mean_token_reduction": 0.7336850854306359,
+        "overall_recall": 0.7222222222222222,
+        "miss_rate": 0,
+        "report_sha256": "3b33b21aefc271950ee6b6cefa87cf65ca248a48d7f5bcf03be6b6697af41551"
+      },
+      "g2": {
+        "verdict": "PASS",
+        "bundles": 6,
+        "overshoots": 0
+      },
+      "g3": {
+        "verdict": "PASS",
+        "mean_recall": 0.8333333333333334,
+        "fixtures": 6,
+        "perfect": 4
+      },
+      "bench": {
+        "questions": 6,
+        "top3_percent": 100,
+        "report_sha256": "9fb367350de23a4afd865b7997bbeeac7ef3f283f282966645c2cdc33ca4aeb2"
+      }
+    }
+  ]
+}

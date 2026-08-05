@@ -1,9 +1,9 @@
 package cli
 
 import (
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 // loadProjectInfo is a thin wrapper around taskflow.LoadProjectInfo so the

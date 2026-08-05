@@ -1,0 +1,72 @@
+NeuroFS — benchmark on /Users/gere/NeuroMFS
+  questions : /Users/gere/NeuroMFS/.neurofs-bench.json
+
+  questions : 12
+  top-k     : 3
+
+  [✗] "How does the ranker score filename matches and how is that weight defined?"
+       expects : internal/ranking/ranking.go
+       matched : internal/ranking/ranking.go (rank 5)
+       top 5   : internal/mcp/tools.go(12.84), internal/retrieval/search.go(12.68), internal/learn/learn.go(12.49), internal/ranking/weights.go(12.12), internal/ranking/ranking.go(12.05)
+
+  [✗] "What tools does the MCP server expose to the client?"
+       expects : internal/mcp/tools.go
+       matched : internal/mcp/tools.go (rank 4)
+       top 5   : internal/cli/mcp.go(17.24), internal/mcp/server.go(13.06), internal/cli/mcp_claude.go(12.74), internal/mcp/tools.go(12.43), README.md(11.68)
+
+  [✓] "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?"
+       expects : internal/packager/packager.go, internal/packager/excerpt.go
+       matched : internal/packager/packager.go (rank 3)
+       top 5   : internal/models/models.go(22.42), internal/mcp/tools.go(22.17), internal/packager/packager.go(21.44), internal/packager/packager_test.go(20.79), internal/ui/api_pack.go(18.91)
+
+  [✗] "What does UpgradeWithSlack do and what is the upgrade cap?"
+       expects : internal/packager/excerpt_go.go
+       matched : internal/packager/excerpt_go.go (rank 70)
+       top 5   : internal/packager/packager_test.go(8.65), internal/packager/packager.go(7.78), docs/g5_fixtures/click/testing.json(7.35), internal/models/ledger.go(5.33), internal/models/models.go(5.30)
+
+  [✓] "How does exact-content retrieval keep scoring and snippets on the same indexed session snapshot?"
+       expects : internal/retrieval/search.go
+       matched : internal/retrieval/search.go (rank 1)
+       top 5   : internal/retrieval/search.go(23.03), README.md(22.39), internal/retrieval/sessionpool.go(20.92), internal/retrieval/search_test.go(20.30), internal/mcp/tools.go(16.19)
+
+  [✓] "How does the session ledger manage timelines and cognitive history?"
+       expects : internal/memory/ledger.go, internal/memory/exporters.go
+       matched : internal/memory/ledger.go (rank 1)
+       top 5   : internal/memory/ledger.go(16.75), internal/models/ledger.go(14.04), internal/memory/session.go(10.68), internal/learn/learn.go(8.41), internal/retrieval/sessionpool.go(7.85)
+
+  [✓] "How does storage open the database with WAL mode and what pragmas are set?"
+       expects : internal/storage/storage.go
+       matched : internal/storage/storage.go (rank 1)
+       top 5   : internal/storage/storage.go(22.27), internal/indexer/chunker.go(9.68), internal/storage/storage_test.go(9.38), internal/taskflow/taskflow.go(9.00), internal/embeddings/embeddings.go(8.81)
+
+  [✓] "How does the weight tuner optimize retrieval scoring weights against fixtures?"
+       expects : internal/learn/learn.go
+       matched : internal/learn/learn.go (rank 3)
+       top 5   : internal/ranking/weights.go(22.51), internal/retrieval/weights.go(22.13), internal/learn/learn.go(20.91), internal/retrieval/weights_test.go(18.75), internal/ranking/weights_test.go(17.93)
+
+  [✓] "Where are retrieval usage entries and feedback appended to their ledgers?"
+       expects : internal/usage/usage.go
+       matched : internal/usage/usage.go (rank 1)
+       top 5   : internal/usage/usage.go(21.02), internal/usage/usage_test.go(14.39), internal/mcp/learnloop.go(13.78), internal/contextusage/contextusage.go(13.47), internal/memory/ledger.go(12.77)
+
+  [✓] "How are markdown files chunked into heading sections?"
+       expects : internal/indexer/chunker.go
+       matched : internal/indexer/chunker.go (rank 2)
+       top 5   : internal/models/models.go(15.77), internal/indexer/chunker.go(14.90), internal/retrieval/search.go(12.62), internal/mcp/tools.go(11.46), internal/taskflow/taskflow.go(11.08)
+
+  [✓] "How does the pivot gate aggregate per-criterion verdicts into an overall verdict?"
+       expects : internal/gate/gate.go
+       matched : internal/gate/gate.go (rank 1)
+       top 5   : internal/gate/gate.go(28.80), internal/gate/crossshape.go(20.44), internal/cli/gate.go(19.65), docs/PIVOT_GATE.md(19.13), internal/gate/gate_test.go(14.46)
+
+  [✗] "How does the iso-recall economy comparison build its native baseline arm?"
+       expects : internal/abeval/abeval.go
+       matched : internal/abeval/abeval.go (rank 7)
+       top 5   : README.md(17.07), internal/cli/economy.go(16.79), internal/gate/baseline.go(13.59), internal/gate/crossshape.go(12.97), docs/phase0_economy.md(12.10)
+
+  summary:
+    hits      : 8 / 12
+    top-1     : 41.7%
+    top-3     : 66.7%
+    top-5     : 83.3%
+    mean rank : 1.62 (hits only)

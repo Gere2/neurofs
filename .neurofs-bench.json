@@ -17,7 +17,7 @@
     "expects": ["internal/packager/excerpt_go.go"]
   },
   {
-    "question": "How does the search retrieval use ripgrep and what is the timeout value?",
+    "question": "How does exact-content retrieval keep scoring and snippets on the same indexed session snapshot?",
     "expects": ["internal/retrieval/search.go"]
   },
   {

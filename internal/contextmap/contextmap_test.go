@@ -3,7 +3,7 @@ package contextmap
 import (
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestBuildLogicMapIncludesRangesCallsRelationsAndTests(t *testing.T) {

@@ -55,7 +55,6 @@ func TestAppendIsAppendOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	defer f.Close()
 	var lines []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -72,5 +71,12 @@ func TestAppendIsAppendOnly(t *testing.T) {
 		if e.Query != want {
 			t.Fatalf("line %d query: got %q want %q", i, e.Query, want)
 		}
+	}
+	if err := sc.Err(); err != nil {
+		_ = f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -7,16 +7,18 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/ranking"
 )
+
+const maxQuestionsBytes = int64(4 << 20)
 
 // Question pairs a natural-language query with the paths the ranker is
 // expected to surface near the top. Any one of `Expects` being in the top-k
@@ -37,7 +39,7 @@ type Question struct {
 // files or missing paths produce a descriptive error so users know what
 // they forgot to configure.
 func LoadQuestions(path string) ([]Question, error) {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxQuestionsBytes)
 	if err != nil {
 		return nil, fmt.Errorf("benchmark: read %s: %w", path, err)
 	}
@@ -118,10 +120,28 @@ type Summary struct {
 	BundleMeanFiles  int // average files included per bundle
 }
 
-// Run ranks files for each question and returns per-question Results plus
-// aggregated metrics. Missing expected files (typos in the benchmark) are
-// reported via Result.HitRank == 0.
+// Run ranks files for each question without constructing bundles. It is
+// retained for source compatibility with non-bundling callers. Bundle
+// benchmarks must use RunChecked so a packing failure cannot be mistaken for
+// a zero-token bundle.
 func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Result, Summary) {
+	if opts.ComputeBundle {
+		panic("benchmark.Run: ComputeBundle requires RunChecked")
+	}
+	results, summary, err := RunChecked(files, questions, opts)
+	if err != nil {
+		// RunChecked can only fail while constructing a bundle, which the
+		// guard above disables. Keep this assertion fail-closed if that
+		// contract ever changes.
+		panic(fmt.Sprintf("benchmark.Run: unexpected error: %v", err))
+	}
+	return results, summary
+}
+
+// RunChecked ranks files and propagates bundle construction failures.
+// Missing expected files (typos in the benchmark) are still reported via
+// Result.HitRank == 0 rather than as execution errors.
+func RunChecked(files []models.FileRecord, questions []Question, opts RunOptions) ([]Result, Summary, error) {
 	if opts.TopK <= 0 {
 		opts.TopK = 3
 	}
@@ -199,10 +219,11 @@ func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Re
 				Budget:           packBudget,
 				PreferSignatures: opts.PreferSignatures,
 			})
-			if err == nil {
-				res.BundleTokens = bundle.Stats.TokensUsed
-				res.BundleFiles = bundle.Stats.FilesIncluded
+			if err != nil {
+				return nil, Summary{}, fmt.Errorf("pack benchmark question %q: %w", q.Question, err)
 			}
+			res.BundleTokens = bundle.Stats.TokensUsed
+			res.BundleFiles = bundle.Stats.FilesIncluded
 		}
 
 		results = append(results, res)
@@ -223,7 +244,7 @@ func Run(files []models.FileRecord, questions []Question, opts RunOptions) ([]Re
 		applyBundleMetrics(&summary, results)
 	}
 
-	return results, summary
+	return results, summary, nil
 }
 
 // applyBundleMetrics fills Summary.Bundle* from the per-question sizes.

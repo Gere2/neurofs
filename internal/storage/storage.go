@@ -5,13 +5,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/models"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,10 +20,11 @@ const schema = `
 CREATE TABLE IF NOT EXISTS files (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     path       TEXT    NOT NULL UNIQUE,
-    rel_path   TEXT    NOT NULL,
-    lang       TEXT    NOT NULL,
-    size       INTEGER NOT NULL,
-    lines      INTEGER NOT NULL,
+	    rel_path   TEXT    NOT NULL,
+	    lang       TEXT    NOT NULL,
+	    size       INTEGER NOT NULL,
+	    mtime_ns   INTEGER NOT NULL DEFAULT 0,
+	    lines      INTEGER NOT NULL,
     symbols    TEXT    NOT NULL DEFAULT '[]',
     imports    TEXT    NOT NULL DEFAULT '[]',
     checksum   TEXT    NOT NULL,
@@ -50,11 +52,14 @@ CREATE TABLE IF NOT EXISTS proxy_logs (
 
 CREATE INDEX IF NOT EXISTS idx_proxy_logs_timestamp ON proxy_logs(timestamp);
 
-CREATE TABLE IF NOT EXISTS file_embeddings (
-    path      TEXT PRIMARY KEY,
-    embedding BLOB NOT NULL,
-    FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
-);
+	CREATE TABLE IF NOT EXISTS file_embeddings (
+	    path      TEXT PRIMARY KEY,
+	    embedding BLOB NOT NULL,
+	    checksum  TEXT NOT NULL DEFAULT '',
+	    provider  TEXT NOT NULL DEFAULT '',
+	    model     TEXT NOT NULL DEFAULT '',
+	    FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+	);
 
 CREATE TABLE IF NOT EXISTS file_relations (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -117,10 +122,31 @@ func Open(dbPath string) (*DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return nil, fmt.Errorf("storage: create db dir: %w", err)
 	}
+	expectedInfo, err := prepareDatabasePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("storage: open sqlite: %w", err)
+	}
+
+	// Keep every connection-scoped PRAGMA on the one connection this handle
+	// will use.
+	db.SetMaxOpenConns(1) // SQLite is single-writer
+
+	// Force SQLite to open the file now, then ensure the path still names the
+	// regular file inspected (or securely created) above. This rejects the
+	// stable index.db -> external-file symlink case before any schema writes
+	// and narrows replacement races around sql.Open.
+	if err := execWithBusyRetry(db, "PRAGMA busy_timeout = 5000"); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("storage: connect sqlite: %w", err)
+	}
+	if err := verifyDatabasePath(dbPath, expectedInfo); err != nil {
+		_ = db.Close()
+		return nil, err
 	}
 
 	// busy_timeout must be set before journal_mode so the WAL switch
@@ -129,27 +155,154 @@ func Open(dbPath string) (*DB, error) {
 	// pair for WAL. Without these, two concurrent `neurofs scan`
 	// invocations collide instantly with SQLITE_BUSY.
 	pragmas := []string{
-		"PRAGMA busy_timeout = 5000",
 		"PRAGMA journal_mode = WAL",
 		"PRAGMA synchronous = NORMAL",
 		"PRAGMA foreign_keys = ON",
 	}
 	for _, p := range pragmas {
 		if err := execWithBusyRetry(db, p); err != nil {
+			_ = db.Close()
 			return nil, fmt.Errorf("storage: %s: %w", p, err)
 		}
 	}
 
-	db.SetMaxOpenConns(1) // SQLite is single-writer
-
 	if err := execWithBusyRetry(db, schema); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("storage: apply schema: %w", err)
 	}
 	if err := ensureColumn(db, "chunks", "calls", `ALTER TABLE chunks ADD COLUMN calls TEXT NOT NULL DEFAULT '[]'`); err != nil {
+		_ = db.Close()
 		return nil, fmt.Errorf("storage: migrate chunks.calls: %w", err)
+	}
+	migrations := []struct {
+		table  string
+		column string
+		ddl    string
+	}{
+		{"files", "mtime_ns", `ALTER TABLE files ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0`},
+		{"file_embeddings", "checksum", `ALTER TABLE file_embeddings ADD COLUMN checksum TEXT NOT NULL DEFAULT ''`},
+		{"file_embeddings", "provider", `ALTER TABLE file_embeddings ADD COLUMN provider TEXT NOT NULL DEFAULT ''`},
+		{"file_embeddings", "model", `ALTER TABLE file_embeddings ADD COLUMN model TEXT NOT NULL DEFAULT ''`},
+	}
+	for _, migration := range migrations {
+		if err := ensureColumn(db, migration.table, migration.column, migration.ddl); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("storage: migrate %s.%s: %w", migration.table, migration.column, err)
+		}
 	}
 
 	return &DB{db: db, path: dbPath}, nil
+}
+
+// OpenReadOnly opens an existing NeuroFS index without creating directories,
+// applying schema migrations, or changing SQLite journal settings. It is for
+// measurement paths such as gate that must observe the exact indexed
+// generation already on disk.
+func OpenReadOnly(dbPath string) (*DB, error) {
+	expectedInfo, err := inspectDatabasePath(dbPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := rejectPendingWAL(dbPath); err != nil {
+		return nil, err
+	}
+
+	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}
+	query := dsn.Query()
+	// immutable prevents SQLite from creating otherwise-empty -wal/-shm
+	// coordination files for a read. A non-empty WAL is rejected above rather
+	// than silently ignored, so the immutable snapshot cannot omit commits.
+	query.Set("immutable", "1")
+	query.Set("mode", "ro")
+	dsn.RawQuery = query.Encode()
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return nil, fmt.Errorf("storage: open sqlite read-only: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+
+	// Both pragmas are connection-local. busy_timeout gives concurrent scans a
+	// chance to finish; query_only is defense in depth in addition to mode=ro.
+	for _, pragma := range []string{
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA query_only = ON",
+	} {
+		if err := execWithBusyRetry(db, pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("storage: %s: %w", pragma, err)
+		}
+	}
+	if err := verifyDatabasePath(dbPath, expectedInfo); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := rejectPendingWAL(dbPath); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return &DB{db: db, path: dbPath}, nil
+}
+
+func prepareDatabasePath(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600)
+		if createErr != nil && !os.IsExist(createErr) {
+			return nil, fmt.Errorf("storage: create database file: %w", createErr)
+		}
+		if createErr == nil {
+			if closeErr := file.Close(); closeErr != nil {
+				return nil, fmt.Errorf("storage: close new database file: %w", closeErr)
+			}
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("storage: inspect database file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("storage: database path must be a regular non-symlink file: %s", path)
+	}
+	return info, nil
+}
+
+func inspectDatabasePath(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("storage: inspect database file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("storage: database path must be a regular non-symlink file: %s", path)
+	}
+	return info, nil
+}
+
+func rejectPendingWAL(dbPath string) error {
+	info, err := os.Stat(dbPath + "-wal")
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("storage: inspect read-only WAL: %w", err)
+	}
+	if info.Size() > 0 {
+		return fmt.Errorf("storage: cannot take immutable read-only snapshot with a non-empty WAL: %s-wal", dbPath)
+	}
+	return nil
+}
+
+func verifyDatabasePath(path string, expected os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("storage: verify database file: %w", err)
+	}
+	if current.Mode()&os.ModeSymlink != 0 || !current.Mode().IsRegular() {
+		return fmt.Errorf("storage: database path must be a regular non-symlink file: %s", path)
+	}
+	if !os.SameFile(expected, current) {
+		return fmt.Errorf("storage: database path changed while opening: %s", path)
+	}
+	return nil
 }
 
 func ensureColumn(db *sql.DB, table, column, ddl string) error {
@@ -157,7 +310,7 @@ func ensureColumn(db *sql.DB, table, column, ddl string) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 	for rows.Next() {
 		var (
 			cid        int
@@ -175,6 +328,11 @@ func ensureColumn(db *sql.DB, table, column, ddl string) error {
 		}
 	}
 	if err := rows.Err(); err != nil {
+		return err
+	}
+	// MaxOpenConns(1) keeps connection-scoped PRAGMAs reliable. Release that
+	// sole connection before executing a missing-column migration.
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	return execWithBusyRetry(db, ddl)
@@ -206,6 +364,18 @@ func isSQLiteBusy(err error) bool {
 		strings.Contains(text, "database table is locked")
 }
 
+func closeRows(rows *sql.Rows) {
+	_ = rows.Close()
+}
+
+func closeStmt(stmt *sql.Stmt) {
+	_ = stmt.Close()
+}
+
+func rollback(tx *sql.Tx) {
+	_ = tx.Rollback()
+}
+
 // Close closes the underlying database connection.
 func (s *DB) Close() error {
 	return s.db.Close()
@@ -228,22 +398,23 @@ func (s *DB) UpsertFile(f models.FileRecord) error {
 	}
 
 	_, err = s.db.Exec(`
-		INSERT INTO files (path, rel_path, lang, size, lines, symbols, imports, checksum, indexed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO files (path, rel_path, lang, size, mtime_ns, lines, symbols, imports, checksum, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(path) DO UPDATE SET
 			rel_path   = excluded.rel_path,
 			lang       = excluded.lang,
 			size       = excluded.size,
+			mtime_ns   = excluded.mtime_ns,
 			lines      = excluded.lines,
 			symbols    = excluded.symbols,
 			imports    = excluded.imports,
 			checksum   = excluded.checksum,
 			indexed_at = excluded.indexed_at
-	`,
+		`,
 		f.Path, f.RelPath, string(f.Lang),
-		f.Size, f.Lines,
+		f.Size, f.ModTimeUnixNano, f.Lines,
 		string(syms), string(imps),
-		f.Checksum, f.IndexedAt.UTC().Format(time.RFC3339),
+		f.Checksum, f.IndexedAt.UTC().Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return fmt.Errorf("storage: upsert %s: %w", f.RelPath, err)
@@ -251,17 +422,79 @@ func (s *DB) UpsertFile(f models.FileRecord) error {
 	return nil
 }
 
+// UpsertFileAndChunks atomically publishes a file record and its chunk
+// generation. If the source checksum changed, the previous file-level
+// embedding is invalidated in the same transaction so readers can never pair a
+// new FileRecord with a stale vector.
+func (s *DB) UpsertFileAndChunks(f models.FileRecord, chunks []models.Chunk) error {
+	syms, err := json.Marshal(f.Symbols)
+	if err != nil {
+		return fmt.Errorf("storage: marshal symbols: %w", err)
+	}
+	imps, err := json.Marshal(f.Imports)
+	if err != nil {
+		return fmt.Errorf("storage: marshal imports: %w", err)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("storage: begin file generation: %w", err)
+	}
+	defer rollback(tx)
+
+	var previousChecksum string
+	err = tx.QueryRow(`SELECT checksum FROM files WHERE path = ?`, f.Path).Scan(&previousChecksum)
+	if err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("storage: read previous checksum: %w", err)
+	}
+	previousExists := err == nil
+
+	if _, err := tx.Exec(`
+		INSERT INTO files (path, rel_path, lang, size, mtime_ns, lines, symbols, imports, checksum, indexed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			rel_path = excluded.rel_path,
+			lang = excluded.lang,
+			size = excluded.size,
+			mtime_ns = excluded.mtime_ns,
+			lines = excluded.lines,
+			symbols = excluded.symbols,
+			imports = excluded.imports,
+			checksum = excluded.checksum,
+			indexed_at = excluded.indexed_at
+	`,
+		f.Path, f.RelPath, string(f.Lang), f.Size, f.ModTimeUnixNano,
+		f.Lines, string(syms), string(imps), f.Checksum,
+		f.IndexedAt.UTC().Format(time.RFC3339Nano),
+	); err != nil {
+		return fmt.Errorf("storage: upsert file generation %s: %w", f.RelPath, err)
+	}
+
+	if err := replaceChunksInTx(tx, f.Path, chunks); err != nil {
+		return err
+	}
+	if previousExists && previousChecksum != f.Checksum {
+		if _, err := tx.Exec(`DELETE FROM file_embeddings WHERE path = ?`, f.Path); err != nil {
+			return fmt.Errorf("storage: invalidate stale file embedding: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit file generation: %w", err)
+	}
+	return nil
+}
+
 // AllFiles returns every FileRecord in the index.
 func (s *DB) AllFiles() ([]models.FileRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, path, rel_path, lang, size, lines, symbols, imports, checksum, indexed_at
+		SELECT id, path, rel_path, lang, size, mtime_ns, lines, symbols, imports, checksum, indexed_at
 		FROM files
 		ORDER BY rel_path
 	`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var records []models.FileRecord
 	for rows.Next() {
@@ -277,14 +510,14 @@ func (s *DB) AllFiles() ([]models.FileRecord, error) {
 // GetFileByRelPath returns a FileRecord by its relative path.
 func (s *DB) GetFileByRelPath(relPath string) (models.FileRecord, error) {
 	rows, err := s.db.Query(`
-		SELECT id, path, rel_path, lang, size, lines, symbols, imports, checksum, indexed_at
+		SELECT id, path, rel_path, lang, size, mtime_ns, lines, symbols, imports, checksum, indexed_at
 		FROM files
 		WHERE rel_path = ?
 	`, relPath)
 	if err != nil {
 		return models.FileRecord{}, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	if !rows.Next() {
 		return models.FileRecord{}, fmt.Errorf("file not found: %s", relPath)
@@ -306,7 +539,7 @@ func (s *DB) LangBreakdown() (map[models.Lang]int, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	out := make(map[models.Lang]int)
 	for rows.Next() {
@@ -387,7 +620,7 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var toDelete []string
 	for rows.Next() {
@@ -405,7 +638,9 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	// rows must be closed before opening a write transaction on the same
 	// single-connection SQLite handle; otherwise the tx would deadlock
 	// waiting for the cursor.
-	rows.Close()
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("storage: close path cursor: %w", err)
+	}
 
 	if len(toDelete) == 0 {
 		return 0, nil
@@ -415,7 +650,7 @@ func (s *DB) DeleteRemovedFiles(existingPaths map[string]bool) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("storage: begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 
 	for _, p := range toDelete {
 		if err := deleteFileRecord(tx, p); err != nil {
@@ -437,7 +672,7 @@ func (s *DB) DeleteFile(path string) error {
 	if err != nil {
 		return fmt.Errorf("storage: begin delete file: %w", err)
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 
 	if err := deleteFileRecord(tx, path); err != nil {
 		return err
@@ -449,6 +684,59 @@ func (s *DB) DeleteFile(path string) error {
 		return fmt.Errorf("storage: commit delete file: %w", err)
 	}
 	return nil
+}
+
+// DeletePathTree deletes an indexed file or every indexed descendant of a
+// directory path. It is used for directory rename/remove events, for which
+// fsnotify is not required to emit one event per child.
+func (s *DB) DeletePathTree(path string) (int, error) {
+	root := filepath.Clean(path)
+	prefix := root + string(os.PathSeparator)
+
+	rows, err := s.db.Query(`SELECT path FROM files`)
+	if err != nil {
+		return 0, fmt.Errorf("storage: list paths for tree delete: %w", err)
+	}
+	var paths []string
+	for rows.Next() {
+		var candidate string
+		if err := rows.Scan(&candidate); err != nil {
+			_ = rows.Close()
+			return 0, fmt.Errorf("storage: scan path for tree delete: %w", err)
+		}
+		cleaned := filepath.Clean(candidate)
+		if cleaned == root || strings.HasPrefix(cleaned, prefix) {
+			paths = append(paths, candidate)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if len(paths) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("storage: begin tree delete: %w", err)
+	}
+	defer rollback(tx)
+	for _, candidate := range paths {
+		if err := deleteFileRecord(tx, candidate); err != nil {
+			return 0, err
+		}
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("storage: commit tree delete: %w", err)
+	}
+	return len(paths), nil
 }
 
 func deleteFileRecord(tx *sql.Tx, path string) error {
@@ -472,7 +760,7 @@ func scanFile(rows *sql.Rows) (models.FileRecord, error) {
 	)
 	if err := rows.Scan(
 		&r.ID, &r.Path, &r.RelPath, &lang,
-		&r.Size, &r.Lines, &symsJSON, &impsJSON,
+		&r.Size, &r.ModTimeUnixNano, &r.Lines, &symsJSON, &impsJSON,
 		&r.Checksum, &indexedAt,
 	); err != nil {
 		return r, err
@@ -528,7 +816,7 @@ func (s *DB) GetProxyLogs(limit int) ([]ProxyLogRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var logs []ProxyLogRecord
 	for rows.Next() {
@@ -565,19 +853,47 @@ func (s *DB) GetProxySummary() (int, int, float64, error) {
 
 // SaveEmbedding stores the binary embedding for a given file path.
 func (s *DB) SaveEmbedding(path string, embedding []float32) error {
+	return s.SaveEmbeddingWithMetadata(path, embedding, "", "", "")
+}
+
+// SaveEmbeddingWithMetadata stores a file embedding together with the source
+// checksum and vector-space provenance that produced it.
+func (s *DB) SaveEmbeddingWithMetadata(path string, embedding []float32, checksum, provider, model string) error {
 	encoded, err := embeddings.EncodeEmbedding(embedding)
 	if err != nil {
 		return fmt.Errorf("storage: encode embedding: %w", err)
 	}
 	_, err = s.db.Exec(`
-		INSERT INTO file_embeddings (path, embedding)
-		VALUES (?, ?)
-		ON CONFLICT(path) DO UPDATE SET embedding = excluded.embedding
-	`, path, encoded)
+		INSERT INTO file_embeddings (path, embedding, checksum, provider, model)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET
+			embedding = excluded.embedding,
+			checksum = excluded.checksum,
+			provider = excluded.provider,
+			model = excluded.model
+	`, path, encoded, checksum, provider, model)
 	if err != nil {
 		return fmt.Errorf("storage: save embedding: %w", err)
 	}
 	return nil
+}
+
+// HasFileEmbedding reports whether path has an embedding for the exact source
+// checksum and vector space requested.
+func (s *DB) HasFileEmbedding(path, checksum, provider, model string) (bool, error) {
+	var one int
+	err := s.db.QueryRow(`
+		SELECT 1
+		FROM file_embeddings
+		WHERE path = ? AND checksum = ? AND provider = ? AND model = ?
+	`, path, checksum, provider, model).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("storage: check file embedding: %w", err)
+	}
+	return true, nil
 }
 
 // GetEmbedding retrieves the embedding vector for a given file path.
@@ -600,11 +916,26 @@ func (s *DB) GetEmbedding(path string) ([]float32, bool, error) {
 
 // AllEmbeddings returns a map of all file paths to their embedding vectors.
 func (s *DB) AllEmbeddings() (map[string][]float32, error) {
-	rows, err := s.db.Query(`SELECT path, embedding FROM file_embeddings`)
+	query := `SELECT file_embeddings.path, file_embeddings.embedding FROM file_embeddings`
+	var args []any
+	provider, model, configured, err := s.configuredEmbeddingProvider()
+	if err != nil {
+		return nil, err
+	}
+	if configured {
+		query += `
+			JOIN files ON files.path = file_embeddings.path
+			WHERE file_embeddings.provider = ?
+			  AND file_embeddings.model = ?
+			  AND file_embeddings.checksum = files.checksum
+		`
+		args = append(args, provider, model)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: query all embeddings: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	res := make(map[string][]float32)
 	for rows.Next() {
@@ -624,13 +955,28 @@ func (s *DB) AllEmbeddings() (map[string][]float32, error) {
 	return res, rows.Err()
 }
 
+func (s *DB) configuredEmbeddingProvider() (provider, model string, configured bool, err error) {
+	value, ok, err := s.GetMeta("embedding_provider")
+	if err != nil {
+		return "", "", false, fmt.Errorf("storage: get embedding provider metadata: %w", err)
+	}
+	if !ok {
+		return "", "", false, nil
+	}
+	provider, model, ok = strings.Cut(value, ":")
+	if !ok || provider == "" || model == "" {
+		return "", "", false, fmt.Errorf("storage: invalid embedding provider metadata %q", value)
+	}
+	return provider, model, true, nil
+}
+
 // ClearIndex truncates all index tables in a transaction.
 func (s *DB) ClearIndex() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 
 	if _, err := tx.Exec(`DELETE FROM file_relations`); err != nil {
 		return err
@@ -660,7 +1006,7 @@ func (s *DB) UpdateRelations(relations []models.FileRelation) error {
 	if err != nil {
 		return fmt.Errorf("storage: begin update relations: %w", err)
 	}
-	defer tx.Rollback()
+	defer rollback(tx)
 
 	if _, err := tx.Exec(`DELETE FROM file_relations`); err != nil {
 		return fmt.Errorf("storage: clear relations: %w", err)
@@ -673,7 +1019,7 @@ func (s *DB) UpdateRelations(relations []models.FileRelation) error {
 	if err != nil {
 		return fmt.Errorf("storage: prepare insert relation: %w", err)
 	}
-	defer stmt.Close()
+	defer closeStmt(stmt)
 
 	for _, r := range relations {
 		if _, err := stmt.Exec(r.SourcePath, r.TargetPath, r.RelType); err != nil {
@@ -697,7 +1043,7 @@ func (s *DB) GetRelationsForSource(sourcePath string) ([]models.FileRelation, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var rels []models.FileRelation
 	for rows.Next() {
@@ -720,7 +1066,7 @@ func (s *DB) GetRelationsForTarget(targetPath string) ([]models.FileRelation, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var rels []models.FileRelation
 	for rows.Next() {
@@ -742,7 +1088,7 @@ func (s *DB) AllRelations() ([]models.FileRelation, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	var rels []models.FileRelation
 	for rows.Next() {
@@ -763,18 +1109,25 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	_, err = tx.Exec(`DELETE FROM chunks WHERE file_path = ?`, filePath)
-	if err != nil {
+	if err := replaceChunksInTx(tx, filePath, chunks); err != nil {
+		return err
+	}
+	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("storage: commit chunks: %w", err)
+	}
+	return nil
+}
+
+func replaceChunksInTx(tx *sql.Tx, filePath string, chunks []models.Chunk) error {
+	if _, err := tx.Exec(`DELETE FROM chunks WHERE file_path = ?`, filePath); err != nil {
 		return fmt.Errorf("storage: delete old chunks: %w", err)
 	}
-
 	if len(chunks) == 0 {
-		if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
-			return err
-		}
-		return tx.Commit()
+		return nil
 	}
-
 	stmt, err := tx.Prepare(`
 		INSERT INTO chunks (
 			file_path, chunk_id, parent_id, kind, symbol,
@@ -785,9 +1138,9 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 	if err != nil {
 		return fmt.Errorf("storage: prepare chunk insert: %w", err)
 	}
-	defer stmt.Close()
+	defer closeStmt(stmt)
 
-	nowStr := time.Now().UTC().Format(time.RFC3339)
+	nowStr := time.Now().UTC().Format(time.RFC3339Nano)
 	for _, c := range chunks {
 		calls, err := json.Marshal(c.Calls)
 		if err != nil {
@@ -801,13 +1154,6 @@ func (s *DB) UpdateChunks(filePath string, chunks []models.Chunk) error {
 		if err != nil {
 			return fmt.Errorf("storage: insert chunk %s: %w", c.ChunkID, err)
 		}
-	}
-
-	if err := pruneUnreferencedChunkEmbeddings(tx); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("storage: commit chunks: %w", err)
 	}
 	return nil
 }
@@ -831,6 +1177,13 @@ func pruneUnreferencedChunkEmbeddings(exec sqlExecer) error {
 	return nil
 }
 
+// PruneUnreferencedChunkEmbeddings removes cached vectors no longer referenced
+// by any current chunk. Full scans call this once after publishing every file
+// generation rather than rescanning the global cache once per file.
+func (s *DB) PruneUnreferencedChunkEmbeddings() error {
+	return pruneUnreferencedChunkEmbeddings(s.db)
+}
+
 // SaveChunkEmbedding stores the binary embedding for a given content hash.
 func (s *DB) SaveChunkEmbedding(contentHash string, embedding []float32, provider, model string) error {
 	encoded, err := embeddings.EncodeEmbedding(embedding)
@@ -841,7 +1194,7 @@ func (s *DB) SaveChunkEmbedding(contentHash string, embedding []float32, provide
 		INSERT INTO chunk_embeddings (content_hash, embedding, provider, model, created_at)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(content_hash) DO UPDATE SET embedding = excluded.embedding, provider = excluded.provider, model = excluded.model, created_at = excluded.created_at
-	`, contentHash, encoded, provider, model, time.Now().UTC().Format(time.RFC3339))
+	`, contentHash, encoded, provider, model, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return fmt.Errorf("storage: save chunk embedding: %w", err)
 	}
@@ -851,8 +1204,24 @@ func (s *DB) SaveChunkEmbedding(contentHash string, embedding []float32, provide
 // GetChunkEmbedding retrieves the embedding vector for a given content hash.
 // Returns (nil, false, nil) if not found.
 func (s *DB) GetChunkEmbedding(contentHash string) ([]float32, bool, error) {
+	return s.getChunkEmbedding(contentHash, "", "", false)
+}
+
+// GetChunkEmbeddingForProvider retrieves a cached chunk vector only when its
+// provider and model match the requested vector space.
+func (s *DB) GetChunkEmbeddingForProvider(contentHash, provider, model string) ([]float32, bool, error) {
+	return s.getChunkEmbedding(contentHash, provider, model, true)
+}
+
+func (s *DB) getChunkEmbedding(contentHash, provider, model string, filterProvider bool) ([]float32, bool, error) {
 	var encoded []byte
-	err := s.db.QueryRow(`SELECT embedding FROM chunk_embeddings WHERE content_hash = ?`, contentHash).Scan(&encoded)
+	query := `SELECT embedding FROM chunk_embeddings WHERE content_hash = ?`
+	args := []any{contentHash}
+	if filterProvider {
+		query += ` AND provider = ? AND model = ?`
+		args = append(args, provider, model)
+	}
+	err := s.db.QueryRow(query, args...).Scan(&encoded)
 	if err == sql.ErrNoRows {
 		return nil, false, nil
 	}
@@ -868,11 +1237,21 @@ func (s *DB) GetChunkEmbedding(contentHash string) ([]float32, bool, error) {
 
 // AllChunkEmbeddings returns all cached chunk embeddings keyed by content hash.
 func (s *DB) AllChunkEmbeddings() (map[string][]float32, error) {
-	rows, err := s.db.Query(`SELECT content_hash, embedding FROM chunk_embeddings`)
+	query := `SELECT content_hash, embedding FROM chunk_embeddings`
+	var args []any
+	provider, model, configured, err := s.configuredEmbeddingProvider()
+	if err != nil {
+		return nil, err
+	}
+	if configured {
+		query += ` WHERE provider = ? AND model = ?`
+		args = append(args, provider, model)
+	}
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("storage: query chunk embeddings: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	res := make(map[string][]float32)
 	for rows.Next() {
@@ -935,7 +1314,7 @@ func (s *DB) SearchChunks(opts ChunkSearchOptions) ([]models.Chunk, error) {
 	if err != nil {
 		return nil, fmt.Errorf("storage: get chunks: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows)
 
 	return scanChunks(rows)
 }

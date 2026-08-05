@@ -3,20 +3,22 @@ package indexer
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/parser"
+	"github.com/Gere2/neurofs/internal/storage"
 	"github.com/fsnotify/fsnotify"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/parser"
-	"github.com/neuromfs/neuromfs/internal/storage"
 )
 
 // Watcher monitors a repository filesystem for changes and updates the index incrementally.
@@ -28,6 +30,7 @@ type Watcher struct {
 	mu         sync.Mutex
 	isWatching bool
 	closed     chan struct{}
+	watched    map[string]struct{}
 }
 
 // NewWatcher returns a new filesystem watcher for the repository.
@@ -45,6 +48,7 @@ func NewWatcher(cfg *config.Config, db *storage.DB, logf func(format string, arg
 		logf:    logf,
 		watcher: fsw,
 		closed:  make(chan struct{}),
+		watched: make(map[string]struct{}),
 	}, nil
 }
 
@@ -70,15 +74,17 @@ func (w *Watcher) Start(ctx context.Context) error {
 			if fsutil.ShouldSkipDirAt(w.cfg.RepoRoot, path) {
 				return filepath.SkipDir
 			}
-			// Register dir to watcher
-			if err := w.watcher.Add(path); err != nil {
-				w.logf("Watcher warning: failed to watch dir %s: %v", path, err)
-			}
+			w.addDirectory(path)
 		}
 		return nil
 	})
 	if err != nil {
-		w.watcher.Close()
+		w.mu.Lock()
+		w.isWatching = false
+		w.mu.Unlock()
+		if closeErr := w.watcher.Close(); closeErr != nil {
+			return fmt.Errorf("watcher walk failed: %w (close watcher: %v)", err, closeErr)
+		}
 		return fmt.Errorf("watcher walk failed: %w", err)
 	}
 
@@ -118,120 +124,216 @@ func (w *Watcher) isIgnoredPath(path string) bool {
 	return false
 }
 
+func (w *Watcher) addDirectory(path string) {
+	w.mu.Lock()
+	if !w.isWatching {
+		w.mu.Unlock()
+		return
+	}
+	path = filepath.Clean(path)
+	if _, ok := w.watched[path]; ok {
+		w.mu.Unlock()
+		return
+	}
+	err := w.watcher.Add(path)
+	if err == nil {
+		w.watched[path] = struct{}{}
+	}
+	w.mu.Unlock()
+	if err != nil {
+		w.logf("Watcher warning: failed to watch dir %s: %v", path, err)
+	}
+}
+
+func (w *Watcher) forgetDirectoryTree(path string) {
+	root := filepath.Clean(path)
+	prefix := root + string(os.PathSeparator)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for watchedPath := range w.watched {
+		if watchedPath == root || strings.HasPrefix(watchedPath, prefix) {
+			delete(w.watched, watchedPath)
+		}
+	}
+}
+
+// indexFile publishes one complete file/chunk generation and then attaches
+// embeddings carrying the exact checksum and vector-space provenance.
+func (w *Watcher) indexFile(ctx context.Context, embClient *embeddings.Client, path string) (bool, error) {
+	if !fsutil.IsSupported(path) || fsutil.ShouldSkipFile(path) {
+		deleted, deleteErr := w.db.DeletePathTree(path)
+		return deleted > 0, deleteErr
+	}
+
+	content, info, err := fsutil.ReadRegularFileBounded(path, config.MaxFileSize)
+	if err != nil {
+		if errors.Is(err, fsutil.ErrFileTooLarge) || errors.Is(err, fsutil.ErrNotRegular) {
+			deleted, deleteErr := w.db.DeletePathTree(path)
+			return deleted > 0, deleteErr
+		}
+		return false, err
+	}
+	lines := fsutil.CountLines(content)
+	if lines > config.MaxFileLines {
+		deleted, deleteErr := w.db.DeletePathTree(path)
+		return deleted > 0, deleteErr
+	}
+
+	relPath := fsutil.RelPath(w.cfg.RepoRoot, path)
+	checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+	lang := fsutil.LangForPath(path)
+	parsed := parser.Parse(lang, string(content))
+	record := models.FileRecord{
+		Path:            path,
+		RelPath:         relPath,
+		Lang:            lang,
+		Size:            int64(len(content)),
+		ModTimeUnixNano: info.ModTime().UnixNano(),
+		Lines:           lines,
+		Symbols:         parsed.Symbols,
+		Imports:         parsed.Imports,
+		Checksum:        checksum,
+		IndexedAt:       time.Now().UTC(),
+	}
+
+	chunkCount, err := persistChunks(ctx, w.db, embClient, record, string(content))
+	if err != nil {
+		return true, fmt.Errorf("store chunks: %w", err)
+	}
+
+	embedText := string(content)
+	if len(embedText) > 8000 {
+		embedText = embedText[:8000]
+	}
+	emb, err := embClient.GetEmbedding(ctx, embedText)
+	if err != nil {
+		w.logf("Watcher warning: embedding failed for %s: %v", relPath, err)
+	} else if err := w.db.SaveEmbeddingWithMetadata(
+		path,
+		emb,
+		checksum,
+		embClient.ProviderName(),
+		embClient.ModelName(),
+	); err != nil {
+		w.logf("Watcher warning: failed to save embedding for %s: %v", relPath, err)
+	}
+
+	w.logf("Watcher: incrementally indexed %s (%d chunks)", relPath, chunkCount)
+	return true, nil
+}
+
+// indexTree handles directory moves atomically observed as a single create
+// event: every descendant directory is registered and every supported file is
+// indexed, including files that existed before the directory entered the repo.
+func (w *Watcher) indexTree(ctx context.Context, embClient *embeddings.Client, root string) (bool, error) {
+	updated := false
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			w.logf("Watcher warning: cannot inspect %s: %v", path, walkErr)
+			return nil
+		}
+		if d.IsDir() {
+			if fsutil.ShouldSkipDirAt(w.cfg.RepoRoot, path) {
+				return filepath.SkipDir
+			}
+			w.addDirectory(path)
+			return nil
+		}
+		if w.isIgnoredPath(path) {
+			return nil
+		}
+		changed, err := w.indexFile(ctx, embClient, path)
+		if err != nil {
+			w.logf("Watcher error indexing %s: %v", fsutil.RelPath(w.cfg.RepoRoot, path), err)
+			return nil
+		}
+		updated = updated || changed
+		return nil
+	})
+	if err != nil {
+		return updated, fmt.Errorf("walk new directory %s: %w", root, err)
+	}
+	return updated, nil
+}
+
 // listen waits for filesystem events and dispatches updates.
 func (w *Watcher) listen(ctx context.Context) {
 	const debounceDelay = 200 * time.Millisecond
 	var (
-		timer  *time.Timer
-		events []fsnotify.Event
-		evMu   sync.Mutex
+		timer   *time.Timer
+		timerCh <-chan time.Time
+		events  = make(map[string]fsnotify.Op)
 	)
 
 	processEvents := func() {
-		evMu.Lock()
-		evs := events
-		events = nil
-		evMu.Unlock()
-
-		if len(evs) == 0 {
+		if len(events) == 0 {
 			return
 		}
+		evs := events
+		events = make(map[string]fsnotify.Op)
 
 		w.logf("Watcher: processing %d file system events...", len(evs))
 		embClient := embeddings.NewClient(w.cfg.HybridMode)
+		if err := embClient.Validate(); err != nil {
+			w.logf("Watcher error: invalid embedding configuration: %v", err)
+			return
+		}
 		updated := false
 
-		for _, ev := range evs {
-			path := ev.Name
-
+		for path, op := range evs {
 			if w.isIgnoredPath(path) {
 				continue
 			}
+			if op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename) == 0 {
+				continue
+			}
+			if op&(fsnotify.Remove|fsnotify.Rename) != 0 {
+				// A path recreated within the debounce window needs a fresh OS
+				// watch even though its lexical path is unchanged.
+				w.forgetDirectoryTree(path)
+			}
 
-			if ev.Has(fsnotify.Create) || ev.Has(fsnotify.Write) {
-				info, err := os.Stat(path)
-				if err != nil {
-					// File might have been deleted after event was fired
+			info, err := os.Lstat(path)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					w.logf("Watcher warning: cannot stat %s: %v", path, err)
 					continue
 				}
-
-				if info.IsDir() {
-					// Register new directory to fsnotify
-					w.mu.Lock()
-					if w.isWatching {
-						if err := w.watcher.Add(path); err == nil {
-							w.logf("Watcher: watching new directory %s", path)
-						}
-					}
-					w.mu.Unlock()
-					continue
-				}
-
-				// Check exclusions
-				if !fsutil.IsSupported(path) || fsutil.ShouldSkipFile(path) || info.Size() > config.MaxFileSize {
-					continue
-				}
-
-				content, err := os.ReadFile(path)
-				if err != nil {
-					continue
-				}
-
-				lines := fsutil.CountLines(content)
-				if lines > config.MaxFileLines {
-					continue
-				}
-
 				relPath := fsutil.RelPath(w.cfg.RepoRoot, path)
-				checksum := fmt.Sprintf("%x", sha256.Sum256(content))
-				lang := fsutil.LangForPath(path)
-				parsed := parser.Parse(lang, string(content))
-
-				record := models.FileRecord{
-					Path:      path,
-					RelPath:   relPath,
-					Lang:      lang,
-					Size:      info.Size(),
-					Lines:     lines,
-					Symbols:   parsed.Symbols,
-					Imports:   parsed.Imports,
-					Checksum:  checksum,
-					IndexedAt: time.Now().UTC(),
-				}
-
-				if err := w.db.UpsertFile(record); err != nil {
-					w.logf("Watcher error storing %s: %v", relPath, err)
+				deleted, deleteErr := w.db.DeletePathTree(path)
+				if deleteErr != nil {
+					w.logf("Watcher error removing %s: %v", relPath, deleteErr)
 					continue
 				}
-
-				chunkCount, err := persistChunks(ctx, w.db, embClient, record, string(content))
-				if err != nil {
-					w.logf("Watcher error chunking %s: %v", relPath, err)
-					continue
-				}
-
-				// Generate embedding
-				embedText := string(content)
-				if len(embedText) > 8000 {
-					embedText = embedText[:8000]
-				}
-				emb, err := embClient.GetEmbedding(ctx, embedText)
-				if err == nil {
-					_ = w.db.SaveEmbedding(path, emb)
-				}
-				w.logf("Watcher: incrementally indexed %s (%d chunks)", relPath, chunkCount)
-				updated = true
-
-			} else if ev.Has(fsnotify.Remove) || ev.Has(fsnotify.Rename) {
-				relPath := fsutil.RelPath(w.cfg.RepoRoot, path)
-				if err := w.db.DeleteFile(path); err == nil {
-					w.logf("Watcher: removed %s from index", relPath)
+				if deleted > 0 {
+					w.logf("Watcher: removed %s from index (%d files)", relPath, deleted)
 					updated = true
 				}
+				continue
 			}
+
+			if info.IsDir() {
+				changed, err := w.indexTree(ctx, embClient, path)
+				if err != nil {
+					w.logf("Watcher error indexing directory %s: %v", path, err)
+					continue
+				}
+				updated = updated || changed
+				continue
+			}
+
+			changed, err := w.indexFile(ctx, embClient, path)
+			if err != nil {
+				w.logf("Watcher error indexing %s: %v", fsutil.RelPath(w.cfg.RepoRoot, path), err)
+				continue
+			}
+			updated = updated || changed
 		}
 
 		if updated {
+			if err := w.db.PruneUnreferencedChunkEmbeddings(); err != nil {
+				w.logf("Watcher warning: failed to prune stale chunk embeddings: %v", err)
+			}
 			w.logf("Watcher: rebuilding semantic dependency graph...")
 			allFiles, err := w.db.AllFiles()
 			if err == nil {
@@ -246,10 +348,19 @@ func (w *Watcher) listen(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			w.Close()
+			if timer != nil {
+				timer.Stop()
+			}
+			_ = w.Close()
 			return
 		case <-w.closed:
+			if timer != nil {
+				timer.Stop()
+			}
 			return
+		case <-timerCh:
+			timerCh = nil
+			processEvents()
 		case err, ok := <-w.watcher.Errors:
 			if !ok {
 				return
@@ -259,13 +370,19 @@ func (w *Watcher) listen(ctx context.Context) {
 			if !ok {
 				return
 			}
-			evMu.Lock()
-			events = append(events, ev)
-			if timer != nil {
-				timer.Stop()
+			events[ev.Name] |= ev.Op
+			if timer == nil {
+				timer = time.NewTimer(debounceDelay)
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				timer.Reset(debounceDelay)
 			}
-			timer = time.AfterFunc(debounceDelay, processEvents)
-			evMu.Unlock()
+			timerCh = timer.C
 		}
 	}
 }

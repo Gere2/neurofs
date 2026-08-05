@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestMarkStaleFactsFlagsOnlyDeadIdentifiers(t *testing.T) {
@@ -33,6 +33,21 @@ func TestMarkStaleFactsFlagsOnlyDeadIdentifiers(t *testing.T) {
 	}
 	if results[1].StaleFacts != nil {
 		t.Fatalf("no misses must mean no stale facts, got %v", results[1].StaleFacts)
+	}
+}
+
+func TestFactExistsTreatsLeadingDashAsPattern(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep not installed")
+	}
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flag-shaped user input must remain a literal search pattern.
+	if factExistsInRepo(repo, "--version") {
+		t.Fatal("leading-dash fact was not treated as a literal pattern")
 	}
 }
 

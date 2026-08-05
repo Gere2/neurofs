@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/Gere2/neurofs/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -49,9 +50,10 @@ func newMcpInstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Installed NeuroFS MCP server %q in %s\n", name, path)
-			fmt.Fprintf(cmd.OutOrStdout(), "Restart Claude Desktop completely before using it.\n")
-			return nil
+			w := newReportWriter(cmd.OutOrStdout())
+			w.printf("Installed NeuroFS MCP server %q in %s\n", name, path)
+			w.printf("Restart Claude Desktop completely before using it.\n")
+			return w.err
 		},
 	}
 	addMcpClaudeFlags(cmd, &opts, true)
@@ -72,8 +74,9 @@ func newMcpUninstallCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed NeuroFS MCP server %q from %s\n", name, path)
-			return nil
+			w := newReportWriter(cmd.OutOrStdout())
+			w.printf("Removed NeuroFS MCP server %q from %s\n", name, path)
+			return w.err
 		},
 	}
 	addMcpClaudeFlags(cmd, &opts, false)
@@ -97,10 +100,11 @@ func newMcpDoctorCmd() *cobra.Command {
 				}
 				return err
 			}
+			w := newReportWriter(cmd.OutOrStdout())
 			for _, check := range checks {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-5s %s — %s\n", strings.ToUpper(check.Status), check.Name, check.Detail)
+				w.printf("%-5s %s — %s\n", strings.ToUpper(check.Status), check.Name, check.Detail)
 			}
-			return err
+			return errors.Join(err, w.err)
 		},
 	}
 	addMcpClaudeFlags(cmd, &opts, false)
@@ -149,7 +153,7 @@ func installClaudeMCP(opts mcpClaudeOptions) (string, string, error) {
 		return "", "", err
 	}
 	if _, exists := servers[name]; exists && !opts.Force {
-		return "", "", fmt.Errorf("Claude MCP server %q already exists in %s (use --force to overwrite)", name, configPath)
+		return "", "", fmt.Errorf("claude MCP server %q already exists in %s (use --force to overwrite)", name, configPath)
 	}
 	server := claudeServerConfig{
 		Command: command,
@@ -179,7 +183,7 @@ func uninstallClaudeMCP(opts mcpClaudeOptions) (string, string, error) {
 		return "", "", err
 	}
 	if _, exists := servers[name]; !exists {
-		return "", "", fmt.Errorf("Claude MCP server %q not found in %s", name, configPath)
+		return "", "", fmt.Errorf("claude MCP server %q not found in %s", name, configPath)
 	}
 	delete(servers, name)
 	if err := setClaudeServers(root, servers); err != nil {
@@ -336,6 +340,9 @@ func claudeConfigPath(path string) (string, error) {
 
 func readClaudeConfig(path string) (map[string]json.RawMessage, map[string]json.RawMessage, error) {
 	root := make(map[string]json.RawMessage)
+	if _, err := regularFileInfo(path); err != nil && !os.IsNotExist(err) {
+		return nil, nil, fmt.Errorf("read %s: %w", path, err)
+	}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return root, make(map[string]json.RawMessage), nil
@@ -377,7 +384,7 @@ func setClaudeServers(root map[string]json.RawMessage, servers map[string]json.R
 }
 
 func writeClaudeConfig(path string, root map[string]json.RawMessage) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	data, err := json.MarshalIndent(root, "", "  ")
@@ -385,7 +392,7 @@ func writeClaudeConfig(path string, root map[string]json.RawMessage) error {
 		return fmt.Errorf("encode config: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := atomicWriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

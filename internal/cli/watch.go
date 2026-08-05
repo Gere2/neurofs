@@ -2,14 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -22,7 +23,7 @@ func newWatchCmd() *cobra.Command {
 		Long: `Watch monitors the repository for file changes, additions, and deletions,
 and updates the SQLite index (.neurofs/index.db) incrementally in real-time.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			if len(args) > 0 {
 				repoPath = args[0]
 			}
@@ -39,7 +40,11 @@ and updates the SQLite index (.neurofs/index.db) incrementally in real-time.`,
 			if err != nil {
 				return fmt.Errorf("watch: %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("watch: close index: %w", err))
+				}
+			}()
 
 			fmt.Fprintf(os.Stderr, "NeuroFS — running initial scan for %s...\n", cfg.RepoRoot)
 			logf := func(f string, a ...any) {
@@ -65,7 +70,11 @@ and updates the SQLite index (.neurofs/index.db) incrementally in real-time.`,
 			if err := w.Start(ctx); err != nil {
 				return fmt.Errorf("watch: %w", err)
 			}
-			defer w.Close()
+			defer func() {
+				if err := w.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("watch: close watcher: %w", err))
+				}
+			}()
 
 			fmt.Fprintf(os.Stderr, "Watching for changes in %s. Press Ctrl+C to stop.\n", cfg.RepoRoot)
 

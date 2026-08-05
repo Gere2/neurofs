@@ -2,6 +2,17 @@
 // No framework. Tabs are show/hide; state is kept in module-level vars plus
 // localStorage for the repo path. Every network call goes through j().
 
+let neuroFSRemoteToken = sessionStorage.getItem("neurofs.remoteToken") || "";
+if (window.location.hash.startsWith("#")) {
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const token = fragment.get("token");
+  if (token) {
+    neuroFSRemoteToken = token;
+    sessionStorage.setItem("neurofs.remoteToken", token);
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
+
 const state = {
   repo: localStorage.getItem("neurofs.repo") || "",
   lastBundlePath: null, // snapshot path from the last pack, if any
@@ -236,6 +247,7 @@ function updateRunPreview() {
 
 async function j(method, url, body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (neuroFSRemoteToken) opts.headers["X-NeuroFS-Token"] = neuroFSRemoteToken;
   if (body !== undefined) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
   const text = await r.text();
@@ -2207,6 +2219,7 @@ async function sendPlaygroundMessage(text) {
   };
   if (antKey) headers["X-Anthropic-Api-Key"] = antKey;
   if (oaKey) headers["X-Openai-Api-Key"] = oaKey;
+  if (neuroFSRemoteToken) headers["X-NeuroFS-Token"] = neuroFSRemoteToken;
 
   try {
     const res = await fetch("/api/chat", {

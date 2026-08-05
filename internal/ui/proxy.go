@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,14 +16,14 @@ import (
 
 	"context"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/output"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/output"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 type anthropicMessage struct {
@@ -49,6 +50,14 @@ type openAIChatReq struct {
 	Messages    []openAIMessage `json:"messages"`
 	Temperature *float64        `json:"temperature,omitempty"`
 	Stream      bool            `json:"stream,omitempty"`
+}
+
+const maxUpstreamErrorBodyBytes = int64(1 << 20)
+
+func closeProxyDB(db *storage.DB, operation string) {
+	if err := db.Close(); err != nil {
+		log.Printf("neurofs proxy: close database after %s: %v", operation, err)
+	}
 }
 
 func extractOpenAIText(m openAIMessage) string {
@@ -80,9 +89,8 @@ func extractOpenAIText(m openAIMessage) string {
 // injects the XML context bundle into the Anthropic payload, and forwards the request.
 func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	// 1. Read and decode the client payload
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "failed to read body: "+err.Error())
+	bodyBytes, ok := readLimitedBody(w, r)
+	if !ok {
 		return
 	}
 
@@ -133,7 +141,9 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 		db, err := storage.Open(dbPath)
 		if err == nil {
 			_, _ = indexer.Run(cfg, db, indexer.Options{})
-			db.Close()
+			if err := db.Close(); err != nil {
+				log.Printf("neurofs proxy: close auto-scan database: %v", err)
+			}
 		}
 	} else {
 		triggerBackgroundScan(cfg)
@@ -145,7 +155,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 		forwardRawRequest(w, r, bodyBytes)
 		return
 	}
-	defer db.Close()
+	defer closeProxyDB(db, "Anthropic request")
 
 	files, err := db.AllFiles()
 	if err != nil || len(files) == 0 {
@@ -210,7 +220,7 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 	logProxyRequest(payload.Model, query, before, after)
 
 	// 6. Marshal the updated payload back to JSON
-	newBodyBytes, err := json.Marshal(payload)
+	newBodyBytes, err := replaceJSONRawField(bodyBytes, "system", payload.System)
 	if err != nil {
 		forwardRawRequest(w, r, bodyBytes)
 		return
@@ -225,9 +235,8 @@ func handleProxyMessages(w http.ResponseWriter, r *http.Request) {
 // injects the XML context bundle as a system message, and forwards the request.
 func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	// 1. Read and decode the client payload
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "failed to read body: "+err.Error())
+	bodyBytes, ok := readLimitedBody(w, r)
+	if !ok {
 		return
 	}
 
@@ -277,7 +286,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 		db, err := storage.Open(dbPath)
 		if err == nil {
 			_, _ = indexer.Run(cfg, db, indexer.Options{})
-			db.Close()
+			closeProxyDB(db, "OpenAI auto-scan")
 		}
 	} else {
 		triggerBackgroundScan(cfg)
@@ -289,7 +298,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 		forwardOpenAIRequest(w, r, bodyBytes)
 		return
 	}
-	defer db.Close()
+	defer closeProxyDB(db, "OpenAI request")
 
 	files, err := db.AllFiles()
 	if err != nil || len(files) == 0 {
@@ -361,7 +370,7 @@ func handleProxyOpenAIMessages(w http.ResponseWriter, r *http.Request) {
 	logProxyRequest(payload.Model, query, before, after)
 
 	// 6. Marshal the updated payload back to JSON
-	newBodyBytes, err := json.Marshal(payload)
+	newBodyBytes, err := prependOpenAIMessage(bodyBytes, systemMsg)
 	if err != nil {
 		forwardOpenAIRequest(w, r, bodyBytes)
 		return
@@ -380,7 +389,9 @@ func forwardOpenAIRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	// Copy original request headers
 	for k, vv := range r.Header {
-		if strings.ToLower(k) == "host" || strings.ToLower(k) == "content-length" {
+		if strings.EqualFold(k, "host") ||
+			strings.EqualFold(k, "content-length") ||
+			strings.EqualFold(k, remoteTokenHeader) {
 			continue
 		}
 		for _, v := range vv {
@@ -397,7 +408,11 @@ func forwardOpenAIRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeErr(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("neurofs proxy: close OpenAI upstream response: %v", err)
+		}
+	}()
 
 	for k, vv := range resp.Header {
 		for _, v := range vv {
@@ -445,7 +460,7 @@ func triggerBackgroundScan(cfg *config.Config) {
 		if err != nil {
 			return
 		}
-		defer db.Close()
+		defer closeProxyDB(db, "background scan")
 		_, _ = indexer.Run(cfg, db, indexer.Options{})
 	}()
 }
@@ -472,6 +487,43 @@ func extractUserText(m anthropicMessage) string {
 		return sb.String()
 	}
 	return ""
+}
+
+func replaceJSONRawField(body []byte, field string, value json.RawMessage) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return nil, fmt.Errorf("request must be a JSON object")
+	}
+	root[field] = append(json.RawMessage(nil), value...)
+	return json.Marshal(root)
+}
+
+func prependOpenAIMessage(body []byte, message openAIMessage) ([]byte, error) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, err
+	}
+	if root == nil {
+		return nil, fmt.Errorf("request must be a JSON object")
+	}
+	var messages []json.RawMessage
+	if err := json.Unmarshal(root["messages"], &messages); err != nil {
+		return nil, fmt.Errorf("decode messages: %w", err)
+	}
+	rawMessage, err := json.Marshal(message)
+	if err != nil {
+		return nil, err
+	}
+	messages = append([]json.RawMessage{rawMessage}, messages...)
+	rawMessages, err := json.Marshal(messages)
+	if err != nil {
+		return nil, err
+	}
+	root["messages"] = rawMessages
+	return json.Marshal(root)
 }
 
 func buildSystemPrompt(existingSystem json.RawMessage, contextBundle string) json.RawMessage {
@@ -523,7 +575,9 @@ func forwardRawRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 
 	// Copy original request headers
 	for k, vv := range r.Header {
-		if strings.ToLower(k) == "host" || strings.ToLower(k) == "content-length" {
+		if strings.EqualFold(k, "host") ||
+			strings.EqualFold(k, "content-length") ||
+			strings.EqualFold(k, remoteTokenHeader) {
 			continue
 		}
 		for _, v := range vv {
@@ -540,7 +594,11 @@ func forwardRawRequest(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeErr(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			log.Printf("neurofs proxy: close Anthropic upstream response: %v", err)
+		}
+	}()
 
 	// Copy response headers back
 	for k, vv := range resp.Header {
@@ -641,7 +699,7 @@ func handleProxyStats(w http.ResponseWriter, r *http.Request) {
 			if err := cfg.Validate(); err == nil {
 				db, err := storage.Open(cfg.DBPath)
 				if err == nil {
-					defer db.Close()
+					defer closeProxyDB(db, "stats request")
 					count, saved, usd, err := db.GetProxySummary()
 					if err == nil {
 						dbLogs, err := db.GetProxyLogs(100)
@@ -711,9 +769,8 @@ type chatReq struct {
 func handleChat(w http.ResponseWriter, r *http.Request) {
 	// 1. Decode body
 	var req chatReq
-	bodyBytes, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "failed to read body: "+err.Error())
+	bodyBytes, ok := readLimitedBody(w, r)
+	if !ok {
 		return
 	}
 	if err := json.Unmarshal(bodyBytes, &req); err != nil {
@@ -733,7 +790,7 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "failed to open database: "+err.Error())
 		return
 	}
-	defer db.Close()
+	defer closeProxyDB(db, "chat request")
 
 	files, err := db.AllFiles()
 	if err != nil || len(files) == 0 {
@@ -869,10 +926,21 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				log.Printf("neurofs proxy: close streaming upstream response: %v", err)
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
-			errBytes, _ := io.ReadAll(resp.Body)
+			errBytes, truncated, readErr := readUpstreamErrorBody(resp.Body)
+			if readErr != nil {
+				writeErr(w, http.StatusBadGateway, "read upstream error response: "+readErr.Error())
+				return
+			}
+			if truncated {
+				w.Header().Set("X-NeuroFS-Upstream-Error-Truncated", "true")
+			}
 			w.WriteHeader(resp.StatusCode)
 			_, _ = w.Write(errBytes)
 			return
@@ -961,10 +1029,21 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "upstream request failed: "+err.Error())
 			return
 		}
-		defer resp.Body.Close()
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				log.Printf("neurofs proxy: close streaming upstream response: %v", err)
+			}
+		}()
 
 		if resp.StatusCode != http.StatusOK {
-			errBytes, _ := io.ReadAll(resp.Body)
+			errBytes, truncated, readErr := readUpstreamErrorBody(resp.Body)
+			if readErr != nil {
+				writeErr(w, http.StatusBadGateway, "read upstream error response: "+readErr.Error())
+				return
+			}
+			if truncated {
+				w.Header().Set("X-NeuroFS-Upstream-Error-Truncated", "true")
+			}
 			w.WriteHeader(resp.StatusCode)
 			_, _ = w.Write(errBytes)
 			return
@@ -1001,4 +1080,15 @@ func handleChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func readUpstreamErrorBody(body io.Reader) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, maxUpstreamErrorBodyBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) <= maxUpstreamErrorBodyBytes {
+		return data, false, nil
+	}
+	return data[:maxUpstreamErrorBodyBytes], true, nil
 }

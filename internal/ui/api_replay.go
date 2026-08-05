@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // --------------------- /api/replay ---------------------
@@ -45,6 +45,8 @@ type replayResp struct {
 	SavedPath string            `json:"saved_path,omitempty"`
 }
 
+const maxPersistedBundleBytes = int64(8 << 20)
+
 func handleReplay(w http.ResponseWriter, r *http.Request) {
 	var req replayReq
 	if err := decode(r, &req); err != nil {
@@ -64,7 +66,7 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundlePath, err := fsutil.ConfineToRepo(cfg.RepoRoot, req.BundlePath)
+	bundlePath, err := resolveRegularRepoFile(cfg.RepoRoot, req.BundlePath)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bundle_path: "+err.Error())
 		return
@@ -115,8 +117,12 @@ func handleReplay(w http.ResponseWriter, r *http.Request) {
 
 	resp := replayResp{Record: rec}
 	if req.Save {
-		dir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
-		path, err := audit.SaveRecord(dir, rec)
+		dir, err := secureRecordsDir(cfg.RepoRoot, false)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "resolve records dir: "+err.Error())
+			return
+		}
+		path, err := audit.SaveRecordContext(ctx, dir, rec)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "save record: "+err.Error())
 			return
@@ -162,7 +168,15 @@ func handleRecords(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	dir := filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir)
+	dir, err := secureRecordsDir(cfg.RepoRoot, true)
+	if os.IsNotExist(err) {
+		writeJSON(w, http.StatusOK, map[string]any{"records": []recordRow{}})
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "resolve records dir: "+err.Error())
+		return
+	}
 	paths, err := audit.ListRecords(dir)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -215,24 +229,9 @@ func handleRecord(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	abs, err := filepath.Abs(raw)
+	abs, err := resolveRecordFile(cfg.RepoRoot, raw)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad path: "+err.Error())
-		return
-	}
-	// Follow symlinks before the containment check so you cannot escape
-	// by symlinking audit/records/evil.json → /etc/passwd.
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	recordsDir, err := filepath.Abs(filepath.Join(cfg.RepoRoot, audit.DefaultRecordsDir))
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "resolve records dir: "+err.Error())
-		return
-	}
-	rel, err := filepath.Rel(recordsDir, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		writeErr(w, http.StatusBadRequest, "path must live inside the repo records directory")
 		return
 	}
 	rec, err := audit.LoadRecord(abs)
@@ -316,7 +315,7 @@ func handleResumeSeed(w http.ResponseWriter, r *http.Request) {
 
 func loadBundleJSON(path string) (models.Bundle, error) {
 	var b models.Bundle
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxPersistedBundleBytes)
 	if err != nil {
 		return b, fmt.Errorf("read %s: %w", path, err)
 	}
@@ -439,25 +438,15 @@ func isArtifactPath(rel string) bool {
 }
 
 // resolveParentRecord validates a client-supplied parent record path,
-// resolves symlinks, enforces containment inside <repo>/audit/records, and
+// rejects symlink/non-regular leaves, enforces containment inside
+// <repo>/audit/records, and
 // returns the absolute path + a breadcrumb title pulled from the parent
 // (Title, falling back to Question). The bool is false when the path is
 // invalid, escapes the records dir, or cannot be decoded — callers drop
 // the parent link silently in that case.
 func resolveParentRecord(repoRoot, raw string) (string, string, bool) {
-	abs, err := filepath.Abs(raw)
+	abs, err := resolveRecordFile(repoRoot, raw)
 	if err != nil {
-		return "", "", false
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	}
-	recordsDir, err := filepath.Abs(filepath.Join(repoRoot, audit.DefaultRecordsDir))
-	if err != nil {
-		return "", "", false
-	}
-	rel, err := filepath.Rel(recordsDir, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", "", false
 	}
 	parent, err := audit.LoadRecord(abs)
@@ -472,4 +461,80 @@ func resolveParentRecord(repoRoot, raw string) (string, string, bool) {
 		title = title[:160]
 	}
 	return abs, title, true
+}
+
+// secureRecordsDir canonicalises the repository root and checks each
+// existing records-directory component with Lstat. This permits first-time
+// creation while refusing a symlinked audit/ or audit/records path that could
+// redirect record writes outside the repository.
+func secureRecordsDir(repoRoot string, requireExists bool) (string, error) {
+	rootAbs, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w", err)
+	}
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo root: %w", err)
+	}
+
+	target := filepath.Join(rootResolved, audit.DefaultRecordsDir)
+	current := rootResolved
+	for _, component := range strings.Split(filepath.ToSlash(audit.DefaultRecordsDir), "/") {
+		current = filepath.Join(current, component)
+		info, statErr := os.Lstat(current)
+		if statErr != nil {
+			if os.IsNotExist(statErr) && !requireExists {
+				return target, nil
+			}
+			return "", fmt.Errorf("inspect %s: %w", current, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return "", fmt.Errorf("%s must be a real directory", current)
+		}
+	}
+	return target, nil
+}
+
+func resolveRecordFile(repoRoot, raw string) (string, error) {
+	recordsDir, err := secureRecordsDir(repoRoot, true)
+	if err != nil {
+		return "", err
+	}
+	abs, err := filepath.Abs(strings.TrimSpace(raw))
+	if err != nil {
+		return "", fmt.Errorf("resolve record path: %w", err)
+	}
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return "", fmt.Errorf("inspect record path: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("record path must be a regular non-symlink file")
+	}
+	resolved, err := fsutil.ConfineToRepoStrict(repoRoot, abs)
+	if err != nil {
+		return "", err
+	}
+	rel, err := filepath.Rel(recordsDir, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path must live inside the repo records directory")
+	}
+	return resolved, nil
+}
+
+func resolveRegularRepoFile(repoRoot, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	path := raw
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoRoot, path)
+	}
+	path = filepath.Clean(path)
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect path: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("path must be a regular non-symlink file")
+	}
+	return fsutil.ConfineToRepoStrict(repoRoot, path)
 }

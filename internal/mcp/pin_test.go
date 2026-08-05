@@ -88,12 +88,12 @@ func TestPinned_ViewFileRejectsForeignRepoEndToEnd(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Run(ctx)
-		outW.Close()
+		closePipeWriter(t, outW)
 		done <- err
 	}()
 
 	go func() {
-		defer inW.Close()
+		defer closePipeWriter(t, inW)
 		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neurofs_view_file","arguments":{"repo":"/etc","path":"passwd"}}}` + "\n"))
 	}()
 
@@ -142,12 +142,12 @@ func TestPinned_SearchRejectsForeignRepoEndToEnd(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Run(ctx)
-		outW.Close()
+		closePipeWriter(t, outW)
 		done <- err
 	}()
 
 	go func() {
-		defer inW.Close()
+		defer closePipeWriter(t, inW)
 		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neurofs_search","arguments":{"repo":"/etc","query":"passwd"}}}` + "\n"))
 	}()
 

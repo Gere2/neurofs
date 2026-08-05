@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
 
 // Weights holds the file-level ranker's scoring weights. Like
@@ -28,6 +31,8 @@ type Weights struct {
 	Semantic        float64 `json:"semantic"`
 	RootDoc         float64 `json:"root_doc"`
 }
+
+const maxWeightsFileSize int64 = 1 << 20
 
 // DefaultWeights returns the hand-calibrated values the package constants
 // held before weights became tunable.
@@ -60,7 +65,7 @@ func WeightsPath(repoRoot string) string {
 // `neurofs learn status` can surface the problem.
 func LoadWeights(repoRoot string) (Weights, bool, error) {
 	w := DefaultWeights()
-	data, err := os.ReadFile(WeightsPath(repoRoot))
+	data, _, err := fsutil.ReadRegularFileBounded(WeightsPath(repoRoot), maxWeightsFileSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return w, false, nil
@@ -78,14 +83,14 @@ func LoadWeights(repoRoot string) (Weights, bool, error) {
 func SaveWeights(repoRoot string, w Weights) error {
 	w.Clamp()
 	p := WeightsPath(repoRoot)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return fmt.Errorf("ranking weights: mkdir: %w", err)
-	}
 	data, err := json.MarshalIndent(w, "", "  ")
 	if err != nil {
 		return fmt.Errorf("ranking weights: marshal: %w", err)
 	}
-	return os.WriteFile(p, append(data, '\n'), 0o644)
+	if err := atomicfile.WriteFile(p, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("ranking weights: write: %w", err)
+	}
+	return nil
 }
 
 // Clamp bounds every weight to [0, 60].

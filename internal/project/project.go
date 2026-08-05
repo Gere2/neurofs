@@ -1,18 +1,20 @@
-// Package project extracts structural signals from a repository's
-// package.json and tsconfig.json, so ranking can weight entry points,
-// dependencies and path aliases more intelligently than a raw file walk.
+// Package project extracts structural signals from common root manifests so
+// ranking can weight entry points, dependencies and aliases more intelligently
+// than a raw file walk.
 package project
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
 
-// Info captures the bits of a TypeScript/Node project that help ranking.
-// All fields are optional — an empty Info means "no project metadata found".
+// Info captures language-agnostic project metadata plus a small set of
+// ecosystem-specific fields. Existing JSON field names are intentionally kept
+// stable; new fields are optional so previously persisted values still decode.
 type Info struct {
 	Name            string            `json:"name,omitempty"`
 	Version         string            `json:"version,omitempty"`
@@ -23,6 +25,18 @@ type Info struct {
 	Scripts         map[string]string `json:"scripts,omitempty"`
 	Dependencies    []string          `json:"dependencies,omitempty"`
 	DevDependencies []string          `json:"dev_dependencies,omitempty"`
+	// OptionalDependencies records packages declared in optional Python
+	// dependency groups without treating them as required runtime dependencies.
+	OptionalDependencies []string `json:"optional_dependencies,omitempty"`
+
+	GoModule  string `json:"go_module,omitempty"`
+	GoVersion string `json:"go_version,omitempty"`
+
+	PythonRequires string            `json:"python_requires,omitempty"`
+	PythonScripts  map[string]string `json:"python_scripts,omitempty"`
+
+	RustEdition string `json:"rust_edition,omitempty"`
+	RustVersion string `json:"rust_version,omitempty"`
 
 	// PathAliases maps a tsconfig paths key (trimmed of `/*`) to its target
 	// directory (trimmed of `/*`). Example: "@app/*" → "src/*" becomes
@@ -34,10 +48,11 @@ type Info struct {
 	Sources []string `json:"sources,omitempty"`
 }
 
-// Scan reads package.json and tsconfig.json from the repo root (if present)
-// and returns an aggregated Info. Errors reading individual files are
-// ignored — missing/broken config should degrade ranking gracefully, not
-// fail the whole scan.
+const maxManifestBytes = int64(4 << 20)
+
+// Scan reads supported root manifests and returns aggregated metadata. Errors
+// in any individual file are ignored: a missing or malformed manifest must
+// never make repository scanning fail.
 func Scan(repoRoot string) Info {
 	var info Info
 	if repoRoot == "" {
@@ -61,6 +76,55 @@ func Scan(repoRoot string) Info {
 		info.BaseURL = ts.CompilerOptions.BaseURL
 		info.PathAliases = normalisePaths(ts.CompilerOptions.Paths)
 		info.Sources = append(info.Sources, "tsconfig.json")
+	}
+
+	var goName, pythonName, pythonVersion, cargoName, cargoVersion string
+
+	if mod := readGoMod(filepath.Join(repoRoot, "go.mod")); mod != nil {
+		info.GoModule = mod.Module
+		info.GoVersion = mod.GoVersion
+		info.Dependencies = mergeSorted(info.Dependencies, mod.Dependencies)
+		goName = moduleBase(mod.Module)
+		info.Sources = append(info.Sources, "go.mod")
+	}
+
+	if py := readPyProject(filepath.Join(repoRoot, "pyproject.toml")); py != nil {
+		info.PythonRequires = py.RequiresPython
+		info.PythonScripts = py.Scripts
+		info.Dependencies = mergeSorted(info.Dependencies, py.Dependencies)
+		info.DevDependencies = mergeSorted(info.DevDependencies, py.DevDependencies)
+		info.OptionalDependencies = mergeSorted(info.OptionalDependencies, py.OptionalDependencies)
+		info.BinEntries = appendUnique(info.BinEntries, resolvePythonEntries(repoRoot, py.Scripts)...)
+		pythonName = py.Name
+		pythonVersion = py.Version
+		info.Sources = append(info.Sources, "pyproject.toml")
+	}
+
+	if cargo := readCargoManifest(filepath.Join(repoRoot, "Cargo.toml"), repoRoot); cargo != nil {
+		info.RustEdition = cargo.Edition
+		info.RustVersion = cargo.RustVersion
+		info.Dependencies = mergeSorted(info.Dependencies, cargo.Dependencies)
+		info.DevDependencies = mergeSorted(info.DevDependencies, cargo.DevDependencies)
+		info.BinEntries = appendUnique(info.BinEntries, cargo.EntryPoints...)
+		cargoName = cargo.Name
+		cargoVersion = cargo.Version
+		info.Sources = append(info.Sources, "Cargo.toml")
+	}
+
+	if info.Name == "" {
+		// Prefer explicit package metadata over a basename derived from a Go
+		// module path when several ecosystems coexist at the repository root.
+		switch {
+		case pythonName != "":
+			info.Name = pythonName
+			info.Version = pythonVersion
+		case cargoName != "":
+			info.Name = cargoName
+			info.Version = cargoVersion
+		default:
+			info.Name = goName
+			info.Version = ""
+		}
 	}
 
 	return info
@@ -96,7 +160,11 @@ func Decode(raw string) *Info {
 func (i Info) IsEmpty() bool {
 	return i.Name == "" && i.Main == "" && i.Module == "" &&
 		len(i.Dependencies) == 0 && len(i.DevDependencies) == 0 &&
-		len(i.PathAliases) == 0 && len(i.BinEntries) == 0
+		len(i.OptionalDependencies) == 0 &&
+		len(i.PathAliases) == 0 && len(i.BinEntries) == 0 &&
+		i.GoModule == "" && i.GoVersion == "" &&
+		i.PythonRequires == "" && len(i.PythonScripts) == 0 &&
+		i.RustEdition == "" && i.RustVersion == ""
 }
 
 // EntryPoints returns the relative paths declared as project entry points
@@ -105,13 +173,13 @@ func (i Info) IsEmpty() bool {
 func (i Info) EntryPoints() []string {
 	var out []string
 	for _, p := range []string{i.Main, i.Module, i.Types} {
-		if p != "" {
-			out = append(out, normaliseEntry(p))
+		if entry := normaliseEntry(p); entry != "" {
+			out = append(out, entry)
 		}
 	}
 	for _, b := range i.BinEntries {
-		if b != "" {
-			out = append(out, normaliseEntry(b))
+		if entry := normaliseEntry(b); entry != "" {
+			out = append(out, entry)
 		}
 	}
 	return out
@@ -144,7 +212,7 @@ type packageJSON struct {
 }
 
 func readPackageJSON(path string) *packageJSON {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxManifestBytes)
 	if err != nil {
 		return nil
 	}
@@ -163,7 +231,7 @@ type tsConfig struct {
 }
 
 func readTSConfig(path string) *tsConfig {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxManifestBytes)
 	if err != nil {
 		return nil
 	}
@@ -236,7 +304,11 @@ func normalisePaths(paths map[string][]string) map[string]string {
 }
 
 func normaliseEntry(p string) string {
-	p = strings.TrimPrefix(p, "./")
+	p = filepath.Clean(filepath.FromSlash(strings.TrimSpace(p)))
+	if p == "." || filepath.IsAbs(p) || p == ".." ||
+		strings.HasPrefix(p, ".."+string(filepath.Separator)) {
+		return ""
+	}
 	return filepath.ToSlash(p)
 }
 
@@ -288,7 +360,7 @@ func stripJSONComments(in []byte) []byte {
 			}
 			if in[i+1] == '*' {
 				i += 2
-				for i+1 < len(in) && !(in[i] == '*' && in[i+1] == '/') {
+				for i+1 < len(in) && (in[i] != '*' || in[i+1] != '/') {
 					i++
 				}
 				i += 2

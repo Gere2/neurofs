@@ -2,16 +2,19 @@ package retrieval
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 // defaultTestWeights returns a fresh default weight set for direct calls to
@@ -102,29 +105,6 @@ func TestExactSearchTerms(t *testing.T) {
 	})
 }
 
-func TestNormalizeRGPath(t *testing.T) {
-	repo := "/abs/repo"
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"relative", "internal/foo.go", "internal/foo.go"},
-		{"absolute_under_repo", "/abs/repo/internal/foo.go", "internal/foo.go"},
-		{"dot_slash_prefix", "./foo.go", "foo.go"},
-		{"empty", "", ""},
-		{"whitespace_only", "   ", ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := normalizeRGPath(repo, c.in)
-			if got != c.want {
-				t.Errorf("normalizeRGPath(%q, %q) = %q, want %q", repo, c.in, got, c.want)
-			}
-		})
-	}
-}
-
 func TestFilenameMatchesExactTerm(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -164,6 +144,24 @@ func TestChangedPathSet(t *testing.T) {
 	}
 	if got := changedPathSet([]string{}); got != nil {
 		t.Errorf("changedPathSet(empty) = %v, want nil", got)
+	}
+}
+
+func TestExactSignalCacheIsBounded(t *testing.T) {
+	session := &Session{exactCache: make(map[string]map[string]exactSignal)}
+	for i := 0; i < maxExactCacheLen; i++ {
+		session.cacheExactSignals(string(rune(i)), map[string]exactSignal{})
+	}
+	if len(session.exactCache) != maxExactCacheLen {
+		t.Fatalf("cache size = %d, want %d before rollover", len(session.exactCache), maxExactCacheLen)
+	}
+
+	session.cacheExactSignals("rollover", map[string]exactSignal{})
+	if len(session.exactCache) != 1 {
+		t.Fatalf("cache size = %d after rollover, want 1", len(session.exactCache))
+	}
+	if _, ok := session.exactCache["rollover"]; !ok {
+		t.Fatal("new cache entry missing after rollover")
 	}
 }
 
@@ -486,10 +484,12 @@ func TestSearchEndToEnd(t *testing.T) {
 		t.Fatalf("storage: %v", err)
 	}
 	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
-		db.Close()
+		_ = db.Close()
 		t.Fatalf("indexer.Run: %v", err)
 	}
-	db.Close() // Search opens its own handle
+	if err := db.Close(); err != nil { // Search opens its own handle.
+		t.Fatalf("close index: %v", err)
+	}
 
 	resp, err := Search(context.Background(), Options{
 		Query: "ParseFunction",
@@ -515,6 +515,365 @@ func TestSearchEndToEnd(t *testing.T) {
 	}
 }
 
+func TestSessionSearchRejectsContentChangedAfterSnapshot(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "service.go")
+	original := "package service\n\nfunc Original() string {\n\treturn \"old\"\n}\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := NewSession(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement := "package service\n\nfunc Replacement() string {\n\treturn \"new\"\n}\n"
+	if err := os.WriteFile(path, []byte(replacement), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := session.Search(context.Background(), Options{
+		Query: "Replacement",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Results) != 0 {
+		t.Fatalf(
+			"changed source must not be paired with stale indexed ranges/hashes: %+v",
+			response.Results,
+		)
+	}
+}
+
+func TestSessionExactContentUsesCachedGenerationAfterEdit(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "service.go")
+	original := "package service\n\nfunc Stable() string {\n\treturn \"legacytoken\"\n}\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := NewSession(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := session.Search(context.Background(), Options{
+		Query: "legacytoken",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Results) == 0 {
+		t.Fatal("initial search did not populate the session snapshot")
+	}
+	if _, ok := session.contentCache[path]; !ok {
+		t.Fatal("initial search did not cache the indexed file generation")
+	}
+
+	replacement := "package service\n\nfunc Stable() string {\n\treturn \"brandnewmarker\"\n}\n"
+	if err := os.WriteFile(path, []byte(replacement), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	currentTerm, err := session.Search(context.Background(), Options{
+		Query: "brandnewmarker",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hit := range currentTerm.Results {
+		if containsString(hit.Reasons, "exact_content") {
+			t.Fatalf("live-tree exact signal was attached to a cached chunk: %+v", hit)
+		}
+	}
+	if len(currentTerm.Results) != 0 {
+		t.Fatalf("new bytes must not rank the session's old snapshot: %+v", currentTerm.Results)
+	}
+
+	cachedTerm, err := session.Search(context.Background(), Options{
+		Query: "legacytoken",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cachedTerm.Results) == 0 {
+		t.Fatal("session did not retain its coherent cached generation")
+	}
+	top := cachedTerm.Results[0]
+	if !strings.Contains(top.Snippet, "legacytoken") ||
+		strings.Contains(top.Snippet, "brandnewmarker") {
+		t.Fatalf("cached result mixed file generations: %+v", top)
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(top.Snippet)))
+	if top.ContentHash != wantHash {
+		t.Fatalf("cached content hash = %q, want %q for snippet %q", top.ContentHash, wantHash, top.Snippet)
+	}
+}
+
+func TestNewSessionReindexesChangedContentBeforeSearch(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "service.go")
+	original := "package service\n\nfunc Original() string {\n\treturn \"old\"\n}\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := "package service\n\nfunc Replacement() string {\n\treturn \"new\"\n}\n"
+	if err := os.WriteFile(path, []byte(replacement), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := NewSession(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := session.Search(context.Background(), Options{
+		Query: "Replacement",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var replacementHit *Hit
+	for i := range response.Results {
+		if response.Results[i].Path == "service.go" &&
+			response.Results[i].Symbol == "Replacement" {
+			replacementHit = &response.Results[i]
+			break
+		}
+	}
+	if replacementHit == nil {
+		t.Fatalf("freshly reindexed Replacement chunk not found: %+v", response.Results)
+	}
+	if !strings.Contains(replacementHit.Snippet, `return "new"`) ||
+		strings.Contains(replacementHit.Snippet, "Original") {
+		t.Fatalf("result does not contain the current coherent generation: %+v", replacementHit)
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(replacementHit.Snippet)))
+	if replacementHit.ContentHash != wantHash {
+		t.Fatalf(
+			"content hash %q does not describe returned snippet %q (want %q)",
+			replacementHit.ContentHash,
+			replacementHit.Snippet,
+			wantHash,
+		)
+	}
+}
+
+func TestNewSessionRebuildsStaleEmbeddingProvider(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "stable.go")
+	if err := os.WriteFile(
+		path,
+		[]byte("package stable\n\nfunc Current() string { return \"current\" }\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.UpdateChunks(path, []models.Chunk{{
+		FilePath:      path,
+		ChunkID:       "func-obsolete",
+		Kind:          "func",
+		Symbol:        "Obsolete",
+		StartLine:     1,
+		EndLine:       1,
+		ContentHash:   strings.Repeat("0", 64),
+		TokenEstimate: 1,
+		IndexedAt:     time.Now().UTC(),
+	}}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.SetMeta("embedding_provider", "mock:legacy-model"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := NewSession(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentFound bool
+	for _, chunk := range session.chunks {
+		if chunk.Symbol == "Obsolete" {
+			t.Fatalf("stale-provider chunk survived rebuild: %+v", chunk)
+		}
+		if chunk.Symbol == "Current" {
+			currentFound = true
+		}
+	}
+	if !currentFound {
+		t.Fatalf("provider-rebuilt session has no Current chunk: %+v", session.chunks)
+	}
+
+	db, err = storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close index: %v", err)
+		}
+	}()
+	requiresReindex, err := indexer.RequiresEmbeddingReindex(db, "mock", "mock-lcg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requiresReindex {
+		t.Fatal("NewSession did not persist the current embedding provider/model")
+	}
+}
+
+func TestNewSessionRebuildsStaleIndexerVersion(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "stable.go")
+	if err := os.WriteFile(
+		path,
+		[]byte("package stable\n\nfunc Current() string { return \"current\" }\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := indexer.Run(cfg, db, indexer.Options{}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.UpdateChunks(path, []models.Chunk{{
+		FilePath:      path,
+		ChunkID:       "func-obsolete",
+		Kind:          "func",
+		Symbol:        "Obsolete",
+		StartLine:     1,
+		EndLine:       1,
+		ContentHash:   strings.Repeat("0", 64),
+		TokenEstimate: 1,
+		IndexedAt:     time.Now().UTC(),
+	}}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.SetMeta("indexer_version", "legacy"); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := NewSession(context.Background(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var currentFound bool
+	for _, chunk := range session.chunks {
+		if chunk.Symbol == "Obsolete" {
+			t.Fatalf("stale chunk survived binary-version rebuild: %+v", chunk)
+		}
+		if chunk.Symbol == "Current" {
+			currentFound = true
+		}
+	}
+	if !currentFound {
+		t.Fatalf("rebuilt session has no Current chunk: %+v", session.chunks)
+	}
+
+	db, err = storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close index: %v", err)
+		}
+	}()
+	requiresReindex, err := indexer.RequiresReindex(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requiresReindex {
+		t.Fatal("NewSession did not persist the current indexer version")
+	}
+}
+
 func TestSymbolExactlyNamed(t *testing.T) {
 	tests := []struct {
 		symbol string
@@ -527,6 +886,8 @@ func TestSymbolExactlyNamed(t *testing.T) {
 		{"CliRunner.invoke", []string{"invoke", "commands"}, true},
 		// Term equals a class symbol exactly.
 		{"Context", []string{"context", "object"}, true},
+		// Singular/plural variants are the same exact identifier intent.
+		{"Argument", []string{"arguments", "parse"}, true},
 		// Substring is NOT enough — that's symbol_match's job.
 		{"ContextManager", []string{"context"}, false},
 		{"make_context", []string{"context"}, false},
@@ -539,6 +900,225 @@ func TestSymbolExactlyNamed(t *testing.T) {
 		if got := symbolExactlyNamed(tc.symbol, tc.terms); got != tc.want {
 			t.Errorf("symbolExactlyNamed(%q, %v) = %t, want %t", tc.symbol, tc.terms, got, tc.want)
 		}
+	}
+}
+
+func TestSymbolQueryCoverage(t *testing.T) {
+	tests := []struct {
+		symbol string
+		terms  []string
+		want   int
+	}{
+		{"baseCreateRenderer.mountComponent", []string{"mount", "components", "renderer"}, 2},
+		{"patchChildren", []string{"patch", "children"}, 2},
+		{"currentIndexRevision", []string{"correction", "index", "revision", "pool"}, 2},
+		{"mountChildren", []string{"mount", "components", "patch", "children"}, 0},
+		{"patchBlockChildren", []string{"patch", "children"}, 0},
+		{"Component", []string{"component", "setup"}, 0},
+		{"CliRunner", []string{"runner", "testing"}, 0},
+		{"test_other_command_invoke", []string{"invoke", "commands"}, 0},
+	}
+	for _, tc := range tests {
+		if got := symbolQueryCoverage(tc.symbol, tc.terms); got != tc.want {
+			t.Errorf("symbolQueryCoverage(%q, %v) = %d, want %d", tc.symbol, tc.terms, got, tc.want)
+		}
+	}
+}
+
+func TestFactorySymbolMatchesQuery(t *testing.T) {
+	if !factorySymbolMatchesQuery("createRenderer", []string{"renderer", "mount"}) {
+		t.Fatal("createRenderer should match a renderer query")
+	}
+	for _, symbol := range []string{"Renderer", "CreateComponentPublicInstance", "destroyRenderer"} {
+		if factorySymbolMatchesQuery(symbol, []string{"renderer", "component"}) {
+			t.Fatalf("%s should not be treated as the named factory", symbol)
+		}
+	}
+}
+
+func TestAppendStructuralContextUsesSlackForParentAndNamedMember(t *testing.T) {
+	selected := []Hit{
+		{Path: "src/click/testing.py", Symbol: "Result.output", StartLine: 10, ContentHash: "output"},
+	}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "src/click/testing.py", Kind: "class", Symbol: "CliRunner",
+			ChunkID: "class-clirunner", StartLine: 20, ContentHash: "class", TokenEstimate: 500,
+		},
+		{
+			Path: "src/click/testing.py", Kind: "method", Symbol: "CliRunner.invoke",
+			ParentID: "class-clirunner", StartLine: 40, ContentHash: "invoke", TokenEstimate: 900,
+		},
+	}
+
+	got := appendStructuralContext(selected, ranked, []string{"testing", "runner", "invoke", "output"})
+	if len(got) != 3 {
+		t.Fatalf("expanded hits = %+v, want primary + class + named member", got)
+	}
+	if got[1].Symbol != "CliRunner" || got[2].Symbol != "CliRunner.invoke" {
+		t.Fatalf("unexpected expansion order: %+v", got)
+	}
+}
+
+func TestAppendStructuralContextPrefersSelectedMembersParent(t *testing.T) {
+	selected := []Hit{{
+		Path: "src/click/testing.py", Kind: "method", Symbol: "CliRunner.invoke",
+		ParentID: "class-clirunner", StartLine: 40, ContentHash: "invoke",
+	}}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "src/click/testing.py", Kind: "class", Symbol: "_FDCapture",
+			ChunkID: "class-fdcapture", StartLine: 5, ContentHash: "capture", TokenEstimate: 100,
+		},
+		{
+			Path: "src/click/testing.py", Kind: "class", Symbol: "CliRunner",
+			ChunkID: "class-clirunner", StartLine: 20, ContentHash: "runner", TokenEstimate: 500,
+		},
+	}
+
+	got := appendStructuralContext(selected, ranked, []string{"testing", "runner", "invoke", "capture"})
+	if len(got) < 2 || got[1].Symbol != "CliRunner" {
+		t.Fatalf("first expanded header = %+v, want CliRunner", got)
+	}
+}
+
+func TestAppendStructuralContextAddsImplementationCompanions(t *testing.T) {
+	selected := []Hit{{
+		Path: "packages/runtime-core/src/renderer.ts", Kind: "type", Symbol: "Renderer",
+		StartLine: 96, ContentHash: "renderer",
+	}}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "packages/runtime-core/src/renderer.ts", Kind: "nested_func",
+			Symbol: "baseCreateRenderer.mountComponent", StartLine: 120, ContentHash: "mount", TokenEstimate: 400,
+		},
+		{
+			Path: "packages/runtime-core/src/renderer.ts", Kind: "nested_func",
+			Symbol: "baseCreateRenderer.patchChildren", StartLine: 220, ContentHash: "patch", TokenEstimate: 400,
+		},
+		{
+			Path: "packages/runtime-core/src/renderer.ts", Kind: "export_func",
+			Symbol: "createRenderer", StartLine: 318, ContentHash: "create", TokenEstimate: 100,
+		},
+		{
+			Path: "packages/runtime-core/src/renderer.ts", Kind: "type",
+			Symbol: "MountComponentFn", StartLine: 80, ContentHash: "type", TokenEstimate: 10,
+		},
+	}
+
+	got := appendStructuralContext(
+		selected,
+		ranked,
+		[]string{"vue", "renderer", "mount", "components", "patch", "children"},
+	)
+	if len(got) != 4 {
+		t.Fatalf("expanded hits = %+v, want primary plus three implementation companions", got)
+	}
+	for i, want := range []string{
+		"baseCreateRenderer.mountComponent",
+		"baseCreateRenderer.patchChildren",
+		"createRenderer",
+	} {
+		if got[i+1].Symbol != want {
+			t.Fatalf("companion %d = %q, want %q", i, got[i+1].Symbol, want)
+		}
+	}
+}
+
+func TestAppendStructuralContextAddsUnselectedFilenameAnchor(t *testing.T) {
+	selected := []Hit{{
+		Path: "internal/mcp/server.go", Kind: "type", Symbol: "Server",
+		StartLine: 20, ContentHash: "server",
+	}}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "internal/mcp/tools.go", Kind: "func",
+			Symbol: "runTaskTool", StartLine: 400, ContentHash: "task", TokenEstimate: 200,
+		},
+		{
+			Path: "internal/mcp/tools.go", Kind: "func",
+			Symbol: "toolsList", StartLine: 178, ContentHash: "list", TokenEstimate: 900,
+		},
+	}
+
+	got := appendStructuralContext(selected, ranked, []string{"tools", "server", "expose", "client"})
+	if len(got) != 2 || got[1].Symbol != "toolsList" {
+		t.Fatalf("expanded hits = %+v, want tools.go:toolsList filename anchor", got)
+	}
+}
+
+func TestAppendStructuralContextAddsCompoundFilenameHelperAndAPI(t *testing.T) {
+	selected := []Hit{{
+		Path: "internal/retrieval/sessionpool.go", Kind: "var", Symbol: "pool",
+		StartLine: 50, ContentHash: "pool",
+	}}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "internal/retrieval/sessionpool.go", Kind: "func",
+			Symbol: "sessionFor", StartLine: 70, ContentHash: "helper", TokenEstimate: 180,
+		},
+		{
+			Path: "internal/retrieval/sessionpool.go", Kind: "func",
+			Symbol: "SearchShared", StartLine: 30, ContentHash: "api", TokenEstimate: 140,
+		},
+		{
+			Path: "internal/retrieval/sessionpool.go", Kind: "func",
+			Symbol: "unrelatedInternal", StartLine: 120, ContentHash: "other", TokenEstimate: 100,
+		},
+	}
+
+	got := appendStructuralContext(
+		selected,
+		ranked,
+		[]string{"session", "pool", "invalidate", "cached"},
+	)
+	if len(got) != 3 {
+		t.Fatalf("expanded hits = %+v, want primary + helper + exported API", got)
+	}
+	if got[1].Symbol != "sessionFor" || got[2].Symbol != "SearchShared" {
+		t.Fatalf("compound filename expansion order = %+v", got)
+	}
+}
+
+func TestFileStemMatchesContiguousQueryPhrase(t *testing.T) {
+	if !fileStemMatchesQuery(
+		"docs/phase_g5_cross_shape.md",
+		[]string{"cross", "shape", "toy", "repo"},
+	) {
+		t.Fatal("compound filename should match the contiguous cross shape query phrase")
+	}
+	if fileStemMatchesQuery(
+		"docs/phase_g5_cross_shape.md",
+		[]string{"shape", "cross", "toy", "repo"},
+	) {
+		t.Fatal("reversed query terms should not match the compound filename phrase")
+	}
+}
+
+func TestAppendStructuralContextDoesNotFallbackToGenericFlatFilename(t *testing.T) {
+	selected := []Hit{{
+		Path: "internal/memory/ledger.go", Kind: "func", Symbol: "appendEntry",
+		StartLine: 20, ContentHash: "memory",
+	}}
+	ranked := []Hit{
+		selected[0],
+		{
+			Path: "internal/models/ledger.go", Kind: "type",
+			Symbol: "LedgerEntry", StartLine: 6, ContentHash: "model", TokenEstimate: 120,
+		},
+	}
+	got := appendStructuralContext(
+		selected,
+		ranked,
+		[]string{"session", "ledger", "timelines", "histories"},
+	)
+	if len(got) != 1 {
+		t.Fatalf("generic ledger.go fallback should not be appended: %+v", got)
 	}
 }
 

@@ -3,7 +3,7 @@ package cli
 import (
 	"os"
 
-	"github.com/neuromfs/neuromfs/internal/ui"
+	"github.com/Gere2/neurofs/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +16,8 @@ func newUICmd() *cobra.Command {
 		noOpen   bool
 		repoPath string
 		sandbox  bool
+		remote   bool
+		auth     string
 	)
 	cmd := &cobra.Command{
 		Use:   "ui",
@@ -31,11 +33,16 @@ unless --no-open is set (useful when running over SSH with port-forwarding).`,
 					repoPath = cwd
 				}
 			}
+			if auth == "" {
+				auth = os.Getenv("NEUROFS_UI_TOKEN")
+			}
 			return ui.Run(ui.Options{
 				Addr:        addr,
 				OpenBrowser: !noOpen,
 				RepoRoot:    repoPath,
 				Sandbox:     sandbox,
+				AllowRemote: remote,
+				AuthToken:   auth,
 			})
 		},
 	}
@@ -43,5 +50,7 @@ unless --no-open is set (useful when running over SSH with port-forwarding).`,
 	cmd.Flags().BoolVar(&noOpen, "no-open", false, "Skip the automatic browser launch")
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root to pin/sandbox the UI server to (defaults to current directory)")
 	cmd.Flags().BoolVar(&sandbox, "sandbox", true, "Sandbox/pin the UI server to the repository root to prevent path traversal")
+	cmd.Flags().BoolVar(&remote, "allow-remote", false, "Explicitly allow binding to a non-loopback address")
+	cmd.Flags().StringVar(&auth, "auth-token", "", "Token required in X-NeuroFS-Token for remote API requests (or NEUROFS_UI_TOKEN)")
 	return cmd
 }

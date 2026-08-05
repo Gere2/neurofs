@@ -1,15 +1,20 @@
 package packager_test
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/packager"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/packager"
 )
+
+func testChecksum(content string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+}
 
 // writeTempFile writes the given content under t.TempDir() and returns its
 // absolute path. Used by tests to feed real files through packager.Pack,
@@ -108,16 +113,53 @@ func TestPackChunksProducesLineRangedExcerpts(t *testing.T) {
 	if len(frag.Reasons) != 2 || frag.Reasons[0].Signal != "exact_content" {
 		t.Fatalf("expected chunk reasons, got %+v", frag.Reasons)
 	}
+	if !strings.Contains(frag.Content, "\n\treturn true\n") {
+		t.Fatalf("default chunk packing must preserve exact source indentation:\n%s", frag.Content)
+	}
+}
+
+func TestPackChunksExplicitCompressionDropsSourceRange(t *testing.T) {
+	hits := []packager.ChunkHit{{
+		RelPath:       "src/auth.go",
+		Lang:          models.LangGo,
+		StartLine:     10,
+		EndLine:       14,
+		Kind:          "func",
+		Symbol:        "VerifyJWT",
+		Score:         12.5,
+		TokenEstimate: 24,
+		Snippet:       "// explanation\nfunc VerifyJWT() bool {\n\treturn true\n}",
+	}}
+	b, err := packager.PackChunks(hits, "verify jwt", packager.Options{
+		Budget:        400,
+		StripComments: true,
+	})
+	if err != nil {
+		t.Fatalf("pack chunks: %v", err)
+	}
+	if len(b.Fragments) != 1 {
+		t.Fatalf("expected one chunk fragment, got %d", len(b.Fragments))
+	}
+	frag := b.Fragments[0]
+	if frag.StartLine != 0 || frag.EndLine != 0 {
+		t.Fatalf("transformed code must not claim exact source lines: %+v", frag)
+	}
+	if !strings.Contains(frag.Content, "source lines: unavailable after explicit compression") ||
+		strings.Contains(frag.Content, "// lines: 10-14") {
+		t.Fatalf("compressed excerpt carried a misleading line range:\n%s", frag.Content)
+	}
 }
 
 func TestPackFullCodeCarriesFileMetadata(t *testing.T) {
+	content := "package main\nfunc main() {}\n"
+	checksum := testChecksum(content)
 	ranked := []models.ScoredFile{{
 		Record: models.FileRecord{
-			Path:     writeTempFile(t, "small.go", "package main\nfunc main() {}\n"),
+			Path:     writeTempFile(t, "small.go", content),
 			RelPath:  "cmd/small.go",
 			Lang:     models.LangGo,
 			Lines:    2,
-			Checksum: "file123",
+			Checksum: checksum,
 		},
 		Score: 5.0,
 	}}
@@ -133,9 +175,116 @@ func TestPackFullCodeCarriesFileMetadata(t *testing.T) {
 	if frag.Representation != models.RepFullCode {
 		t.Fatalf("expected full_code, got %s", frag.Representation)
 	}
-	if frag.StartLine != 1 || frag.EndLine != 2 || frag.ContentHash != "file123" {
+	if frag.StartLine != 1 || frag.EndLine != 2 || frag.ContentHash != checksum {
 		t.Fatalf("expected full-code metadata, got start=%d end=%d hash=%q",
 			frag.StartLine, frag.EndLine, frag.ContentHash)
+	}
+}
+
+func TestPackPreservesExactFullCodeByDefault(t *testing.T) {
+	content := "package main\n\nvar template = `first\n    indented payload\nlast`\n"
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:     writeTempFile(t, "template.go", content),
+			RelPath:  "template.go",
+			Lang:     models.LangGo,
+			Lines:    5,
+			Checksum: testChecksum(content),
+		},
+		Score: 5,
+	}}
+
+	b, err := packager.Pack(ranked, "template", packager.Options{Budget: 4000})
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if len(b.Fragments) != 1 || b.Fragments[0].Content != content {
+		t.Fatalf("full code must preserve exact source bytes by default:\n%q", b.Fragments[0].Content)
+	}
+	if b.Fragments[0].StartLine != 1 || b.Fragments[0].EndLine != 5 {
+		t.Fatalf("exact source should retain line metadata: %+v", b.Fragments[0])
+	}
+}
+
+func TestPackRejectsSymlinkOrStaleReplacementContent(t *testing.T) {
+	const indexedContent = "package safe\n\nfunc Safe() {}\n"
+	const secretContent = "TOP-SECRET-CONTENT"
+	makeRanked := func(path string) []models.ScoredFile {
+		return []models.ScoredFile{{
+			Record: models.FileRecord{
+				Path: path, RelPath: "safe.go", Lang: models.LangGo,
+				Checksum: testChecksum(indexedContent),
+			},
+			Score: 5,
+		}}
+	}
+
+	t.Run("symlink", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "safe.go")
+		target := filepath.Join(t.TempDir(), "secret.txt")
+		if err := os.WriteFile(target, []byte(secretContent), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+		bundle, err := packager.Pack(makeRanked(path), "safe", packager.Options{Budget: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Fragments) != 0 {
+			t.Fatalf("symlink content entered bundle: %+v", bundle.Fragments)
+		}
+	})
+
+	t.Run("regular_checksum_mismatch", func(t *testing.T) {
+		path := writeTempFile(t, "safe.go", secretContent)
+		bundle, err := packager.Pack(makeRanked(path), "safe", packager.Options{Budget: 1000})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Fragments) != 0 {
+			t.Fatalf("stale replacement content entered bundle: %+v", bundle.Fragments)
+		}
+	})
+}
+
+func TestPackExtractsExcerptFromOriginalLineNumbers(t *testing.T) {
+	var src strings.Builder
+	for i := 0; i < 220; i++ {
+		if i == 0 {
+			src.WriteString("// Copyright example\n")
+		} else {
+			src.WriteString("// license header filler\n")
+		}
+	}
+	src.WriteString("function targetFeature() {\n  return 42;\n}\n")
+	content := src.String()
+	ranked := []models.ScoredFile{{
+		Record: models.FileRecord{
+			Path:    writeTempFile(t, "large.ts", content),
+			RelPath: "src/large.ts",
+			Lang:    models.LangTypeScript,
+			Lines:   223,
+			Symbols: []models.Symbol{{Name: "targetFeature", Kind: "func", Line: 221}},
+		},
+		Score: 5,
+	}}
+
+	b, err := packager.Pack(ranked, "target feature", packager.Options{
+		Budget:     4000,
+		QueryTerms: []string{"target", "feature"},
+	})
+	if err != nil {
+		t.Fatalf("pack: %v", err)
+	}
+	if len(b.Fragments) != 1 || b.Fragments[0].Representation != models.RepExcerpt {
+		t.Fatalf("expected excerpt, got %+v", b.Fragments)
+	}
+	if !strings.Contains(b.Fragments[0].Content, "src/large.ts:221-223") ||
+		!strings.Contains(b.Fragments[0].Content, "function targetFeature()") {
+		t.Fatalf("excerpt must use original source coordinates:\n%s", b.Fragments[0].Content)
 	}
 }
 

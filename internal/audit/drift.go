@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // identifierPattern captures code-shaped spans: camelCase, snake_case, or

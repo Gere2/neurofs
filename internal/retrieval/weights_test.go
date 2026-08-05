@@ -38,6 +38,13 @@ func TestSaveAndLoadWeightsRoundTrip(t *testing.T) {
 	if got != w {
 		t.Fatalf("round trip = %+v, want %+v", got, w)
 	}
+	info, err := os.Lstat(WeightsPath(repo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("weights mode = %v (%o), want regular 600", info.Mode(), info.Mode().Perm())
+	}
 }
 
 func TestLoadWeightsPartialFileKeepsDefaults(t *testing.T) {
@@ -79,6 +86,66 @@ func TestLoadWeightsMalformedFallsBackToDefaults(t *testing.T) {
 	if got != DefaultWeights() {
 		t.Fatalf("weights = %+v, want defaults on malformed file", got)
 	}
+}
+
+func TestWeightsRejectUnsafeReadsAndAtomicallyReplaceSymlink(t *testing.T) {
+	t.Run("oversized", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(WeightsPath(repo)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(WeightsPath(repo), make([]byte, (1<<20)+1), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := LoadWeights(repo); err == nil {
+			t.Fatal("oversized weights file was loaded")
+		}
+	})
+
+	t.Run("symlink", func(t *testing.T) {
+		repo := t.TempDir()
+		if err := os.MkdirAll(filepath.Dir(WeightsPath(repo)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		outside := filepath.Join(t.TempDir(), "outside.json")
+		const sentinel = `{"symbol_match": 59}`
+		if err := os.WriteFile(outside, []byte(sentinel), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, WeightsPath(repo)); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if _, _, err := LoadWeights(repo); err == nil {
+			t.Fatal("symlinked weights file was loaded")
+		}
+
+		want := DefaultWeights()
+		want.SymbolMatch = 11
+		if err := SaveWeights(repo, want); err != nil {
+			t.Fatalf("replace symlink atomically: %v", err)
+		}
+		info, err := os.Lstat(WeightsPath(repo))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			t.Fatalf("weights path was not replaced by a regular file: %v", info.Mode())
+		}
+		gotOutside, err := os.ReadFile(outside)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(gotOutside) != sentinel {
+			t.Fatalf("symlink target changed: %q", gotOutside)
+		}
+		got, _, err := LoadWeights(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Fatalf("loaded weights = %+v, want %+v", got, want)
+		}
+	})
 }
 
 func TestClampBoundsTestDownrank(t *testing.T) {

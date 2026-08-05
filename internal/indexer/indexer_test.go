@@ -1,6 +1,9 @@
 package indexer
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -8,9 +11,37 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/storage"
 )
+
+func newOllamaEmbeddingTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/tags":
+			w.WriteHeader(http.StatusOK)
+		case "/api/embeddings":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"embedding": []float32{0.1, 0.2, 0.3},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func closeTestDB(t *testing.T, db *storage.DB) {
+	t.Helper()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close database: %v", err)
+		}
+	})
+}
 
 func TestIncrementalIndexing(t *testing.T) {
 	tempDir := t.TempDir()
@@ -24,7 +55,7 @@ func TestIncrementalIndexing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	closeTestDB(t, db)
 
 	// Create test files
 	file1 := filepath.Join(tempDir, "file1.go")
@@ -129,6 +160,279 @@ func TestIncrementalIndexing(t *testing.T) {
 	}
 }
 
+func TestIncrementalIndexingDetectsSameSizeContentWithPreservedMtime(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestDB(t, db)
+
+	path := filepath.Join(repo, "same.go")
+	first := []byte("package same\n\nfunc Alpha() {}\n")
+	second := []byte("package same\n\nfunc Bravo() {}\n")
+	if len(first) != len(second) {
+		t.Fatal("test fixture must preserve file size")
+	}
+	fixed := time.Unix(1_700_000_000, 123_456_789)
+	if err := os.WriteFile(path, first, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(path, second, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := Run(cfg, db, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Indexed != 1 || stats.Cached != 0 || stats.Updated != 1 {
+		t.Fatalf("stats = %+v, want one detected same-size update", stats)
+	}
+	record, err := db.GetFileByRelPath("same.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.ModTimeUnixNano != fixed.UnixNano() {
+		t.Fatalf("mtime nanos = %d, want %d", record.ModTimeUnixNano, fixed.UnixNano())
+	}
+	if len(record.Symbols) != 1 || record.Symbols[0].Name != "Bravo" {
+		t.Fatalf("symbols = %+v, want updated Bravo symbol", record.Symbols)
+	}
+}
+
+func TestRequiresSourceReindexDetectsWorkingTreeDrift(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestDB(t, db)
+
+	path := filepath.Join(repo, "same.go")
+	first := []byte("package same\n\nfunc Alpha() {}\n")
+	second := []byte("package same\n\nfunc Bravo() {}\n")
+	if len(first) != len(second) {
+		t.Fatal("test fixture must preserve file size")
+	}
+	fixed := time.Unix(1_700_000_000, 123_456_789)
+	if err := os.WriteFile(path, first, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := RequiresSourceReindex(cfg, db); err != nil || stale {
+		t.Fatalf("fresh index reported stale=%t err=%v", stale, err)
+	}
+
+	if err := os.WriteFile(path, second, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, fixed, fixed); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := RequiresSourceReindex(cfg, db); err != nil || !stale {
+		t.Fatalf("same-size checksum change reported stale=%t err=%v", stale, err)
+	}
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	added := filepath.Join(repo, "added.go")
+	if err := os.WriteFile(added, []byte("package same\n\nfunc Added() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := RequiresSourceReindex(cfg, db); err != nil || !stale {
+		t.Fatalf("new indexable file reported stale=%t err=%v", stale, err)
+	}
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if stale, err := RequiresSourceReindex(cfg, db); err != nil || !stale {
+		t.Fatalf("deleted indexed file reported stale=%t err=%v", stale, err)
+	}
+}
+
+func TestIndexerVersionChangeRebuildsUnchangedFiles(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	repo := t.TempDir()
+	path := filepath.Join(repo, "stable.py")
+	if err := os.WriteFile(path, []byte("def stable():\n    return True\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestDB(t, db)
+
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetMeta(indexerVersionMetaKey, "legacy"); err != nil {
+		t.Fatal(err)
+	}
+
+	stats, err := Run(cfg, db, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Indexed != 1 || stats.Cached != 0 {
+		t.Fatalf("stats = %+v, want unchanged source rebuilt for new indexer version", stats)
+	}
+	got, ok, err := db.GetMeta(indexerVersionMetaKey)
+	if err != nil || !ok || got != indexerVersion {
+		t.Fatalf("indexer version = (%q, %v, %v), want %q", got, ok, err, indexerVersion)
+	}
+}
+
+func TestProviderChangeRestoresMetadataAfterClearingIndex(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "sample.go")
+	if err := os.WriteFile(path, []byte("package sample\n\nfunc Sample() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestDB(t, db)
+
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	ollama := newOllamaEmbeddingTestServer(t)
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_HOST", ollama.URL)
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+
+	for key, want := range map[string]string{
+		"repo_root":          repo,
+		"embedding_provider": "ollama:nomic-embed-text",
+	} {
+		got, ok, err := db.GetMeta(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok || got != want {
+			t.Fatalf("metadata %s = (%q, %v), want %q", key, got, ok, want)
+		}
+	}
+	if _, ok, err := db.GetMeta(ProjectMetaKey); err != nil || !ok {
+		t.Fatalf("project metadata missing after provider reset: ok=%v err=%v", ok, err)
+	}
+	embeddings, err := db.AllChunkEmbeddings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(embeddings) == 0 {
+		t.Fatal("expected fresh Ollama embeddings after provider reset")
+	}
+}
+
+func TestInvalidProviderDoesNotMutateExistingIndex(t *testing.T) {
+	repo := t.TempDir()
+	path := filepath.Join(repo, "stable.go")
+	if err := os.WriteFile(path, []byte("package stable\n\nfunc Stable() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeTestDB(t, db)
+
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	if _, err := Run(cfg, db, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetMeta("sentinel", "preserve-me"); err != nil {
+		t.Fatal(err)
+	}
+	beforeFiles, err := db.AllFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeChunks, err := db.AllChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "opneai")
+	stats, err := Run(cfg, db, Options{})
+	if err == nil {
+		t.Fatal("expected invalid provider to fail before indexing")
+	}
+	if stats != (Stats{}) {
+		t.Fatalf("invalid configuration stats = %+v, want zero value", stats)
+	}
+	afterFiles, err := db.AllFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterChunks, err := db.AllChunks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterFiles, beforeFiles) || !reflect.DeepEqual(afterChunks, beforeChunks) {
+		t.Fatalf("invalid provider mutated index:\nfiles before=%+v after=%+v\nchunks before=%+v after=%+v",
+			beforeFiles, afterFiles, beforeChunks, afterChunks)
+	}
+	for key, want := range map[string]string{
+		"embedding_provider": "mock:mock-lcg",
+		"repo_root":          repo,
+		"sentinel":           "preserve-me",
+	} {
+		got, ok, err := db.GetMeta(key)
+		if err != nil || !ok || got != want {
+			t.Fatalf("metadata %s = (%q, %v, %v), want %q", key, got, ok, err, want)
+		}
+	}
+}
+
 func TestScanPersistsStableGoChunks(t *testing.T) {
 	tempDir := t.TempDir()
 
@@ -141,7 +445,7 @@ func TestScanPersistsStableGoChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	closeTestDB(t, db)
 
 	filePath := filepath.Join(tempDir, "service.go")
 	initial := `package service
@@ -236,7 +540,7 @@ func TestScanProducesDeterministicChunkSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	closeTestDB(t, db)
 
 	stats1, err := Run(cfg, db, Options{})
 	if err != nil {
@@ -378,7 +682,7 @@ func TestProviderChangeInvalidatesIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
-	defer db.Close()
+	closeTestDB(t, db)
 
 	// Create test file
 	file1 := filepath.Join(tempDir, "file1.go")
@@ -386,8 +690,8 @@ func TestProviderChangeInvalidatesIndex(t *testing.T) {
 		t.Fatalf("failed to write file1: %v", err)
 	}
 
-	// 1. Initial run (default provider/model = "mock:mock-lcg")
-	os.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	// 1. Initial run (provider/model = "mock:mock-lcg")
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
 	stats1, err := Run(cfg, db, Options{})
 	if err != nil {
 		t.Fatalf("first scan failed: %v", err)
@@ -411,13 +715,10 @@ func TestProviderChangeInvalidatesIndex(t *testing.T) {
 		t.Errorf("expected 1 file cached, got %d", stats2.Cached)
 	}
 
-	// 3. Run again after changing provider env to "openai" (even though API key is mock, we just want to test provider string change detection)
-	os.Setenv("NEUROFS_EMBEDDING_PROVIDER", "openai")
-	os.Setenv("OPENAI_API_KEY", "sk-dummy-key")
-	defer func() {
-		os.Unsetenv("NEUROFS_EMBEDDING_PROVIDER")
-		os.Unsetenv("OPENAI_API_KEY")
-	}()
+	// 3. Run again with a reachable local Ollama provider.
+	ollama := newOllamaEmbeddingTestServer(t)
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "ollama")
+	t.Setenv("OLLAMA_HOST", ollama.URL)
 
 	stats3, err := Run(cfg, db, Options{})
 	if err != nil {
@@ -434,7 +735,7 @@ func TestProviderChangeInvalidatesIndex(t *testing.T) {
 
 	// Verify new provider is stored in metadata
 	newProviderVal, ok, err := db.GetMeta("embedding_provider")
-	if err != nil || !ok || newProviderVal != "openai:text-embedding-3-small" {
-		t.Errorf("expected stored provider openai:text-embedding-3-small, got %q", newProviderVal)
+	if err != nil || !ok || newProviderVal != "ollama:nomic-embed-text" {
+		t.Errorf("expected stored provider ollama:nomic-embed-text, got %q", newProviderVal)
 	}
 }

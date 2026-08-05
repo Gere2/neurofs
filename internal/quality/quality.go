@@ -10,11 +10,16 @@
 package quality
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/runid"
+	"github.com/Gere2/neurofs/internal/safefile"
 )
 
 // Rating values are intentionally three: a binary yes/no plus an
@@ -24,21 +29,48 @@ const (
 	RatingYes  = "yes"
 	RatingNo   = "no"
 	RatingSkip = "skip"
+
+	SourceHuman     = "human"
+	SourceAgent     = "agent"
+	SourceSynthetic = "synthetic"
 )
 
 // Entry is one rated prompt run. The shape is intentionally flat so
 // `jq`, `awk`, or pandas can slice the file without nested traversal.
 type Entry struct {
+	runid.Availability
 	Timestamp     time.Time `json:"ts"`
 	Query         string    `json:"query"`
 	Repo          string    `json:"repo"`
+	BundlePath    string    `json:"bundle_path,omitempty"`
+	BundleHash    string    `json:"bundle_hash,omitempty"`
 	TokensUsed    int       `json:"tokens_used"`
 	TokensBudget  int       `json:"tokens_budget"`
 	FilesIncluded int       `json:"files_included"`
 	TopPicks      []string  `json:"top_picks"`
 	Reused        bool      `json:"reused"`
 	Rating        string    `json:"rating"`
+	Source        string    `json:"source,omitempty"`
 	Comment       string    `json:"comment,omitempty"`
+}
+
+// IsHumanRating reports whether an entry is eligible for the real-use gate.
+// Legacy task --rate entries did not carry a source, so they remain human by
+// default. Old agent-generated entries that explicitly identify themselves as
+// non-human are excluded without rewriting the append-only ledger.
+func IsHumanRating(e Entry) bool {
+	switch strings.ToLower(strings.TrimSpace(e.Source)) {
+	case SourceHuman:
+		return true
+	case SourceAgent, SourceSynthetic:
+		return false
+	case "":
+		comment := strings.ToLower(e.Comment)
+		return !strings.Contains(comment, "not a human rating") &&
+			!strings.Contains(comment, "agent self-assessment")
+	default:
+		return false
+	}
 }
 
 // Path returns the absolute location of the quality log for repoRoot.
@@ -54,6 +86,18 @@ func Path(repoRoot string) string {
 // reshape the historical record, which is exactly what this dataset
 // must not do.
 func Append(repoRoot string, e Entry) error {
+	return AppendContext(context.Background(), repoRoot, e)
+}
+
+// AppendContext appends a rating after binding the current run attribution.
+// Missing attribution is recorded explicitly; malformed/conflicting identity
+// fails closed instead of silently writing a mislabeled rating.
+func AppendContext(ctx context.Context, repoRoot string, e Entry) error {
+	attribution, err := runid.Bind(ctx, e.Availability)
+	if err != nil {
+		return fmt.Errorf("quality: bind run identity: %w", err)
+	}
+	e.Availability = attribution
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
@@ -61,14 +105,21 @@ func Append(repoRoot string, e Entry) error {
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return fmt.Errorf("quality: mkdir: %w", err)
 	}
-	f, err := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := safefile.OpenAppend(p, 0o600)
 	if err != nil {
 		return fmt.Errorf("quality: open %s: %w", p, err)
 	}
-	defer f.Close()
 	enc := json.NewEncoder(f) // newline-delimited by default
 	if err := enc.Encode(e); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("quality: encode: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("quality: sync: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("quality: close: %w", err)
 	}
 	return nil
 }

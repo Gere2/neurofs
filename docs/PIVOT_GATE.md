@@ -16,9 +16,12 @@ Run the gate with:
 neurofs gate
 ```
 
-It is read-only against the engine: it loads artefacts the product already
-produces, scores them, and prints a per-criterion verdict plus an overall
-verdict. JSON via `--json`. No network, no LLM calls.
+It does not modify source files, the index, or audit evidence: it loads the
+artefacts the product already produces, scores them, and prints a per-criterion
+verdict plus an overall verdict. G3 recomputation does refresh
+`.neurofs/task/` cache files; use `--skip-fixtures` when even that cache write
+is undesirable. JSON is available via `--json` and can be written atomically
+with `--out <path>`. No LLM calls are made.
 
 ---
 
@@ -34,8 +37,9 @@ Each criterion returns one of four verdicts:
 | `SKIP` | Not enough data to evaluate. Not a failure — just "produce more signal first". |
 
 The overall verdict aggregates by priority: any `FAIL` ⇒ overall `FAIL`;
-otherwise any `WARN` ⇒ overall `WARN`; if every criterion is `SKIP` ⇒
-overall `SKIP`; otherwise `PASS`.
+otherwise any `WARN` ⇒ overall `WARN`; otherwise any unevaluated criterion
+(`SKIP`) keeps the overall result at `SKIP`. Overall `PASS` means every
+criterion was measured and passed.
 
 Process exit code: `1` only on overall `FAIL`. `WARN` and `SKIP` exit `0`
 because they are not blocking; CI that wants to block on `WARN` should
@@ -46,6 +50,9 @@ parse `--json` explicitly.
 ## G1 — Real-use signal
 
 **Source.** `.neurofs/quality.jsonl`, appended by `neurofs task --rate`.
+Entries record `source: "human"`; explicitly agent-generated or synthetic
+ratings are ignored. Legacy entries remain eligible unless their comment
+identifies them as non-human, so historical ledgers never need rewriting.
 
 **Question.** Are humans actually using this and finding it useful?
 
@@ -73,6 +80,8 @@ and by `pack --save-bundle`.
 
 **Verdict.**
 - `SKIP` if no bundles are present.
+- `FAIL` if any JSON snapshot is malformed, has a non-positive budget, or has
+  a negative used-token count; invalid evidence is never counted as a bundle.
 - `FAIL` if **any** bundle has `tokens_used > tokens_budget` (overshoot).
 - `PASS` otherwise.
 
@@ -98,7 +107,7 @@ offending bundle. The CLI names the first offender in the detail string.
 
 ## G3 — Fact recovery
 
-**Source.** `audit/facts/*.json`, hand-written fixtures of the form:
+**Source.** `audit/facts/*.json`, hand-written or promoted fixtures of the form:
 
 ```json
 {
@@ -106,6 +115,26 @@ offending bundle. The CLI names the first offender in the detail string.
   "expects_facts": ["weightFilename", "filename_match", "scoreFile"]
 }
 ```
+
+Fixtures are append-only evidence. When code evolution makes one obsolete,
+add a complete correction in the same directory instead of editing or deleting
+the original:
+
+```json
+{
+  "question": "How does the session pool detect database or WAL changes?",
+  "expects_facts": ["sessionFor", "currentIndexRevision", "SearchShared"],
+  "source": "correction",
+  "supersedes": "learned-13c0047c29b4.json"
+}
+```
+
+`supersedes` must be the exact `.json` basename of one older fixture in the
+same directory. Both `gate` and `learn` evaluate only the active end of each
+correction chain while retaining every historical file. They fail closed on a
+missing or path-shaped target, self-reference, cycle, or two corrections that
+claim the same target; an active fixture with no expected facts is also
+invalid.
 
 For each fixture, the gate runs `taskflow.Run(force=true)` against the
 current index and counts which expected facts appear (case-insensitive
@@ -117,7 +146,7 @@ does the bundle actually contain the names/concepts/identifiers needed
 to ground the answer?
 
 **Verdict.**
-- `SKIP` if no fixtures are present.
+- `SKIP` if fewer than `MinFixtures` active fixtures are present (default 5).
 - `FAIL` if mean recall < `MinMeanRecall` (default 0.8).
 - `PASS` otherwise.
 
@@ -152,7 +181,9 @@ elided (excerpt-extractor issue)?
    against the bundle bytes on disk, so the gate measures the history
    itself rather than trusting a verdict persisted earlier. The recompute
    agrees exactly with `audit replay` (validated on the seed pair: 88.0%
-   both ways). Orphan responses without a bundle are skipped.
+   both ways). Every response is evidence: an orphan response or malformed
+   matching bundle makes the gate fail closed instead of silently shrinking
+   the sample set.
 3. **Grounding ledger** — response-kind events from the continuous
    grounding hook (`audit/grounding.jsonl`, see `neurofs ground`).
    Edit-kind events are deliberately excluded: drift over an edit can be
@@ -162,7 +193,8 @@ elided (excerpt-extractor issue)?
 grounded in the bundles they were given?
 
 **Verdict.**
-- `SKIP` if no samples exist in any source.
+- `SKIP` if fewer than `MinSamples` samples exist (default 3); one or two
+  observations are reported but cannot produce a stable median verdict.
 - `FAIL` if **median** drift rate > `MaxMedianDrift` (default 0.15). The
   detail always carries the mean, the per-source counts, and names the
   worst sample.
@@ -177,8 +209,8 @@ grounded implementation responses plus that plan (0%, 0%, 13%, 88%), the
 mean reads 25.3% (FAIL) while the median reads 6.5% (PASS). The median
 asks the right question — "is the *typical* response grounded?" — and the
 mean and worst sample stay in the report so an operator still sees the
-outliers. Small-n verdicts are honest but noisy — accumulate samples
-before acting on a single result.
+outliers. The minimum of three samples prevents a single response from
+declaring the history clean or broken.
 
 **Calibration note.** The drift detector rewards verbatim identifiers:
 prose forms of bundle content ("TypeScript" for `models.LangTypeScript`,
@@ -187,8 +219,10 @@ filenames read as drift. Grounded agent responses should cite identifiers
 exactly as they appear in the context — which is the citation discipline
 the bundle instructions already ask for.
 
-**How to move it.** Every `audit replay`, every saved bundle+response pair,
-and every loop turn with the grounding hook enabled adds a sample for free.
+**How to move it.** Every `audit replay`, every complete saved
+bundle+response pair, and every loop turn with the grounding hook enabled adds
+a sample. Keep the pair stems identical; an orphan is invalid audit evidence
+and stops the gate.
 
 **Known sharp edge.** A response that exists both as a persisted record and
 as a bundle+response pair contributes two samples (one per source). With a
@@ -199,13 +233,48 @@ either persist the replay record or save the pair, not both.
 
 ## G5 — Cross-shape sanity
 
+**Source.** The newest immutable run under `audit/g5/*.json`. Schema v2 records
+the exact repository commits, fixture-set hashes, binary and weights hashes,
+the actor, deterministic provider/search/budget settings, report hashes, and
+the mechanical `economy`, G2, and G3 results for every shape. Raw reports live
+under `audit/g5/reports/<run>/`. The loader rejects malformed, oversized,
+duplicate, symlinked, non-regular, or partially valid evidence instead of
+silently dropping it.
+
+The verifier recalculates economy summaries from every retained task row and
+G3 from every retained fact result. It also verifies each raw report hash,
+canonical fixture coverage and the exact fresh bundle generated for each G3
+fixture. In attested mode G2 is therefore measured in the same gate invocation
+as G3, not from an unrelated `--bundles-dir`.
+
+`make build` stamps the effective source-tree hash into the executable.
+`economy --g5-attest` and `gate --g5-attest` require
+`--g5-engine-root`; an unstamped binary, an old binary, or a source checkout
+whose hash differs from the embedded provenance is rejected. External
+canonical repositories must match their pinned commit and remote and be clean,
+including ignored files other than `.neurofs`.
+
 **Question.** Does the gate hold not just on this repo (a Go service)
 but on at least three repository shapes — Go service, TS/JS frontend,
 Python lib?
 
-**Status.** Currently emitted as `SKIP`. The gate command only inspects
-the current repo. Cross-shape evaluation is a manual exercise for now:
-clone three target repos, scan, run `gate` in each, compare verdicts.
+**Verdict.**
+
+- `SKIP` if no cross-shape run has been recorded.
+- `FAIL` if the newest run uses a historical schema, no longer matches the
+  current source tree, stamped binary provenance, weights, canonical fixture
+  sets, or retained raw reports; if a required shape is absent/duplicated; or
+  if any shape fails:
+  - economy `PASS`, mean iso-recall reduction ≥ 25%, miss rate < 1/3;
+  - G2 `PASS`, at least one real bundle, zero overshoots;
+  - G3 `PASS`, at least five fixtures, mean recall ≥ 80%.
+- `PASS` when the Go service, Python library, and TypeScript frontend all
+  satisfy those thresholds in the same run.
+
+G5 is deterministic mechanical evidence, so `actor_kind: "agent"` is valid
+and explicit. That does **not** relax G1: usefulness ratings remain human-only.
+The current run and exact commits are documented in
+[`phase_g5_cross_shape.md`](phase_g5_cross_shape.md).
 
 ---
 
@@ -213,12 +282,19 @@ clone three target repos, scan, run `gate` in each, compare verdicts.
 
 NeuroFS is ready to consider the hosted pivot when **all of**:
 
-- G1 = `PASS` for at least two consecutive weeks (signal is sustained,
-  not a one-week artefact)
+- G1 = `PASS`: at least 10 eligible human ratings with a yes-rate of at
+  least 80%
 - G2 = `PASS` (no overshoot ever)
 - G3 = `PASS` on at least 5 distinct fixtures
-- G4 = `PASS` (or manually reviewed clean) on the rolling 30-day window
+- G4 = `PASS`: at least 3 pooled drift samples with median drift no greater
+  than 15%
 - G5 = `PASS` on at least 3 repository shapes
+
+Those are the machine-enforced conditions. The current evaluator reads the
+full available G1 and G4 ledgers; it does not implement consecutive-week
+streaks or a rolling 30-day filter. A team may still use those periods as an
+operational observation policy, but they must not be presented as conditions
+that `neurofs gate` verifies.
 
 Until that happens, every iteration goes into the engine — ranking,
 fragment extraction, representation choice, prompt shape — not into

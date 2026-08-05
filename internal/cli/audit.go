@@ -3,19 +3,28 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
 	"github.com/spf13/cobra"
+)
+
+const (
+	maxAuditResponseBytes int64 = 16 << 20
+	maxAuditBundleBytes   int64 = 64 << 20
+	maxAuditFactsBytes    int64 = 4 << 20
 )
 
 // newAuditCmd is the parent command that groups every governance operation.
@@ -63,13 +72,17 @@ a legitimate workflow ("did the new index cost us grounding?").`,
 			}
 
 			d := audit.DiffRecords(a, b)
-			printDiffSummary(os.Stderr, d, args[0], args[1])
+			if err := printDiffSummary(cmd.ErrOrStderr(), d, args[0], args[1]); err != nil {
+				return fmt.Errorf("audit diff: write summary: %w", err)
+			}
 
 			if jsonOut != "" {
 				if err := writeJSON(jsonOut, d); err != nil {
 					return fmt.Errorf("audit diff: --json: %w", err)
 				}
-				fmt.Fprintf(os.Stderr, "  json diff  : %s\n", jsonOut)
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "  json diff  : %s\n", jsonOut); err != nil {
+					return fmt.Errorf("audit diff: write json path: %w", err)
+				}
 			}
 			return nil
 		},
@@ -81,59 +94,61 @@ a legitimate workflow ("did the new index cost us grounding?").`,
 // printDiffSummary renders the human-readable diff. We lead with identity
 // (question/model/bundle) so the reader can judge whether A and B are even
 // comparable before interpreting the numbers.
-func printDiffSummary(w *os.File, d audit.Diff, aPath, bPath string) {
-	fmt.Fprintf(w, "\nNeuroFS — audit diff\n\n")
-	fmt.Fprintf(w, "  A : %s\n", aPath)
-	fmt.Fprintf(w, "  B : %s\n", bPath)
+func printDiffSummary(dst io.Writer, d audit.Diff, aPath, bPath string) error {
+	w := newReportWriter(dst)
+	w.printf("\nNeuroFS — audit diff\n\n")
+	w.printf("  A : %s\n", aPath)
+	w.printf("  B : %s\n", bPath)
 
 	if d.SameQuestion {
-		fmt.Fprintf(w, "  question : %s\n", truncateLine(d.A.Question, 70))
+		w.printf("  question : %s\n", truncateLine(d.A.Question, 70))
 	} else {
-		fmt.Fprintf(w, "  question : DIFFERENT\n")
-		fmt.Fprintf(w, "    A: %s\n", truncateLine(d.A.Question, 70))
-		fmt.Fprintf(w, "    B: %s\n", truncateLine(d.B.Question, 70))
+		w.printf("  question : DIFFERENT\n")
+		w.printf("    A: %s\n", truncateLine(d.A.Question, 70))
+		w.printf("    B: %s\n", truncateLine(d.B.Question, 70))
 	}
 	if d.SameModel {
-		fmt.Fprintf(w, "  model    : %s\n", d.A.Model)
+		w.printf("  model    : %s\n", d.A.Model)
 	} else {
-		fmt.Fprintf(w, "  model    : %s → %s\n", d.A.Model, d.B.Model)
+		w.printf("  model    : %s → %s\n", d.A.Model, d.B.Model)
 	}
 	if d.SameBundle {
-		fmt.Fprintf(w, "  bundle   : same (%s)\n", shortHash(d.A.BundleHash))
+		w.printf("  bundle   : same (%s)\n", shortHash(d.A.BundleHash))
 	} else {
-		fmt.Fprintf(w, "  bundle   : DIFFERENT (%s → %s)\n",
+		w.printf("  bundle   : DIFFERENT (%s → %s)\n",
 			shortHash(d.A.BundleHash), shortHash(d.B.BundleHash))
 	}
 
-	fmt.Fprintf(w, "\n  grounded : %5.1f%% → %5.1f%%   (%+5.1f)\n",
+	w.printf("\n  grounded : %5.1f%% → %5.1f%%   (%+5.1f)\n",
 		d.A.GroundedRatio*100, d.B.GroundedRatio*100, d.GroundedDelta*100)
-	fmt.Fprintf(w, "  drift    : %5.1f%% → %5.1f%%   (%+5.1f)\n",
+	w.printf("  drift    : %5.1f%% → %5.1f%%   (%+5.1f)\n",
 		d.A.Drift.Rate*100, d.B.Drift.Rate*100, d.DriftDelta*100)
 	if d.RecallApplies {
-		fmt.Fprintf(w, "  recall   : %5.1f%% → %5.1f%%   (%+5.1f)\n",
+		w.printf("  recall   : %5.1f%% → %5.1f%%   (%+5.1f)\n",
 			d.A.AnswerRecall*100, d.B.AnswerRecall*100, d.RecallDelta*100)
 	}
 
 	printBucketDiff(w, "paths", d.Paths)
 	printBucketDiff(w, "apis", d.APIs)
 	printBucketDiff(w, "symbols", d.Symbols)
-	fmt.Fprintln(w)
+	w.printf("\n")
+	return w.err
 }
 
 // printBucketDiff renders one bucket's added/removed lists, or stays silent
 // when both are empty. "+" = appeared in B (potentially worse); "-" = gone
 // from A (potentially better). We intentionally do not colour the output —
 // terminals without ANSI support still read clearly.
-func printBucketDiff(w *os.File, label string, sd audit.SetDiff) {
+func printBucketDiff(w *reportWriter, label string, sd audit.SetDiff) {
 	if len(sd.Added) == 0 && len(sd.Removed) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "\n  %s:\n", label)
+	w.printf("\n  %s:\n", label)
 	for _, s := range sd.Added {
-		fmt.Fprintf(w, "    +  %s\n", s)
+		w.printf("    +  %s\n", s)
 	}
 	for _, s := range sd.Removed {
-		fmt.Fprintf(w, "    -  %s\n", s)
+		w.printf("    -  %s\n", s)
 	}
 }
 
@@ -204,7 +219,7 @@ Pass --save to persist a JSON record under audit/records/.`,
 				return fmt.Errorf("audit replay: %w", err)
 			}
 
-			response, err := os.ReadFile(responsePath)
+			response, _, err := fsutil.ReadRegularFileBounded(responsePath, maxAuditResponseBytes)
 			if err != nil {
 				return fmt.Errorf("audit replay: read response: %w", err)
 			}
@@ -234,9 +249,12 @@ Pass --save to persist a JSON record under audit/records/.`,
 				}
 			}
 
-			facts := parseFacts(factsCSV, factsFile)
+			facts, err := parseFacts(factsCSV, factsFile)
+			if err != nil {
+				return fmt.Errorf("audit replay: %w", err)
+			}
 
-			rec, err := audit.Run(context.Background(),
+			rec, err := audit.Run(cmd.Context(),
 				audit.StubModel{Label: modelID, Response: string(response)},
 				bundle,
 				audit.Options{ExpectsFacts: facts},
@@ -245,13 +263,17 @@ Pass --save to persist a JSON record under audit/records/.`,
 				return fmt.Errorf("audit replay: %w", err)
 			}
 
-			printReplaySummary(os.Stderr, rec)
+			if err := printReplaySummary(cmd.ErrOrStderr(), rec); err != nil {
+				return fmt.Errorf("audit replay: write summary: %w", err)
+			}
 
 			if jsonOut != "" {
 				if err := writeJSON(jsonOut, rec); err != nil {
 					return fmt.Errorf("audit replay: --json: %w", err)
 				}
-				fmt.Fprintf(os.Stderr, "  json record: %s\n", jsonOut)
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "  json record: %s\n", jsonOut); err != nil {
+					return fmt.Errorf("audit replay: write json path: %w", err)
+				}
 			}
 
 			if save {
@@ -263,11 +285,13 @@ Pass --save to persist a JSON record under audit/records/.`,
 					}
 					dir = filepath.Join(root, audit.DefaultRecordsDir)
 				}
-				path, err := audit.SaveRecord(dir, rec)
+				path, err := audit.SaveRecordContext(cmd.Context(), dir, rec)
 				if err != nil {
 					return fmt.Errorf("audit replay: save: %w", err)
 				}
-				fmt.Fprintf(os.Stderr, "  saved to   : %s\n", path)
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "  saved to   : %s\n", path); err != nil {
+					return fmt.Errorf("audit replay: write record path: %w", err)
+				}
 			}
 			return nil
 		},
@@ -296,7 +320,7 @@ Pass --save to persist a JSON record under audit/records/.`,
 // produced by `pack --save-bundle`: a plain JSON dump of the Bundle struct.
 func loadBundleJSON(path string) (models.Bundle, error) {
 	var b models.Bundle
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxAuditBundleBytes)
 	if err != nil {
 		return b, fmt.Errorf("load bundle: %w", err)
 	}
@@ -314,12 +338,16 @@ func loadBundleJSON(path string) (models.Bundle, error) {
 // as the index and the flags — if the repo has moved on since the user
 // asked Claude, recompute will not match the original; callers who want
 // exact replay should use --bundle.
-func rebuildBundle(cfg *config.Config, query string, budget int, focus string, changedFlag bool, maxFiles, maxFragments int) (models.Bundle, error) {
+func rebuildBundle(cfg *config.Config, query string, budget int, focus string, changedFlag bool, maxFiles, maxFragments int) (bundle models.Bundle, retErr error) {
 	db, err := storage.Open(cfg.DBPath)
 	if err != nil {
 		return models.Bundle{}, fmt.Errorf("open index (did you run 'neurofs scan'?): %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("close index: %w", err))
+		}
+	}()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -357,7 +385,7 @@ func rebuildBundle(cfg *config.Config, query string, budget int, focus string, c
 
 // parseFacts merges --facts and --facts-file. Both are optional; an empty
 // result means the audit skips fact recall (ratio stays at 0, unreported).
-func parseFacts(csv, file string) []string {
+func parseFacts(csv, file string) ([]string, error) {
 	var out []string
 	if strings.TrimSpace(csv) != "" {
 		for _, f := range strings.Split(csv, ",") {
@@ -367,16 +395,17 @@ func parseFacts(csv, file string) []string {
 		}
 	}
 	if file != "" {
-		data, err := os.ReadFile(file)
-		if err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if s := strings.TrimSpace(line); s != "" {
-					out = append(out, s)
-				}
+		data, _, err := fsutil.ReadRegularFileBounded(file, maxAuditFactsBytes)
+		if err != nil {
+			return nil, fmt.Errorf("read --facts-file %s: %w", file, err)
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			if s := strings.TrimSpace(line); s != "" {
+				out = append(out, s)
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // printReplaySummary renders the human-readable report the user sees in the
@@ -384,53 +413,71 @@ func parseFacts(csv, file string) []string {
 // because they call for different reactions: a bad path often means a typo
 // or a missing file, a bad api-like name usually means a hallucinated
 // method, and a bad symbol is the classic "invented class" case.
-func printReplaySummary(w *os.File, rec audit.AuditRecord) {
+func printReplaySummary(dst io.Writer, rec audit.AuditRecord) error {
+	w := newReportWriter(dst)
 	valid, invalid := splitCitations(rec.Citations)
 	short := rec.BundleHash
 	if len(short) > 12 {
 		short = short[:12] + "…"
 	}
 
-	fmt.Fprintf(w, "\nNeuroFS — audit replay\n\n")
-	fmt.Fprintf(w, "  question     : %s\n", truncateLine(rec.Question, 70))
-	fmt.Fprintf(w, "  model        : %s\n", rec.Model)
-	fmt.Fprintf(w, "  bundle hash  : %s\n", short)
-	fmt.Fprintf(w, "  bundle files : %d fragments\n", len(rec.Fragments))
-	fmt.Fprintf(w, "\n  grounded     : %.1f%%  (%d / %d citations valid)\n",
+	w.printf("\nNeuroFS — audit replay\n\n")
+	w.printf("  question     : %s\n", truncateLine(rec.Question, 70))
+	w.printf("  model        : %s\n", rec.Model)
+	w.printf("  bundle hash  : %s\n", short)
+	w.printf("  bundle files : %d fragments\n", len(rec.Fragments))
+	w.printf("\n  grounded     : %.1f%%  (%d / %d citations valid)\n",
 		rec.GroundedRatio*100, len(valid), len(rec.Citations))
-	fmt.Fprintf(w, "  drift rate   : %.1f%%  (%d unknown of %d referenced)\n",
+	w.printf("  drift rate   : %.1f%%  (%d unknown of %d referenced)\n",
 		rec.Drift.Rate*100, rec.Drift.UnknownCount, rec.Drift.KnownCount+rec.Drift.UnknownCount)
-	fmt.Fprintf(w, "    paths      : %d   apis : %d   symbols : %d\n",
+	w.printf("    paths      : %d   apis : %d   symbols : %d\n",
 		len(rec.Drift.UnknownPaths), len(rec.Drift.UnknownAPIs), len(rec.Drift.UnknownSymbols))
 	if len(rec.ExpectsFacts) > 0 {
-		fmt.Fprintf(w, "  fact recall  : %.1f%%  (%d / %d facts hit)\n",
+		w.printf("  fact recall  : %.1f%%  (%d / %d facts hit)\n",
 			rec.AnswerRecall*100, len(rec.FactsHit), len(rec.ExpectsFacts))
 	}
 
 	if len(invalid) > 0 {
-		fmt.Fprintf(w, "\n  invalid citations (top %d):\n", minInt(len(invalid), 5))
+		w.printf("\n  invalid citations (top %d):\n", minInt(len(invalid), 5))
 		for _, c := range invalid[:minInt(len(invalid), 5)] {
-			fmt.Fprintf(w, "    %-40s  (%s)\n", c.Raw, c.Reason)
+			w.printf("    %-40s  (%s)\n", c.Raw, c.Reason)
 		}
 	}
 	printDriftList(w, "drift paths", rec.Drift.UnknownPaths)
 	printDriftList(w, "drift apis", rec.Drift.UnknownAPIs)
 	printDriftList(w, "drift symbols", rec.Drift.UnknownSymbols)
-	fmt.Fprintln(w)
+	w.printf("\n")
+	return w.err
 }
 
 // printDriftList renders one bucket of drift entries if it is non-empty.
 // Pulled into a helper so the three buckets share identical formatting and
 // the caller reads like a table of contents.
-func printDriftList(w *os.File, label string, items []string) {
+func printDriftList(w *reportWriter, label string, items []string) {
 	if len(items) == 0 {
 		return
 	}
 	n := minInt(len(items), 5)
-	fmt.Fprintf(w, "\n  %-13s (top %d):\n", label, n)
+	w.printf("\n  %-13s (top %d):\n", label, n)
 	for _, s := range items[:n] {
-		fmt.Fprintf(w, "    %s\n", s)
+		w.printf("    %s\n", s)
 	}
+}
+
+type reportWriter struct {
+	dst io.Writer
+	err error
+}
+
+func newReportWriter(dst io.Writer) *reportWriter {
+	return &reportWriter{dst: dst}
+}
+
+func (w *reportWriter) printf(format string, args ...any) {
+	if w.err != nil {
+		return
+	}
+	_, w.err = fmt.Fprintf(w.dst, format, args...)
 }
 
 // splitCitations partitions a citation slice into valid and invalid halves
@@ -450,14 +497,11 @@ func splitCitations(cs []audit.Citation) (valid, invalid []audit.Citation) {
 // writeJSON marshals v to path with 2-space indentation. Parent directory
 // is created if missing so callers don't have to mkdir defensively.
 func writeJSON(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return atomicfile.WriteFile(path, data, 0o644)
 }
 
 func truncateLine(s string, n int) string {

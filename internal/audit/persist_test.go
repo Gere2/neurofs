@@ -1,11 +1,15 @@
 package audit
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
 
 func TestSaveAndLoadRecordRoundTrip(t *testing.T) {
@@ -184,5 +188,145 @@ func TestListRecordsIgnoresNonJSON(t *testing.T) {
 	}
 	if len(paths) != 1 {
 		t.Fatalf("expected only the .json to be listed, got %v", paths)
+	}
+}
+
+type failingInfoDirEntry struct {
+	name string
+	err  error
+}
+
+func (e failingInfoDirEntry) Name() string               { return e.name }
+func (e failingInfoDirEntry) IsDir() bool                { return false }
+func (e failingInfoDirEntry) Type() fs.FileMode          { return 0 }
+func (e failingInfoDirEntry) Info() (fs.FileInfo, error) { return nil, e.err }
+
+func TestListRecordsPropagatesEntryInfoError(t *testing.T) {
+	dir := t.TempDir()
+	sentinel := errors.New("entry metadata unavailable")
+	_, err := listRecords(dir, func(string) ([]os.DirEntry, error) {
+		return []os.DirEntry{failingInfoDirEntry{name: "broken.json", err: sentinel}}, nil
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("ListRecords entry error = %v, want wrapped sentinel", err)
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "broken.json")) {
+		t.Fatalf("ListRecords error does not identify entry: %v", err)
+	}
+}
+
+func TestLoadRecordRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	if err := os.WriteFile(target, []byte(`{"question":"outside"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	link := filepath.Join(dir, "record.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := LoadRecord(link); !errors.Is(err, fsutil.ErrNotRegular) {
+		t.Fatalf("LoadRecord error = %v, want ErrNotRegular", err)
+	}
+}
+
+func TestLoadRecordRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "record.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := f.Truncate(maxAuditRecordBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatalf("Truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := LoadRecord(path); !errors.Is(err, fsutil.ErrFileTooLarge) {
+		t.Fatalf("LoadRecord error = %v, want ErrFileTooLarge", err)
+	}
+}
+
+func TestSaveRecordUsesPrivatePermissions(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "records")
+	path, err := SaveRecord(dir, AuditRecord{BundleHash: "private"})
+	if err != nil {
+		t.Fatalf("SaveRecord: %v", err)
+	}
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("Stat records dir: %v", err)
+	}
+	if got := dirInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("records dir permissions = %o, want 700", got)
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat record: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("record permissions = %o, want 600", got)
+	}
+}
+
+func TestListRecordsIgnoresSymlinkJSON(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(target, []byte(`{"question":"outside"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, "linked.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	paths, err := ListRecords(dir)
+	if err != nil {
+		t.Fatalf("ListRecords: %v", err)
+	}
+	if len(paths) != 0 {
+		t.Fatalf("ListRecords returned symlink entries: %v", paths)
+	}
+}
+
+func TestSaveAndListRejectSymlinkRecordsDir(t *testing.T) {
+	parent := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(parent, "records")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := SaveRecord(link, AuditRecord{BundleHash: "blocked"}); err == nil {
+		t.Fatal("SaveRecord accepted a symlink records directory")
+	}
+	if _, err := ListRecords(link); err == nil {
+		t.Fatal("ListRecords accepted a symlink records directory")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatalf("ReadDir outside: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("SaveRecord wrote through symlink: %v", entries)
+	}
+}
+
+func TestSaveRecordRejectsSymlinkParentDir(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "audit")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	dir := filepath.Join(repo, "audit", "records")
+	if _, err := SaveRecord(dir, AuditRecord{BundleHash: "blocked"}); err == nil {
+		t.Fatal("SaveRecord accepted a symlink parent directory")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "records")); !os.IsNotExist(err) {
+		t.Fatalf("SaveRecord created records outside the repository: %v", err)
 	}
 }

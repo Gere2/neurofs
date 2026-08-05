@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // Store abstracts the persistence layer for the ledger and active session tracking.

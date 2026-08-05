@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 const sessionDuration = 8 * time.Hour

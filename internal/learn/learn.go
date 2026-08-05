@@ -24,6 +24,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,10 +33,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/usage"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/fixturehistory"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/usage"
 )
 
 // Fixture mirrors the gate's G3 fixture shape; the extra fields record
@@ -46,6 +49,7 @@ type Fixture struct {
 	Source       string   `json:"source,omitempty"`
 	UsageID      string   `json:"usage_id,omitempty"`
 	CreatedAt    string   `json:"created_at,omitempty"`
+	Supersedes   string   `json:"supersedes,omitempty"`
 }
 
 const (
@@ -53,6 +57,7 @@ const (
 	maxFactCount   = 6 // G3 guidance: 3-6 facts; more lets one miss tank recall
 	minFactLength  = 3
 	overfitWarnMin = 10
+	maxFixtureSize = int64(1 << 20)
 )
 
 // FactsDir returns where fixtures live for repoRoot.
@@ -83,9 +88,14 @@ func LoadFixturesFrom(dir string) ([]Fixture, error) {
 		return nil, err
 	}
 	sort.Strings(paths)
-	var fixtures []Fixture
+	type loadedFixture struct {
+		name    string
+		fixture Fixture
+	}
+	loaded := make([]loadedFixture, 0, len(paths))
+	history := make([]fixturehistory.Entry, 0, len(paths))
 	for _, p := range paths {
-		data, err := os.ReadFile(p)
+		data, _, err := fsutil.ReadRegularFileBounded(p, maxFixtureSize)
 		if err != nil {
 			return nil, fmt.Errorf("learn: read fixture %s: %w", p, err)
 		}
@@ -93,12 +103,37 @@ func LoadFixturesFrom(dir string) ([]Fixture, error) {
 		if err := json.Unmarshal(data, &f); err != nil {
 			return nil, fmt.Errorf("learn: parse fixture %s: %w", p, err)
 		}
-		if strings.TrimSpace(f.Question) == "" || len(f.ExpectsFacts) == 0 {
-			continue
+		if strings.TrimSpace(f.Question) == "" {
+			return nil, fmt.Errorf("learn: fixture %s has empty question", p)
 		}
-		fixtures = append(fixtures, f)
+		if len(nonBlankFacts(f.ExpectsFacts)) == 0 {
+			return nil, fmt.Errorf("learn: fixture %s has no expected facts", p)
+		}
+		name := filepath.Base(p)
+		loaded = append(loaded, loadedFixture{name: name, fixture: f})
+		history = append(history, fixturehistory.Entry{Name: name, Supersedes: f.Supersedes})
+	}
+	active, err := fixturehistory.Active(history)
+	if err != nil {
+		return nil, fmt.Errorf("learn: invalid fixture history: %w", err)
+	}
+	fixtures := make([]Fixture, 0, len(active))
+	for _, item := range loaded {
+		if active[item.name] {
+			fixtures = append(fixtures, item.fixture)
+		}
 	}
 	return fixtures, nil
+}
+
+func nonBlankFacts(facts []string) []string {
+	out := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if strings.TrimSpace(fact) != "" {
+			out = append(out, fact)
+		}
+	}
+	return out
 }
 
 // PromoteResult reports what Promote did.
@@ -164,20 +199,36 @@ func Promote(repoRoot string) (PromoteResult, error) {
 
 	for _, id := range ids {
 		path := filepath.Join(FactsDir(repoRoot), learnedPrefix+id+".json")
-		if _, err := os.Stat(path); err == nil {
-			res.Existing++
-			continue
-		}
 		data, err := json.MarshalIndent(byID[id], "", "  ")
 		if err != nil {
 			return res, fmt.Errorf("learn: marshal fixture: %w", err)
 		}
-		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		if err := writeFixtureExclusive(path, append(data, '\n')); errors.Is(err, os.ErrExist) {
+			res.Existing++
+			continue
+		} else if err != nil {
 			return res, fmt.Errorf("learn: write fixture: %w", err)
 		}
 		res.Created = append(res.Created, path)
 	}
 	return res, nil
+}
+
+// writeFixtureExclusive preserves the append-only fixture contract even when
+// two promote processes race. O_EXCL makes an existing deterministic fixture
+// name immutable; Sync and Close surface persistence failures to the caller.
+func writeFixtureExclusive(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	if err := file.Sync(); err != nil {
+		return errors.Join(err, file.Close())
+	}
+	return file.Close()
 }
 
 // collectFacts builds the expected-fact list for one feedback entry:
@@ -225,9 +276,8 @@ func queryID(query string) string {
 // promoting such a fact would mint a fixture with permanent zero recall
 // that silently drags every future tune. The fixtures directory itself is
 // excluded — a fact must exist outside its own oracle, or every rotten
-// fixture would self-certify. Validation uses ripgrep, the same
-// dependency retrieval's exact-signal path already relies on; if rg is not
-// installed the facts pass through unvalidated rather than blocking
+// fixture would self-certify. Validation uses ripgrep when available; if rg
+// is not installed the facts pass through unvalidated rather than blocking
 // promotion.
 func factsPresentInRepo(repoRoot string, facts []string) []string {
 	if len(facts) == 0 {
@@ -240,7 +290,8 @@ func factsPresentInRepo(repoRoot string, facts []string) []string {
 	for _, fact := range facts {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		cmd := exec.CommandContext(ctx, "rg", "--fixed-strings", "--ignore-case", "--quiet",
-			"--glob", "!.git/**", "--glob", "!.neurofs/**", "--glob", "!audit/facts/**", fact, repoRoot)
+			"--glob", "!.git/**", "--glob", "!.neurofs/**", "--glob", "!audit/facts/**",
+			"-e", fact, "--", repoRoot)
 		err := cmd.Run()
 		cancel()
 		if err == nil {
@@ -560,10 +611,11 @@ func evaluate(ctx context.Context, c *corpusFixtures, w retrieval.Weights, limit
 	var summary EvalSummary
 	for _, fixture := range c.fixtures {
 		response, err := session.Search(ctx, retrieval.Options{
-			Query:              fixture.Question,
-			Limit:              limit,
-			Weights:            &w,
-			NeutralizeGitState: true,
+			Query:                   fixture.Question,
+			Limit:                   limit,
+			Weights:                 &w,
+			NeutralizeGitState:      true,
+			ExpandStructuralContext: true,
 		})
 		if err != nil {
 			return EvalSummary{}, fmt.Errorf("learn: search %q: %w", fixture.Question, err)

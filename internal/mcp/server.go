@@ -2,12 +2,15 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+
+	"github.com/Gere2/neurofs/internal/runid"
 )
 
 // Server reads newline-delimited JSON-RPC messages from in and writes
@@ -65,6 +68,14 @@ func repoRootFromCtx(ctx context.Context) string {
 // Run loops over input messages until EOF, ctx cancellation, or a
 // fatal write error. EOF is a clean shutdown.
 func (s *Server) Run(ctx context.Context) error {
+	// A normal MCP server is long-lived and shared across calls. Its launch
+	// environment cannot identify the current request, so explicitly suppress
+	// ambient correlation until request-scoped IDs are part of the protocol.
+	var err error
+	ctx, err = runid.WithAvailability(ctx, runid.ForPersistentServer())
+	if err != nil {
+		return fmt.Errorf("declare MCP correlation: %w", err)
+	}
 	scanner := bufio.NewScanner(s.in)
 	// 64 MiB max — large MCP messages (multi-megabyte prompt contexts or
 	// search results) must not crash the server. The MCP traffic agent
@@ -119,26 +130,49 @@ func (s *Server) Run(ctx context.Context) error {
 }
 
 // handle returns the response and a drop flag. drop=true means the
-// inbound message was a notification (no id) or a known notification-
-// shaped method and no response should be written. JSON-RPC 2.0 §4.1:
-// a notification never gets a response, even a successful one. The
-// MCP traffic agent surfaced that the prior code only honoured this
-// for invalid-request and method-not-found branches, returning full
-// results for tools/list and initialize when sent as notifications.
-func (s *Server) handle(ctx context.Context, line []byte) (Response, bool) {
-	var req Request
-	if err := json.Unmarshal(line, &req); err != nil {
+// inbound message was a valid notification (a valid request object with
+// no id) and no response should be written. JSON-RPC 2.0 §4.1: a
+// notification never gets a response, even a successful one. Invalid
+// values and malformed request objects are not notifications merely
+// because they lack an id; they receive -32600 with a null id.
+func (s *Server) handle(ctx context.Context, line []byte) (any, bool) {
+	if !json.Valid(line) {
+		var syntax any
+		err := json.Unmarshal(line, &syntax)
 		s.log.Printf("parse error: %v", err)
 		return errResponse(nil, codeParseError, "parse error", err.Error()), false
 	}
 
-	notification := len(req.ID) == 0 || string(req.ID) == "null"
+	trimmed := bytes.TrimSpace(line)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return s.handleRequest(ctx, line)
+	}
 
-	if req.JSONRPC != "2.0" {
-		if notification {
-			return Response{}, true
+	var batch []json.RawMessage
+	if err := json.Unmarshal(trimmed, &batch); err != nil {
+		return errResponse(nil, codeInvalidRequest, "invalid request", err.Error()), false
+	}
+	if len(batch) == 0 {
+		return errResponse(nil, codeInvalidRequest, "invalid request", nil), false
+	}
+
+	responses := make([]Response, 0, len(batch))
+	for _, raw := range batch {
+		resp, drop := s.handleRequest(ctx, raw)
+		if !drop {
+			responses = append(responses, resp)
 		}
-		return errResponse(req.ID, codeInvalidRequest, "invalid request", nil), false
+	}
+	if len(responses) == 0 {
+		return nil, true
+	}
+	return responses, false
+}
+
+func (s *Server) handleRequest(ctx context.Context, line []byte) (Response, bool) {
+	req, notification, err := decodeRequest(line)
+	if err != nil {
+		return errResponse(nil, codeInvalidRequest, "invalid request", err.Error()), false
 	}
 
 	resp, drop := s.dispatchMethod(ctx, req)
@@ -151,6 +185,77 @@ func (s *Server) handle(ctx context.Context, line []byte) (Response, bool) {
 	return resp, drop
 }
 
+// decodeRequest validates the JSON-RPC request envelope before deciding
+// whether it is a notification. Decoding directly into Request is not
+// sufficient: encoding/json accepts both `null` and `{}` as a zero-valued
+// struct, which previously made invalid values disappear as notifications.
+func decodeRequest(line []byte) (Request, bool, error) {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(line, &members); err != nil {
+		return Request{}, false, err
+	}
+	if members == nil {
+		return Request{}, false, fmt.Errorf("request must be an object")
+	}
+
+	jsonrpc, ok := requestStringMember(members, "jsonrpc")
+	if !ok || jsonrpc != "2.0" {
+		return Request{}, false, fmt.Errorf("jsonrpc must be %q", "2.0")
+	}
+	method, ok := requestStringMember(members, "method")
+	if !ok {
+		return Request{}, false, fmt.Errorf("method must be a string")
+	}
+
+	req := Request{
+		JSONRPC: jsonrpc,
+		Method:  method,
+	}
+	id, hasID := members["id"]
+	if hasID {
+		if !validRequestID(id) {
+			return Request{}, false, fmt.Errorf("id must be a string, number, or null")
+		}
+		req.ID = id
+	}
+	if params, hasParams := members["params"]; hasParams {
+		trimmed := bytes.TrimSpace(params)
+		if len(trimmed) == 0 || (trimmed[0] != '{' && trimmed[0] != '[') {
+			return Request{}, false, fmt.Errorf("params must be an object or array")
+		}
+		req.Params = params
+	}
+	return req, !hasID, nil
+}
+
+func requestStringMember(members map[string]json.RawMessage, name string) (string, bool) {
+	raw, ok := members[name]
+	if !ok {
+		return "", false
+	}
+	var value *string
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		return "", false
+	}
+	return *value, true
+}
+
+func validRequestID(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return true
+	}
+	if len(trimmed) == 0 {
+		return false
+	}
+	if trimmed[0] == '"' {
+		var value string
+		return json.Unmarshal(trimmed, &value) == nil
+	}
+	var value json.Number
+	return json.Unmarshal(trimmed, &value) == nil
+}
+
 func (s *Server) dispatchMethod(ctx context.Context, req Request) (Response, bool) {
 	switch req.Method {
 	case "initialize":
@@ -161,7 +266,7 @@ func (s *Server) dispatchMethod(ctx context.Context, req Request) (Response, boo
 		}), false
 
 	case "notifications/initialized":
-		return Response{}, true
+		return okResponse(req.ID, struct{}{}), false
 
 	case "tools/list":
 		return okResponse(req.ID, ToolsListResult{Tools: toolsList()}), false

@@ -11,8 +11,8 @@
 //     records, stem-paired bundle+response files recomputed with
 //     audit.DetectDrift, and response-kind events from the continuous
 //     grounding ledger (audit/grounding.jsonl).
-//   - G5 — cross-shape sanity. Manual; this package only operates on
-//     the current repo.
+//   - G5 — immutable audit/g5/*.json evidence from mechanical economy,
+//     G2, and G3 runs on Go, Python, and TypeScript repository shapes.
 //
 // The package is pure: load data, score it, return a Report. No process
 // invocation, no os.Exit. The CLI wraps it in cmd/neurofs gate.go and
@@ -38,9 +38,12 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/quality"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/fixturehistory"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/quality"
+	"github.com/Gere2/neurofs/internal/ranking"
 )
 
 // Verdict is the four-state outcome of a single criterion or the overall
@@ -78,10 +81,12 @@ type Criterion struct {
 // see the full slice; the human render filters to imperfect/errored
 // fixtures only.
 type Report struct {
-	Criteria    []Criterion  `json:"criteria"`
-	Overall     Verdict      `json:"overall"`
-	G3Details   []FactResult `json:"g3_details,omitempty"`
-	Regressions []Regression `json:"regressions,omitempty"`
+	Criteria         []Criterion               `json:"criteria"`
+	Overall          Verdict                   `json:"overall"`
+	G3Details        []FactResult              `json:"g3_details,omitempty"`
+	Regressions      []Regression              `json:"regressions,omitempty"`
+	G5Metadata       *CrossShapeReportMetadata `json:"g5_metadata,omitempty"`
+	G5GateInvocation *CrossShapeGateInvocation `json:"g5_gate_invocation,omitempty"`
 }
 
 // Regression describes one way the current report is worse than a baseline
@@ -90,7 +95,7 @@ type Report struct {
 // from recall=1.0 to recall=0.5 is below the absolute threshold but is a
 // real regression compared to main.
 type Regression struct {
-	Kind   string `json:"kind"`  // verdict_downgrade | fixture_failed | recall_dropped
+	Kind   string `json:"kind"`  // verdict_downgrade | fixture_failed | recall_dropped | fixture_removed
 	Where  string `json:"where"` // criterion ID or fixture identifier
 	Before string `json:"before"`
 	After  string `json:"after"`
@@ -115,8 +120,12 @@ func DefaultG1Thresholds() G1Thresholds {
 // minimum sample size). FAIL only when the yes-rate is below the floor
 // AND the sample size is sufficient.
 func EvaluateG1(entries []quality.Entry, th G1Thresholds) Criterion {
-	yes, no := 0, 0
+	yes, no, ignored := 0, 0, 0
 	for _, e := range entries {
+		if !quality.IsHumanRating(e) {
+			ignored++
+			continue
+		}
 		switch e.Rating {
 		case quality.RatingYes:
 			yes++
@@ -128,17 +137,22 @@ func EvaluateG1(entries []quality.Entry, th G1Thresholds) Criterion {
 	c := Criterion{ID: "G1", Name: "Real-use signal"}
 	if n == 0 {
 		c.Verdict = Skip
-		c.Detail = "no rated entries yet — run `neurofs task --rate` to produce them"
+		c.Detail = "no human-rated entries yet — run `neurofs task --rate` to produce them"
+		if ignored > 0 {
+			c.Detail = fmt.Sprintf("no human-rated entries yet (%d non-human ignored) — run `neurofs task --rate` to produce them", ignored)
+		}
+		c.Numbers = map[string]float64{"ignored_non_human": float64(ignored)}
 		return c
 	}
 	rate := float64(yes) / float64(n)
 	c.Numbers = map[string]float64{
-		"samples":     float64(n),
-		"yes":         float64(yes),
-		"no":          float64(no),
-		"yes_rate":    rate,
-		"min_samples": float64(th.MinSamples),
-		"min_rate":    th.MinYesRate,
+		"samples":           float64(n),
+		"yes":               float64(yes),
+		"no":                float64(no),
+		"yes_rate":          rate,
+		"min_samples":       float64(th.MinSamples),
+		"min_rate":          th.MinYesRate,
+		"ignored_non_human": float64(ignored),
 	}
 	if n < th.MinSamples {
 		c.Verdict = Skip
@@ -241,6 +255,8 @@ func EvaluateG2(snapshots []BundleSnapshot) G2Result {
 type Fixture struct {
 	Question     string   `json:"question"`
 	ExpectsFacts []string `json:"expects_facts"`
+	Source       string   `json:"source,omitempty"`
+	Supersedes   string   `json:"supersedes,omitempty"`
 	// SourcePath is filled by LoadFixtures so the report can name the
 	// failing fixture. Exposed in JSON because the gate's GitHub Action
 	// caller needs a path to attach `::error file=...` annotations.
@@ -265,23 +281,30 @@ type FactResult struct {
 	Error string `json:"error,omitempty"`
 }
 
-// G3Thresholds parameterises fact recovery. Default: 80% mean recall.
+// G3Thresholds parameterises fact recovery. Defaults: at least five
+// fixtures and 80% mean recall.
 type G3Thresholds struct {
 	MinMeanRecall float64
+	MinFixtures   int
 }
 
 // DefaultG3Thresholds returns the documented defaults.
 func DefaultG3Thresholds() G3Thresholds {
-	return G3Thresholds{MinMeanRecall: 0.8}
+	return G3Thresholds{MinMeanRecall: 0.8, MinFixtures: 5}
 }
 
-// EvaluateG3 averages per-fixture recall and decides the verdict. Empty
-// input yields SKIP. Otherwise FAIL when mean recall is below the floor.
+// EvaluateG3 averages per-fixture recall and decides the verdict. Evidence
+// below MinFixtures yields SKIP. Otherwise FAIL when mean recall is below
+// the floor.
 func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 	c := Criterion{ID: "G3", Name: "Fact recovery"}
 	if len(results) == 0 {
 		c.Verdict = Skip
 		c.Detail = "no fixtures available — add files under audit/facts/*.json"
+		c.Numbers = map[string]float64{
+			"fixtures":     0,
+			"min_fixtures": float64(th.MinFixtures),
+		}
 		return c
 	}
 	sum := 0.0
@@ -310,9 +333,21 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 		"failed":       float64(failed),
 		"worst_recall": worstRecall,
 		"min_recall":   th.MinMeanRecall,
+		"min_fixtures": float64(th.MinFixtures),
+	}
+	if th.MinFixtures > 0 && len(results) < th.MinFixtures {
+		c.Verdict = Skip
+		c.Detail = fmt.Sprintf("only %d fact fixtures available; need at least %d for a stable verdict (current mean recall %.0f%%)",
+			len(results), th.MinFixtures, mean*100)
+		return c
 	}
 	verdict := Pass
-	if mean < th.MinMeanRecall {
+	// Fact recall is a ratio, so an exact rational threshold can land one
+	// representable float below its decimal spelling (for example
+	// (1 + 2/3 + 1 + 2/3 + 2/3) / 5 = 0.7999999999999999). Do not fail an
+	// exactly-on-threshold corpus because of IEEE-754 rounding.
+	const recallComparisonEpsilon = 1e-12
+	if failed > 0 || mean+recallComparisonEpsilon < th.MinMeanRecall {
 		verdict = Fail
 	}
 	c.Verdict = verdict
@@ -321,6 +356,9 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 	if verdict == Fail && worst >= 0 {
 		c.Detail += fmt.Sprintf("; worst: %q at %.0f%%",
 			truncate(results[worst].Fixture.Question, 50), worstRecall*100)
+	}
+	if failed > 0 {
+		c.Detail += fmt.Sprintf("; %d fixture execution error(s)", failed)
 	}
 	return c
 }
@@ -334,11 +372,12 @@ func EvaluateG3(results []FactResult, th G3Thresholds) Criterion {
 // the report for the operator. Default: 15% max median drift.
 type G4Thresholds struct {
 	MaxMedianDrift float64
+	MinSamples     int
 }
 
 // DefaultG4Thresholds returns the default drift threshold.
 func DefaultG4Thresholds() G4Thresholds {
-	return G4Thresholds{MaxMedianDrift: 0.15}
+	return G4Thresholds{MaxMedianDrift: 0.15, MinSamples: 3}
 }
 
 // DriftSample is one drift observation feeding G4, tagged with where it came
@@ -363,7 +402,8 @@ func SamplesFromRecords(records []audit.AuditRecord) []DriftSample {
 // bundles/x.json). Each pair is re-scored with audit.DetectDrift against the
 // bundle bytes on disk, so the gate measures the history itself rather than
 // trusting a verdict persisted earlier. Responses without a matching bundle
-// are skipped — there is nothing hermetic to score them against.
+// are rejected: an orphan means the evidence set is incomplete and silently
+// skipping it could turn a failing gate into a pass.
 func CollectPairDrift(bundlesDir, responsesDir string) ([]DriftSample, error) {
 	entries, err := os.ReadDir(responsesDir)
 	if os.IsNotExist(err) {
@@ -384,11 +424,12 @@ func CollectPairDrift(bundlesDir, responsesDir string) ([]DriftSample, error) {
 		bundlePath := filepath.Join(bundlesDir, stem+".json")
 		bundle, err := loadBundleFile(bundlePath)
 		if err != nil {
-			continue // orphan response or unreadable bundle — not scoreable
+			return nil, fmt.Errorf("gate: response %s has no valid bundle: %w", ent.Name(), err)
 		}
-		respBytes, err := os.ReadFile(filepath.Join(responsesDir, ent.Name()))
+		responsePath := filepath.Join(responsesDir, ent.Name())
+		respBytes, _, err := fsutil.ReadRegularFileBounded(responsePath, maxBundleBytes)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("gate: read response %s: %w", ent.Name(), err)
 		}
 		drift := audit.DetectDrift(string(respBytes), bundle)
 		samples = append(samples, DriftSample{Origin: "pair", Label: stem, Rate: drift.Rate})
@@ -399,7 +440,7 @@ func CollectPairDrift(bundlesDir, responsesDir string) ([]DriftSample, error) {
 
 func loadBundleFile(path string) (models.Bundle, error) {
 	var bundle models.Bundle
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxBundleBytes)
 	if err != nil {
 		return bundle, err
 	}
@@ -421,13 +462,38 @@ func EvaluateG4(records []audit.AuditRecord, th G4Thresholds) Criterion {
 //
 // Verdict:
 //   - SKIP if no samples are present.
-//   - FAIL if the mean drift rate is above the threshold.
+//   - FAIL if the median drift rate is above the threshold.
 //   - PASS otherwise.
 func EvaluateG4Samples(samples []DriftSample, th G4Thresholds) Criterion {
 	c := Criterion{ID: "G4", Name: "Replay drift"}
 	if len(samples) == 0 {
 		c.Verdict = Skip
 		c.Detail = "no drift evidence — run `neurofs audit replay`, save bundle+response pairs under audit/, or enable the grounding hook"
+		return c
+	}
+	for i, sample := range samples {
+		if math.IsNaN(sample.Rate) || math.IsInf(sample.Rate, 0) || sample.Rate < 0 || sample.Rate > 1 {
+			label := sample.Label
+			if label == "" {
+				label = fmt.Sprintf("sample %d", i+1)
+			}
+			c.Verdict = Fail
+			c.Numbers = map[string]float64{
+				"samples":         float64(len(samples)),
+				"invalid_samples": 1,
+			}
+			c.Detail = fmt.Sprintf("invalid drift rate %v for %q (%s); expected a finite value in [0,1]",
+				sample.Rate, label, sample.Origin)
+			return c
+		}
+	}
+	if th.MinSamples > 0 && len(samples) < th.MinSamples {
+		c.Verdict = Skip
+		c.Numbers = map[string]float64{
+			"samples":     float64(len(samples)),
+			"min_samples": float64(th.MinSamples),
+		}
+		c.Detail = fmt.Sprintf("only %d drift samples available; need at least %d for a stable verdict", len(samples), th.MinSamples)
 		return c
 	}
 
@@ -521,21 +587,21 @@ func PostprocessG2(g2 G2Result, g3 Criterion) Criterion {
 //
 //   - Any FAIL → overall FAIL.
 //   - Any WARN → overall WARN.
-//   - All SKIP → overall SKIP.
-//   - At least one PASS, no FAIL/WARN → overall PASS (passing what you measured).
+//   - Any SKIP (with no FAIL/WARN) → overall SKIP.
+//   - All PASS → overall PASS.
 //
-// The "all SKIP" case avoids a fresh repo getting a misleading PASS for
-// having nothing to evaluate against.
+// Readiness is conjunctive: a PASS means every required criterion was
+// actually measured and passed. Partial evidence remains an honest SKIP.
 func Aggregate(crits []Criterion) Verdict {
-	hasFail, hasWarn, passes := false, false, 0
+	hasFail, hasWarn, hasSkip := false, false, false
 	for _, c := range crits {
 		switch c.Verdict {
 		case Fail:
 			hasFail = true
 		case Warn:
 			hasWarn = true
-		case Pass:
-			passes++
+		case Skip:
+			hasSkip = true
 		}
 	}
 	switch {
@@ -543,7 +609,7 @@ func Aggregate(crits []Criterion) Verdict {
 		return Fail
 	case hasWarn:
 		return Warn
-	case passes == 0:
+	case len(crits) == 0 || hasSkip:
 		return Skip
 	default:
 		return Pass
@@ -561,29 +627,51 @@ const renderMaxMissing = 3
 // and Verdict; one detail line per criterion; an optional per-fixture
 // breakdown for G3 when any fixture is imperfect or errored; one
 // Overall line at the bottom. Designed for terminals; no colours or
-// unicode beyond ASCII.
-func Render(w io.Writer, r Report) {
-	fmt.Fprintln(w, "NeuroFS — pivot-readiness gate")
-	fmt.Fprintln(w)
+// unicode beyond ASCII. Writer failures are returned so a broken pipe or full
+// output device cannot be reported as a successful gate run.
+func Render(w io.Writer, r Report) error {
+	out := &reportPrinter{w: w}
+	out.println("NeuroFS — pivot-readiness gate")
+	out.println()
 	for _, c := range r.Criteria {
-		fmt.Fprintf(w, "  %-2s  %-22s %-4s  %s\n", c.ID, c.Name, string(c.Verdict), c.Detail)
+		out.printf("  %-2s  %-22s %-4s  %s\n", c.ID, c.Name, string(c.Verdict), c.Detail)
 	}
-	renderG3FixtureDetail(w, r.G3Details)
-	renderRegressions(w, r.Regressions)
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  Overall: %s\n", string(r.Overall))
+	renderG3FixtureDetail(out, r.G3Details)
+	renderRegressions(out, r.Regressions)
+	out.println()
+	out.printf("  Overall: %s\n", string(r.Overall))
+	return out.err
+}
+
+type reportPrinter struct {
+	w   io.Writer
+	err error
+}
+
+func (p *reportPrinter) printf(format string, args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintf(p.w, format, args...)
+}
+
+func (p *reportPrinter) println(args ...any) {
+	if p.err != nil {
+		return
+	}
+	_, p.err = fmt.Fprintln(p.w, args...)
 }
 
 // renderRegressions prints one line per regression detected against a
 // baseline. Empty when --baseline was not passed or no regressions found.
-func renderRegressions(w io.Writer, regs []Regression) {
+func renderRegressions(out *reportPrinter, regs []Regression) {
 	if len(regs) == 0 {
 		return
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  Regressions vs baseline (%d):\n", len(regs))
+	out.println()
+	out.printf("  Regressions vs baseline (%d):\n", len(regs))
 	for _, r := range regs {
-		fmt.Fprintf(w, "    [%s] %s — %s\n", r.Kind, r.Where, r.Detail)
+		out.printf("    [%s] %s — %s\n", r.Kind, r.Where, r.Detail)
 	}
 }
 
@@ -598,7 +686,7 @@ func renderRegressions(w io.Writer, regs []Regression) {
 //	G3 imperfect fixtures:
 //	  [ 67%] "How does the ranker score filename matches and ..." — missing: filename_match
 //	  [error] "broken question" — taskflow: open index: foo
-func renderG3FixtureDetail(w io.Writer, results []FactResult) {
+func renderG3FixtureDetail(out *reportPrinter, results []FactResult) {
 	if len(results) == 0 {
 		return
 	}
@@ -611,15 +699,15 @@ func renderG3FixtureDetail(w io.Writer, results []FactResult) {
 	if len(imperfect) == 0 {
 		return
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "  G3 imperfect fixtures:")
+	out.println()
+	out.println("  G3 imperfect fixtures:")
 	for _, r := range imperfect {
 		q := truncate(r.Fixture.Question, 60)
 		if r.Error != "" {
-			fmt.Fprintf(w, "    [error] %q — %s\n", q, r.Error)
+			out.printf("    [error] %q — %s\n", q, r.Error)
 			continue
 		}
-		fmt.Fprintf(w, "    [%3.0f%%] %q%s%s\n",
+		out.printf("    [%3.0f%%] %q%s%s\n",
 			r.Recall*100, q, formatMisses(r.Misses), formatStaleFacts(r.StaleFacts))
 	}
 }
@@ -698,11 +786,16 @@ func truncate(s string, n int) string {
 
 // LoadQualityEntries reads the JSONL produced by `task --rate`. A missing
 // file is not an error: callers want to evaluate G1 as SKIP in that case,
-// not fail the whole gate. Malformed lines are skipped with no fuss; a
-// rating dataset is append-only and a single corrupt line should not
-// invalidate every other reading.
+// not fail the whole gate. A malformed non-empty line is an integrity error:
+// silently dropping negative evidence could change the verdict.
+const (
+	maxQualityLogBytes = int64(64 << 20)
+	maxBundleBytes     = int64(16 << 20)
+	maxFixtureBytes    = int64(1 << 20)
+)
+
 func LoadQualityEntries(path string) ([]quality.Entry, error) {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxQualityLogBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -710,14 +803,14 @@ func LoadQualityEntries(path string) ([]quality.Entry, error) {
 		return nil, fmt.Errorf("gate: read quality log: %w", err)
 	}
 	var out []quality.Entry
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 		var e quality.Entry
 		if err := json.Unmarshal([]byte(line), &e); err != nil {
-			continue // tolerate corrupt lines; do not poison the dataset
+			return nil, fmt.Errorf("gate: parse quality log %s line %d: %w", path, i+1, err)
 		}
 		out = append(out, e)
 	}
@@ -741,13 +834,25 @@ func LoadBundleSnapshots(dir string) ([]BundleSnapshot, error) {
 			continue
 		}
 		path := filepath.Join(dir, ent.Name())
-		data, err := os.ReadFile(path)
+		data, _, err := fsutil.ReadRegularFileBounded(path, maxBundleBytes)
 		if err != nil {
-			continue // skip unreadable; do not abort
+			return nil, fmt.Errorf("gate: read bundle snapshot %s: %w", path, err)
 		}
 		var b models.Bundle
 		if err := json.Unmarshal(data, &b); err != nil {
-			continue
+			return nil, fmt.Errorf("gate: parse bundle snapshot %s: %w", path, err)
+		}
+		if b.Stats.TokensBudget <= 0 {
+			return nil, fmt.Errorf(
+				"gate: invalid bundle snapshot %s: tokens_budget must be positive",
+				path,
+			)
+		}
+		if b.Stats.TokensUsed < 0 {
+			return nil, fmt.Errorf(
+				"gate: invalid bundle snapshot %s: tokens_used must be non-negative",
+				path,
+			)
 		}
 		out = append(out, BundleSnapshot{
 			Path:   path,
@@ -771,13 +876,18 @@ func LoadFixtures(dir string) ([]Fixture, error) {
 		}
 		return nil, fmt.Errorf("gate: read fixtures dir: %w", err)
 	}
-	var out []Fixture
+	type loadedFixture struct {
+		name    string
+		fixture Fixture
+	}
+	var loaded []loadedFixture
+	var history []fixturehistory.Entry
 	for _, ent := range entries {
 		if ent.IsDir() || !strings.HasSuffix(ent.Name(), ".json") {
 			continue
 		}
 		path := filepath.Join(dir, ent.Name())
-		data, err := os.ReadFile(path)
+		data, _, err := fsutil.ReadRegularFileBounded(path, maxFixtureBytes)
 		if err != nil {
 			return nil, fmt.Errorf("gate: read fixture %s: %w", path, err)
 		}
@@ -788,23 +898,47 @@ func LoadFixtures(dir string) ([]Fixture, error) {
 		if strings.TrimSpace(f.Question) == "" {
 			return nil, fmt.Errorf("gate: fixture %s has empty question", path)
 		}
+		if len(nonBlankFixtureFacts(f.ExpectsFacts)) == 0 {
+			return nil, fmt.Errorf("gate: fixture %s has no expected facts", path)
+		}
 		f.SourcePath = path
-		out = append(out, f)
+		loaded = append(loaded, loadedFixture{name: ent.Name(), fixture: f})
+		history = append(history, fixturehistory.Entry{Name: ent.Name(), Supersedes: f.Supersedes})
+	}
+	active, err := fixturehistory.Active(history)
+	if err != nil {
+		return nil, fmt.Errorf("gate: invalid fixture history: %w", err)
+	}
+	out := make([]Fixture, 0, len(active))
+	for _, item := range loaded {
+		if active[item.name] {
+			out = append(out, item.fixture)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].SourcePath < out[j].SourcePath })
 	return out, nil
 }
 
-// ScoreBundleAgainstFacts concatenates every NON-TEST fragment's content
-// and runs audit.ScoreFacts on the joined text. _test.go fragments are
-// dropped because the gate measures whether the production bundle can
-// answer a question — a fact only present in test code is not real
-// production coverage and would let stale test assertions mask a renamed
-// or deleted identifier in the production source.
+func nonBlankFixtureFacts(facts []string) []string {
+	out := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if strings.TrimSpace(fact) != "" {
+			out = append(out, fact)
+		}
+	}
+	return out
+}
+
+// ScoreBundleAgainstFacts concatenates every non-test fragment's content and
+// runs audit.ScoreFacts on the joined text. Test-like fragments are identified
+// with the same language-agnostic path policy used by ranking. The gate measures
+// whether the production bundle can answer a question, so a fact only present
+// in test code is not real production coverage and must not mask a renamed or
+// deleted production identifier.
 func ScoreBundleAgainstFacts(b models.Bundle, facts []string) FactResult {
 	var sb strings.Builder
 	for _, f := range b.Fragments {
-		if strings.HasSuffix(f.RelPath, "_test.go") {
+		if ranking.IsTestLikePath(f.RelPath) {
 			continue
 		}
 		sb.WriteString(f.Content)

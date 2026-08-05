@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -10,11 +11,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/grounding"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/grounding"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/safefile"
 	"github.com/spf13/cobra"
+)
+
+const (
+	maxHookEventBytes      int64 = 4 << 20
+	maxGroundBundleBytes   int64 = 64 << 20
+	maxTranscriptLineBytes       = 4 << 20
 )
 
 // hookEvent is the subset of a Claude Code hook payload neurofs ground reads
@@ -88,7 +97,10 @@ citation+drift grounding as 'audit replay' — automated, not pasted.`,
 			}
 
 			// Hook mode: read the event JSON from stdin.
-			data, _ := io.ReadAll(cmd.InOrStdin())
+			data, err := readGroundInput(cmd.InOrStdin(), maxHookEventBytes)
+			if err != nil {
+				return fmt.Errorf("ground: read hook event: %w", err)
+			}
 			if len(strings.TrimSpace(string(data))) == 0 {
 				return fmt.Errorf("ground: no hook event on stdin (use --feed to read the ledger, --print-hook to install)")
 			}
@@ -99,11 +111,19 @@ citation+drift grounding as 'audit replay' — automated, not pasted.`,
 
 			bundle, bundleErr := resolveContextBundle(cfg.RepoRoot, bundlePath)
 			if bundleErr != nil {
-				// Not fatal: we still record the event, just unable to ground.
+				// No prior task bundle is a legitimate first-run state. Unsafe,
+				// oversized, corrupt, or explicitly requested bundles fail
+				// closed instead of silently recording an ungrounded event.
+				if bundlePath != "" || !isMissingGroundBundle(bundleErr) {
+					return fmt.Errorf("ground: load bundle: %w", bundleErr)
+				}
 				bundle = models.Bundle{}
 			}
 
-			event, recorded := buildGroundingEvent(cfg.RepoRoot, ev, bundle)
+			event, recorded, err := buildGroundingEvent(cfg.RepoRoot, ev, bundle)
+			if err != nil {
+				return fmt.Errorf("ground: build event: %w", err)
+			}
 			if !recorded {
 				// Nothing actionable in this event (e.g. a non-edit tool); succeed quietly.
 				return nil
@@ -125,7 +145,9 @@ citation+drift grounding as 'audit replay' — automated, not pasted.`,
 				Notes:     event.Note,
 			})
 
-			fmt.Fprintf(cmd.ErrOrStderr(), "neurofs ground: %s\n", oneLineEvent(event))
+			if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "neurofs ground: %s\n", oneLineEvent(event)); err != nil {
+				return fmt.Errorf("ground: write event summary: %w", err)
+			}
 			return nil
 		},
 	}
@@ -141,7 +163,7 @@ citation+drift grounding as 'audit replay' — automated, not pasted.`,
 
 // buildGroundingEvent maps a hook event to a grounding event. The bool reports
 // whether the event was actionable (and should be recorded).
-func buildGroundingEvent(repoRoot string, ev hookEvent, bundle models.Bundle) (grounding.Event, bool) {
+func buildGroundingEvent(repoRoot string, ev hookEvent, bundle models.Bundle) (grounding.Event, bool, error) {
 	origin := strings.TrimSpace(ev.HookEventName)
 	switch strings.ToLower(ev.ToolName) {
 	case "edit", "write", "multiedit":
@@ -157,23 +179,26 @@ func buildGroundingEvent(repoRoot string, ev hookEvent, bundle models.Bundle) (g
 		rel := toRepoRel(repoRoot, ev.CWD, ti.FilePath)
 		event := grounding.ScoreEdit(bundle, rel, added)
 		event.Origin = joinOrigin(origin, ev.ToolName)
-		return event, true
+		return event, true, nil
 	}
 
 	// Stop / SubagentStop / no tool: ground the agent's final message.
 	if strings.EqualFold(origin, "Stop") || strings.EqualFold(origin, "SubagentStop") || ev.ToolName == "" {
-		resp := lastAssistantMessage(ev.TranscriptPath)
+		resp, err := lastAssistantMessage(ev.TranscriptPath)
+		if err != nil {
+			return grounding.Event{}, false, err
+		}
 		if strings.TrimSpace(resp) == "" {
-			return grounding.Event{}, false
+			return grounding.Event{}, false, nil
 		}
 		event := grounding.ScoreResponse(bundle, resp)
 		event.Origin = origin
 		if event.Origin == "" {
 			event.Origin = "Stop"
 		}
-		return event, true
+		return event, true, nil
 	}
-	return grounding.Event{}, false
+	return grounding.Event{}, false, nil
 }
 
 // resolveContextBundle loads the bundle to ground against: an explicit path, or
@@ -210,7 +235,7 @@ func resolveContextBundle(repoRoot, explicit string) (models.Bundle, error) {
 }
 
 func readBundleFile(path string) (models.Bundle, error) {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxGroundBundleBytes)
 	if err != nil {
 		return models.Bundle{}, err
 	}
@@ -224,15 +249,23 @@ func readBundleFile(path string) (models.Bundle, error) {
 // lastAssistantMessage extracts the final assistant text from a Claude Code
 // transcript (JSONL). Best-effort: an unreadable or unfamiliar transcript
 // yields "" and the caller skips recording rather than failing the hook.
-func lastAssistantMessage(transcriptPath string) string {
+func lastAssistantMessage(transcriptPath string) (last string, retErr error) {
 	if transcriptPath == "" {
-		return ""
+		return "", nil
 	}
-	f, err := os.Open(transcriptPath)
+	f, err := safefile.OpenRead(transcriptPath)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
 	if err != nil {
-		return ""
+		return "", fmt.Errorf("open transcript: %w", err)
 	}
-	defer f.Close()
+	defer func() {
+		if err := f.Close(); err != nil {
+			last = ""
+			retErr = errors.Join(retErr, fmt.Errorf("close transcript: %w", err))
+		}
+	}()
 
 	type contentBlock struct {
 		Type string `json:"type"`
@@ -246,9 +279,8 @@ func lastAssistantMessage(transcriptPath string) string {
 		} `json:"message"`
 	}
 
-	var last string
 	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), maxTranscriptLineBytes)
 	for sc.Scan() {
 		raw := strings.TrimSpace(sc.Text())
 		if raw == "" {
@@ -272,7 +304,25 @@ func lastAssistantMessage(transcriptPath string) string {
 			last = txt
 		}
 	}
-	return last
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("scan transcript (line limit %d bytes): %w", maxTranscriptLineBytes, err)
+	}
+	return last, nil
+}
+
+func readGroundInput(r io.Reader, maxBytes int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("input exceeds %d-byte limit", maxBytes)
+	}
+	return data, nil
+}
+
+func isMissingGroundBundle(err error) bool {
+	return os.IsNotExist(err) || strings.Contains(err.Error(), "no task bundle found")
 }
 
 func printGroundFeed(w io.Writer, repoRoot string, jsonOut bool, limit int) error {
@@ -289,30 +339,31 @@ func printGroundFeed(w io.Writer, repoRoot string, jsonOut bool, limit int) erro
 		}{agg, recentConcerning(events, limit)})
 	}
 
-	fmt.Fprintf(w, "NeuroFS — grounding feed (%s)\n", grounding.Path(repoRoot))
+	report := newReportWriter(w)
+	report.printf("NeuroFS — grounding feed (%s)\n", grounding.Path(repoRoot))
 	if agg.Events == 0 {
-		fmt.Fprintf(w, "  no grounding events yet — wire the hook with `neurofs ground --print-hook`\n")
-		return nil
+		report.printf("  no grounding events yet — wire the hook with `neurofs ground --print-hook`\n")
+		return report.err
 	}
-	fmt.Fprintf(w, "  events       : %d\n", agg.Events)
+	report.printf("  events       : %d\n", agg.Events)
 	if agg.Edits > 0 {
-		fmt.Fprintf(w, "  edits        : %d, %.0f%% in provided context (mean added-code drift %.0f%%)\n",
+		report.printf("  edits        : %d, %.0f%% in provided context (mean added-code drift %.0f%%)\n",
 			agg.Edits, agg.EditCoverage*100, agg.MeanEditDrift*100)
 	}
 	if agg.Responses > 0 {
-		fmt.Fprintf(w, "  responses    : %d, mean grounded %.0f%%, mean drift %.0f%%\n",
+		report.printf("  responses    : %d, mean grounded %.0f%%, mean drift %.0f%%\n",
 			agg.Responses, agg.MeanGroundedResp*100, agg.MeanRespDrift*100)
 	}
-	fmt.Fprintf(w, "  concerning   : %d (%.0f%% of events)\n", agg.Concerning, pctOf(agg.Concerning, agg.Events))
+	report.printf("  concerning   : %d (%.0f%% of events)\n", agg.Concerning, pctOf(agg.Concerning, agg.Events))
 
 	recent := recentConcerning(events, limit)
 	if len(recent) > 0 {
-		fmt.Fprintf(w, "\n  recent concerning:\n")
+		report.printf("\n  recent concerning:\n")
 		for _, e := range recent {
-			fmt.Fprintf(w, "    [%s] %s\n", e.Timestamp.Local().Format("01-02 15:04"), oneLineEvent(e))
+			report.printf("    [%s] %s\n", e.Timestamp.Local().Format("01-02 15:04"), oneLineEvent(e))
 		}
 	}
-	return nil
+	return report.err
 }
 
 func recentConcerning(events []grounding.Event, limit int) []grounding.Event {

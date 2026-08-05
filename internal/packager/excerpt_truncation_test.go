@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // TestRenderExcerptTruncatesOversizedBlocks verifies the headline
@@ -53,6 +53,15 @@ func TestRenderExcerptTruncatesOversizedBlocks(t *testing.T) {
 	mid := totalLines / 2
 	if strings.Contains(out, fmt.Sprintf("body line %03d", mid)) {
 		t.Errorf("middle line %d should have been elided", mid)
+	}
+	if !strings.Contains(out, "// ── x.go:1-8 (func giant; head) ──") {
+		t.Errorf("head marker must describe only visible source lines:\n%s", out)
+	}
+	if !strings.Contains(out, "// ── x.go:97-100 (func giant; tail) ──") {
+		t.Errorf("tail marker must describe only visible source lines:\n%s", out)
+	}
+	if strings.Contains(out, "// ── x.go:1-100 ") {
+		t.Errorf("truncated block must not claim its omitted middle is visible:\n%s", out)
 	}
 }
 
