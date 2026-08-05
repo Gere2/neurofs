@@ -39,6 +39,9 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/v1/messages", safePost(allowedOrigins, handleProxyMessages))
 	mux.HandleFunc("/proxy/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
 	mux.HandleFunc("/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
+	mux.HandleFunc("/api/orchestrate/run", safePost(allowedOrigins, handleOrchestrateRun))
+	mux.HandleFunc("/api/orchestrate/stream", handleOrchestrateStream)
+	mux.HandleFunc("/api/orchestrate/models", handleOrchestrateModels)
 }
 
 // --------------------- method gates ---------------------

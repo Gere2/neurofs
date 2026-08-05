@@ -2175,3 +2175,80 @@ table.records td code { font-size: 0.75rem; }
   opacity: 0.9;
 }
 
+/* ==========================================================================
+   ORCHESTRATE TAB STYLES
+   ========================================================================== */
+.v8-nav-accent {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(249, 115, 22, 0.15)) !important;
+  border-color: rgba(234, 179, 8, 0.4) !important;
+  color: #facc15 !important;
+}
+
+.orc-task-card {
+  background: var(--panel-2, #18181b);
+  border: 1px solid var(--border, #27272a);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.orc-task-card.running {
+  border-color: #3b82f6;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+}
+
+.orc-task-card.done {
+  border-color: #22c55e;
+}
+
+.orc-task-card.failed {
+  border-color: #ef4444;
+}
+
+.orc-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.orc-task-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--fg, #f4f4f5);
+}
+
+.orc-task-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.orc-badge-pending { background: #3f3f46; color: #a1a1aa; }
+.orc-badge-running { background: #1e3a8a; color: #93c5fd; }
+.orc-badge-done { background: #14532d; color: #86efac; }
+.orc-badge-failed { background: #7f1d1d; color: #fca5a5; }
+
+.orc-task-details {
+  display: flex;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--muted, #a1a1aa);
+  margin-bottom: 0.5rem;
+}
+
+.orc-task-response {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: #e4e4e7;
+}
+
+

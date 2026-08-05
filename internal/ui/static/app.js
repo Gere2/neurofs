@@ -4050,3 +4050,191 @@ switchTab("home");
 
   rerank();
 })();
+
+/* ==========================================================================
+   ORCHESTRATE CONTROLLER (Sprint 3)
+   ========================================================================== */
+(function initOrchestrate() {
+  const form = document.getElementById("orc-form");
+  if (!form) return;
+
+  const questionInput = document.getElementById("orc-question");
+  const submitBtn = document.getElementById("orc-submit-btn");
+  const dashboard = document.getElementById("orc-dashboard");
+  const tasksContainer = document.getElementById("orc-tasks-container");
+  const statusPill = document.getElementById("orc-status-pill");
+  const metricTasks = document.getElementById("orc-metric-tasks");
+  const metricCost = document.getElementById("orc-metric-cost");
+  const metricGrounding = document.getElementById("orc-metric-grounding");
+  const metricDuration = document.getElementById("orc-metric-duration");
+  const configBtn = document.getElementById("orc-config-btn");
+
+  let currentEventSource = null;
+  let taskCardsMap = new Map();
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = questionInput.value.trim();
+    if (!question) return;
+
+    if (currentEventSource) {
+      currentEventSource.close();
+      currentEventSource = null;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "⏳ Decomposing...";
+    dashboard.style.display = "block";
+    tasksContainer.innerHTML = "";
+    taskCardsMap.clear();
+    statusPill.textContent = "Planning...";
+    metricTasks.textContent = "0";
+    metricCost.textContent = "0.0000";
+    metricGrounding.textContent = "0%";
+    metricDuration.textContent = "0ms";
+
+    try {
+      const repo = state.repo || "";
+      const res = await j("/api/orchestrate/run", {
+        method: "POST",
+        body: JSON.stringify({ question, repo }),
+      });
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = "▶ Orchestrate Plan";
+
+      if (res.error) {
+        alert("Orchestration error: " + res.error);
+        return;
+      }
+
+      const plan = res.plan;
+      metricTasks.textContent = plan.tasks.length;
+
+      // Render initial pending cards
+      plan.tasks.forEach((t, i) => {
+        const card = createCard(t, i + 1);
+        tasksContainer.appendChild(card.el);
+        taskCardsMap.set(t.id, card);
+      });
+
+      // Connect SSE for streaming execution
+      connectSSE(res.run_id);
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "▶ Orchestrate Plan";
+      alert("Network error: " + err.message);
+    }
+  });
+
+  function createCard(t, index) {
+    const el = document.createElement("div");
+    el.className = "orc-task-card";
+    el.id = `orc-card-${t.id}`;
+    el.innerHTML = `
+      <div class="orc-task-header">
+        <div class="orc-task-title">#${index} · ${t.description}</div>
+        <span class="orc-task-badge orc-badge-pending" id="badge-${t.id}">PENDING</span>
+      </div>
+      <div class="orc-task-details">
+        <span>Kind: <strong>${t.kind || "general"}</strong></span>
+        <span>Model: <strong id="model-${t.id}">${t.model || "assigning..."}</strong></span>
+        <span id="cost-${t.id}">Cost: $0.000</span>
+        <span id="grounding-${t.id}"></span>
+      </div>
+      <div class="orc-task-response" id="resp-${t.id}" style="display: none;"></div>
+    `;
+    return {
+      el,
+      badge: el.querySelector(`#badge-${t.id}`),
+      model: el.querySelector(`#model-${t.id}`),
+      cost: el.querySelector(`#cost-${t.id}`),
+      grounding: el.querySelector(`#grounding-${t.id}`),
+      response: el.querySelector(`#resp-${t.id}`),
+    };
+  }
+
+  function connectSSE(runID) {
+    statusPill.textContent = "Executing agents...";
+    currentEventSource = new EventSource(`/api/orchestrate/stream?id=${runID}`);
+
+    let totalCost = 0;
+    let groundings = [];
+    let completedCount = 0;
+    let startTime = Date.now();
+
+    currentEventSource.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        const card = taskCardsMap.get(ev.task_id);
+        if (!card) return;
+
+        if (ev.model) {
+          card.model.textContent = `${ev.model} (${ev.provider || ""})`;
+        }
+
+        if (ev.status === "running") {
+          card.el.className = "orc-task-card running";
+          card.badge.className = "orc-task-badge orc-badge-running";
+          card.badge.textContent = "RUNNING";
+        } else if (ev.status === "done") {
+          card.el.className = "orc-task-card done";
+          card.badge.className = "orc-task-badge orc-badge-done";
+          card.badge.textContent = "DONE";
+          completedCount++;
+          if (ev.cost_usd) {
+            totalCost += ev.cost_usd;
+            card.cost.textContent = `Cost: $${ev.cost_usd.toFixed(4)}`;
+          }
+          if (ev.grounding) {
+            groundings.push(ev.grounding);
+            card.grounding.textContent = `Grounding: ${(ev.grounding * 100).toFixed(0)}%`;
+          }
+          if (ev.response) {
+            card.response.style.display = "block";
+            card.response.textContent = ev.response;
+          }
+        } else if (ev.status === "failed") {
+          card.el.className = "orc-task-card failed";
+          card.badge.className = "orc-task-badge orc-badge-failed";
+          card.badge.textContent = "FAILED";
+          if (ev.error) {
+            card.response.style.display = "block";
+            card.response.textContent = "Error: " + ev.error;
+          }
+        }
+
+        metricCost.textContent = totalCost.toFixed(4);
+        metricDuration.textContent = `${Date.now() - startTime}ms`;
+        if (groundings.length > 0) {
+          const avg = groundings.reduce((a, b) => a + b, 0) / groundings.length;
+          metricGrounding.textContent = `${(avg * 100).toFixed(0)}%`;
+        }
+
+        if (completedCount >= taskCardsMap.size) {
+          statusPill.textContent = "Completed";
+          currentEventSource.close();
+        }
+      } catch (err) {
+        console.error("SSE parse error", err);
+      }
+    };
+
+    currentEventSource.onerror = () => {
+      statusPill.textContent = "Execution Finished";
+      if (currentEventSource) currentEventSource.close();
+    };
+  }
+
+  if (configBtn) {
+    configBtn.addEventListener("click", async () => {
+      try {
+        const cfg = await j(`/api/orchestrate/models?repo=${encodeURIComponent(state.repo || "")}`);
+        alert("Current Router & Models Config:\n\n" + JSON.stringify(cfg, null, 2));
+      } catch (err) {
+        alert("Failed to load models config: " + err.message);
+      }
+    });
+  }
+})();
+

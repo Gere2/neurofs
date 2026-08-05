@@ -31,6 +31,7 @@
       <button data-tab="search" data-i18n="nav.search">Search</button>
       <button data-tab="compare" data-i18n="nav.compare">Compare</button>
       <button data-tab="proxy" data-i18n="nav.proxy">Agent Proxy</button>
+      <button data-tab="orchestrate" class="v8-nav-accent" data-i18n="nav.orchestrate">⚡ Orchestrate</button>
       <button data-tab="playground" data-i18n="nav.playground">Playground</button>
       <button data-tab="guide" data-i18n="nav.guide">Guide</button>
     </nav>
@@ -966,6 +967,47 @@
           <li data-i18n-html="guide.next.workspace">Persistent workspace list — today one repo at a time in <code>localStorage</code>.</li>
           <li data-i18n-html="guide.next.api">Optional live Claude API integration wrapped behind an explicit toggle.</li>
         </ul>
+      </div>
+    </section>
+
+    <!-- ============================ ORCHESTRATE ============================ -->
+    <section id="tab-orchestrate" class="tab">
+      <div class="v8-card">
+        <div class="v8-card-header">
+          <h3>⚡ Multi-Agent Orchestration Engine</h3>
+          <span class="v8-muted">Hermes-inspired multi-model task dispatcher & grounding verifier</span>
+        </div>
+
+        <form id="orc-form" onsubmit="return false;">
+          <div class="form-group">
+            <label for="orc-question">What do you want to build or analyze?</label>
+            <textarea id="orc-question" rows="3" placeholder="e.g. Add user authentication with JWT, DB migrations, frontend form, and integration tests..." required></textarea>
+          </div>
+          <div class="v8-actions">
+            <button type="submit" id="orc-submit-btn" class="btn primary">▶ Orchestrate Plan</button>
+            <button type="button" id="orc-config-btn" class="btn secondary">⚙ Models & Router Config</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Execution Progress Dashboard -->
+      <div id="orc-dashboard" class="v8-card" style="display: none; margin-top: 20px;">
+        <div class="v8-card-header">
+          <h4>Execution Progress</h4>
+          <div id="orc-metrics-pill" class="v8-badge">
+            <span id="orc-status-pill">Running...</span>
+          </div>
+        </div>
+
+        <div class="orc-summary-bar" style="display: flex; gap: 20px; margin: 15px 0; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 6px;">
+          <div><strong>Tasks:</strong> <span id="orc-metric-tasks">0</span></div>
+          <div><strong>Total Cost:</strong> $<span id="orc-metric-cost">0.0000</span></div>
+          <div><strong>Grounding:</strong> <span id="orc-metric-grounding">0%</span></div>
+          <div><strong>Duration:</strong> <span id="orc-metric-duration">0ms</span></div>
+        </div>
+
+        <!-- Task Cards Grid -->
+        <div id="orc-tasks-container" style="display: flex; flex-direction: column; gap: 12px; margin-top: 15px;"></div>
       </div>
     </section>
   </main>
