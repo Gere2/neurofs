@@ -184,3 +184,56 @@ func handleOrchestrateModels(w http.ResponseWriter, r *http.Request) {
 
 	writeErr(w, http.StatusMethodNotAllowed, "GET or POST required")
 }
+
+type nodeControlRequest struct {
+	RunID  string `json:"run_id"`
+	TaskID string `json:"task_id"`
+	Action string `json:"action"` // "override_model", "rerun", "skip"
+	Model  string `json:"model,omitempty"`
+}
+
+func handleOrchestrateNodeControl(w http.ResponseWriter, r *http.Request) {
+	var req nodeControlRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+
+	orchestrateRunsMu.RLock()
+	run, ok := orchestrateRuns[req.RunID]
+	orchestrateRunsMu.RUnlock()
+
+	if !ok {
+		writeErr(w, http.StatusNotFound, "run id not found")
+		return
+	}
+
+	ev := orchestrator.StatusEvent{
+		TaskID: req.TaskID,
+		Model:  req.Model,
+	}
+
+	switch req.Action {
+	case "override_model":
+		ev.Status = orchestrator.StatusPending
+	case "skip":
+		ev.Status = orchestrator.StatusSkipped
+		ev.Error = "manually skipped by user"
+	case "rerun":
+		ev.Status = orchestrator.StatusRunning
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown action: "+req.Action)
+		return
+	}
+
+	run.Mu.Lock()
+	for _, ch := range run.Listeners {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+	run.Mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "applied", "action": req.Action})
+}

@@ -4069,8 +4069,46 @@ switchTab("home");
   const metricDuration = document.getElementById("orc-metric-duration");
   const configBtn = document.getElementById("orc-config-btn");
 
-  let currentEventSource = null;
-  let taskCardsMap = new Map();
+  let currentRunID = null;
+  let currentPlan = null;
+  let selectedTaskID = null;
+
+  const inspector = document.getElementById("orc-inspector");
+  const inspTitle = document.getElementById("orc-insp-title");
+  const inspPrompt = document.getElementById("orc-insp-prompt");
+  const inspResp = document.getElementById("orc-insp-resp");
+  const inspClose = document.getElementById("orc-insp-close");
+  const actOpus = document.getElementById("orc-act-opus");
+  const actSkip = document.getElementById("orc-act-skip");
+  const dagSvg = document.getElementById("orc-dag-svg");
+
+  if (inspClose) {
+    inspClose.addEventListener("click", () => {
+      inspector.style.display = "none";
+    });
+  }
+
+  if (actOpus) {
+    actOpus.addEventListener("click", async () => {
+      if (!currentRunID || !selectedTaskID) return;
+      await j("/api/orchestrate/node/control", {
+        method: "POST",
+        body: JSON.stringify({ run_id: currentRunID, task_id: selectedTaskID, action: "override_model", model: "claude-opus" })
+      });
+      alert(`Model for ${selectedTaskID} overridden to claude-opus`);
+    });
+  }
+
+  if (actSkip) {
+    actSkip.addEventListener("click", async () => {
+      if (!currentRunID || !selectedTaskID) return;
+      await j("/api/orchestrate/node/control", {
+        method: "POST",
+        body: JSON.stringify({ run_id: currentRunID, task_id: selectedTaskID, action: "skip" })
+      });
+      alert(`Node ${selectedTaskID} skipped`);
+    });
+  }
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -4108,11 +4146,15 @@ switchTab("home");
         return;
       }
 
-      const plan = res.plan;
-      metricTasks.textContent = plan.tasks.length;
+      currentRunID = res.run_id;
+      currentPlan = res.plan;
+      metricTasks.textContent = currentPlan.tasks.length;
+
+      // Render DAG SVG Graph
+      renderDAG(currentPlan.tasks);
 
       // Render initial pending cards
-      plan.tasks.forEach((t, i) => {
+      currentPlan.tasks.forEach((t, i) => {
         const card = createCard(t, i + 1);
         tasksContainer.appendChild(card.el);
         taskCardsMap.set(t.id, card);
@@ -4126,6 +4168,121 @@ switchTab("home");
       alert("Network error: " + err.message);
     }
   });
+
+  function renderDAG(tasks) {
+    if (!dagSvg) return;
+    dagSvg.innerHTML = "";
+    const width = dagSvg.clientWidth || 800;
+    const height = 260;
+
+    const nodeWidth = 140;
+    const nodeHeight = 45;
+
+    // Layout nodes horizontally or vertically
+    const n = tasks.length;
+    const spacing = Math.min(180, (width - 100) / (n || 1));
+
+    const nodesMap = new Map();
+
+    tasks.forEach((t, i) => {
+      const x = 50 + i * spacing;
+      const y = 130 + (i % 2 === 0 ? -30 : 30);
+      nodesMap.set(t.id, { x, y, task: t });
+    });
+
+    // Draw dependency lines
+    tasks.forEach((t) => {
+      const target = nodesMap.get(t.id);
+      if (t.depends_on) {
+        t.depends_on.forEach((depID) => {
+          const source = nodesMap.get(depID);
+          if (source && target) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            const d = `M ${source.x + nodeWidth} ${source.y + nodeHeight / 2} C ${source.x + nodeWidth + 30} ${source.y}, ${target.x - 30} ${target.y}, ${target.x} ${target.y + nodeHeight / 2}`;
+            line.setAttribute("d", d);
+            line.setAttribute("stroke", "#3f3f46");
+            line.setAttribute("stroke-width", "2");
+            line.setAttribute("fill", "none");
+            line.setAttribute("marker-end", "url(#arrow)");
+            dagSvg.appendChild(line);
+          }
+        });
+      }
+    });
+
+    // Draw node cards
+    tasks.forEach((t, i) => {
+      const pos = nodesMap.get(t.id);
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("cursor", "pointer");
+      g.setAttribute("id", `svg-node-${t.id}`);
+
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", pos.x);
+      rect.setAttribute("y", pos.y);
+      rect.setAttribute("width", nodeWidth);
+      rect.setAttribute("height", nodeHeight);
+      rect.setAttribute("rx", "6");
+      rect.setAttribute("fill", "#18181b");
+      rect.setAttribute("stroke", "#3f3f46");
+      rect.setAttribute("stroke-width", "1.5");
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", pos.x + 10);
+      text.setAttribute("y", pos.y + 20);
+      text.setAttribute("fill", "#f4f4f5");
+      text.setAttribute("font-size", "11");
+      text.setAttribute("font-weight", "600");
+      text.textContent = `#${i + 1} ${truncateText(t.description, 14)}`;
+
+      const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      subText.setAttribute("x", pos.x + 10);
+      subText.setAttribute("y", pos.y + 36);
+      subText.setAttribute("fill", "#a1a1aa");
+      subText.setAttribute("font-size", "9");
+      subText.textContent = `${t.kind || "general"} · ${t.model || "auto"}`;
+
+      g.appendChild(rect);
+      g.appendChild(text);
+      g.appendChild(subText);
+
+      g.addEventListener("click", () => inspectTask(t));
+      dagSvg.appendChild(g);
+    });
+  }
+
+  function updateDAGNode(t) {
+    const group = document.getElementById(`svg-node-${t.id}`);
+    if (!group) return;
+    const rect = group.querySelector("rect");
+    if (!rect) return;
+
+    if (t.status === "running") {
+      rect.setAttribute("stroke", "#3b82f6");
+      rect.setAttribute("fill", "#1e3a8a");
+    } else if (t.status === "done") {
+      rect.setAttribute("stroke", "#22c55e");
+      rect.setAttribute("fill", "#14532d");
+    } else if (t.status === "failed") {
+      rect.setAttribute("stroke", "#ef4444");
+      rect.setAttribute("fill", "#7f1d1d");
+    }
+  }
+
+  function truncateText(str, max) {
+    if (!str) return "";
+    return str.length > max ? str.substring(0, max) + "…" : str;
+  }
+
+  function inspectTask(t) {
+    selectedTaskID = t.id;
+    if (inspector) {
+      inspector.style.display = "block";
+      inspTitle.textContent = `🔍 Node #${t.id}: ${t.description}`;
+      inspPrompt.textContent = t.context || t.prompt || "No context attached yet.";
+      inspResp.textContent = t.response || t.error || "Awaiting execution output...";
+    }
+  }
 
   function createCard(t, index) {
     const el = document.createElement("div");
@@ -4144,6 +4301,7 @@ switchTab("home");
       </div>
       <div class="orc-task-response" id="resp-${t.id}" style="display: none;"></div>
     `;
+    el.addEventListener("click", () => inspectTask(t));
     return {
       el,
       badge: el.querySelector(`#badge-${t.id}`),
@@ -4168,6 +4326,8 @@ switchTab("home");
         const ev = JSON.parse(e.data);
         const card = taskCardsMap.get(ev.task_id);
         if (!card) return;
+
+        updateDAGNode(ev);
 
         if (ev.model) {
           card.model.textContent = `${ev.model} (${ev.provider || ""})`;

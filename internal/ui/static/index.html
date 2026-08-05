@@ -1006,8 +1006,41 @@
           <div><strong>Duration:</strong> <span id="orc-metric-duration">0ms</span></div>
         </div>
 
+        <!-- Interactive DAG Swarm Matrix Visualizer -->
+        <div id="orc-dag-wrapper" style="margin-top: 20px; background: #09090b; border: 1px solid #27272a; border-radius: 8px; padding: 15px; position: relative; overflow: hidden;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <strong style="color: #facc15; font-size: 0.9rem;">🕸️ Interactive Sub-Agent DAG Topology Graph</strong>
+            <span style="font-size: 0.75rem; color: #a1a1aa;">Click any node to inspect context or intervene in real time</span>
+          </div>
+          <svg id="orc-dag-svg" style="width: 100%; height: 260px; background: #0c0c0e; border-radius: 6px; border: 1px solid #18181b;"></svg>
+        </div>
+
         <!-- Task Cards Grid -->
         <div id="orc-tasks-container" style="display: flex; flex-direction: column; gap: 12px; margin-top: 15px;"></div>
+      </div>
+
+      <!-- Node Inspection & Steering Drawer (Modal) -->
+      <div id="orc-inspector" class="v8-card" style="display: none; margin-top: 20px; border-color: #facc15;">
+        <div class="v8-card-header">
+          <h4 id="orc-insp-title">🔍 Node Inspection & Live Controls</h4>
+          <button type="button" id="orc-insp-close" class="btn secondary" style="padding: 2px 8px;">✕ Close</button>
+        </div>
+        <div class="v8-card-body" style="margin-top: 10px;">
+          <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+            <button type="button" id="orc-act-opus" class="btn secondary">🔄 Re-run with Claude Opus</button>
+            <button type="button" id="orc-act-skip" class="btn secondary">⏭ Skip Node</button>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+            <div>
+              <strong>Prompt Context (NeuroFS AST line-ranges):</strong>
+              <pre id="orc-insp-prompt" style="background: #000; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; font-size: 0.75rem; color: #a1a1aa;"></pre>
+            </div>
+            <div>
+              <strong>Model Output & Code:</strong>
+              <pre id="orc-insp-resp" style="background: #000; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; font-size: 0.75rem; color: #86efac;"></pre>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </main>

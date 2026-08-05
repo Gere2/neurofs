@@ -42,6 +42,7 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/api/orchestrate/run", safePost(allowedOrigins, handleOrchestrateRun))
 	mux.HandleFunc("/api/orchestrate/stream", handleOrchestrateStream)
 	mux.HandleFunc("/api/orchestrate/models", handleOrchestrateModels)
+	mux.HandleFunc("/api/orchestrate/node/control", safePost(allowedOrigins, handleOrchestrateNodeControl))
 }
 
 // --------------------- method gates ---------------------
