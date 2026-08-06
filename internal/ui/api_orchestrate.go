@@ -84,14 +84,30 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 
-		// Update game state
+		// Update game state & log tournament records
 		if home, err := os.UserHomeDir(); err == nil {
 			dir := filepath.Join(home, ".neurofs")
+			tLogger := orchestrator.NewTournamentLogger(dir)
+
 			if ps, err := gamestate.Load(dir); err == nil {
 				for _, t := range res.Plan.Tasks {
 					if t.Status == orchestrator.StatusDone {
 						ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
 						ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
+
+						_ = tLogger.LogRecord(orchestrator.TournamentRecord{
+							PlanID:       res.Plan.ID,
+							TaskID:       t.ID,
+							Kind:         t.Kind,
+							Complexity:   t.Complexity,
+							Model:        t.Model,
+							Provider:     t.Provider,
+							Grounding:    t.Grounding,
+							CostUSD:      t.CostUSD,
+							DurationMs:   t.Duration().Milliseconds(),
+							CascadeLevel: t.CascadeLevel,
+							Accepted:     true,
+						})
 					}
 				}
 				ps.CheckAchievements()
@@ -255,3 +271,19 @@ func handleOrchestrateNodeControl(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "applied", "action": req.Action})
 }
+
+func handleOrchestrateTournament(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot resolve home dir: "+err.Error())
+		return
+	}
+	logPath := filepath.Join(home, ".neurofs", "routing_history.jsonl")
+	analysis, err := orchestrator.AnalyzeTournament(logPath, 0.85)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to analyze tournament: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, analysis)
+}
+
