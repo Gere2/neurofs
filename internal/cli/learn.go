@@ -8,7 +8,9 @@ import (
 	"strings"
 
 	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/gamestate"
 	"github.com/Gere2/neurofs/internal/learn"
+	"github.com/Gere2/neurofs/internal/orchestrator"
 	"github.com/Gere2/neurofs/internal/retrieval"
 	"github.com/Gere2/neurofs/internal/usage"
 	"github.com/spf13/cobra"
@@ -356,6 +358,14 @@ a medium repo.`,
 			if res.Applied {
 				fmt.Printf("\nApplied to %s — run 'neurofs gate' and 'neurofs bench --search' to confirm no regression.\n",
 					retrieval.WeightsPath(repo))
+				// The vision rewards "learn loop mejoró weights", not "learn
+				// ran": an applied tune that only shuffled weights at equal
+				// recall is the documented oscillation, not an improvement.
+				if res.Tuned.MeanRecall > res.Baseline.MeanRecall {
+					if xp := grantLearnXP(res.Baseline.MeanRecall, res.Tuned.MeanRecall); xp > 0 {
+						fmt.Printf("+%d XP — learn loop mejoró el recall.\n", xp)
+					}
+				}
 			} else if len(res.Changed) > 0 {
 				fmt.Println("\nDry run. Re-run with --apply to persist these weights.")
 			}
@@ -545,4 +555,26 @@ func parseCorpora(values []string) ([]learn.Corpus, error) {
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// grantLearnXP awards the learn-loop XP for a tune that measurably improved
+// recall. Progression is best-effort bookkeeping: a missing or unreadable
+// player.json must never fail the tune that already succeeded, so errors are
+// swallowed and reported as zero XP.
+func grantLearnXP(fromRecall, toRecall float64) int {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return 0
+	}
+	dir := orchestrator.NeuroFSHome(home)
+	ps, err := gamestate.Load(dir)
+	if err != nil {
+		return 0
+	}
+	xp := ps.GrantLearnImprovedXP(fromRecall, toRecall)
+	ps.CheckAchievements()
+	if err := ps.Save(dir); err != nil {
+		return 0
+	}
+	return xp
 }

@@ -50,11 +50,19 @@ type PlayerState struct {
 	MeanGrounding float64 `json:"mean_grounding"`
 	TotalCostUSD  float64 `json:"total_cost_usd"`
 
+	// TotalTokens is the Command Center's ⚡ Energía readout: API tokens
+	// actually consumed, prompt plus completion. It is the resource the game
+	// spends, so it has to be counted rather than estimated from cost, which
+	// varies per model.
+	TotalTokens int `json:"total_tokens"`
+
 	// Recent XP events (last 20, for UI feed)
 	RecentXP []XPEvent `json:"recent_xp"`
 }
 
-// AgentStats tracks real performance data for a model/agent.
+// AgentStats tracks real performance data for a model/agent. The four bars on
+// the agent's card are Reliability, Power, Economy and Speed — every one of
+// them an average over recorded runs, never a hand-assigned rating.
 type AgentStats struct {
 	Name            string   `json:"name"`
 	DisplayName     string   `json:"display_name"`
@@ -67,6 +75,14 @@ type AgentStats struct {
 	CascadesAvoided int      `json:"cascades_avoided"` // resolved without escalation
 	TotalCostUSD    float64  `json:"total_cost_usd"`
 	Specialties     []string `json:"specialties"`
+
+	// Power is the card's ⚔️ bar: the share of *complex* tasks this model
+	// cleared. Kept as its own counters rather than derived from Wins, which
+	// mixes every difficulty together and so cannot answer "can this model be
+	// trusted with the hard ones".
+	ComplexAttempted int     `json:"complex_attempted"`
+	ComplexResolved  int     `json:"complex_resolved"`
+	Power            float64 `json:"power"` // ComplexResolved / ComplexAttempted (0-1)
 }
 
 // Achievement represents a milestone badge earned from real usage.
@@ -109,6 +125,111 @@ var levelTiers = []struct {
 	{20, "Maestro"},
 	{35, "Comandante"},
 	{50, "Leyenda"},
+}
+
+// Feature names a capability that the player unlocks by levelling up.
+type Feature string
+
+const (
+	FeatureCascadeManual Feature = "cascade_manual"
+	FeatureTournament    Feature = "tournament"
+	FeatureCrossProject  Feature = "cross_project_memory"
+	FeatureHyperAgent    Feature = "hyperagent"
+	FeatureAgentCardsA2A Feature = "agent_cards_a2a"
+)
+
+// Unlock ties a feature to the level that reveals it.
+type Unlock struct {
+	Feature  Feature `json:"feature"`
+	MinLevel int     `json:"min_level"`
+	Label    string  `json:"label"`
+	Teaches  string  `json:"teaches"`
+}
+
+// featureUnlocks is the progression ladder. It is deliberately about
+// *progressive disclosure*, not access control: level 1 shows an input, the
+// agents and the result, and everything else appears as the player earns the
+// context to understand it. Locking teaches; it does not defend. The CLI and
+// the HTTP API stay fully open at every level, so scripts, automation and
+// power users are never gated — only the UI reveals gradually.
+var featureUnlocks = []Unlock{
+	{FeatureCascadeManual, 5, "Cascade manual",
+		"Elegir qué modelo intenta cada tarea, y cuándo escalar."},
+	{FeatureTournament, 10, "War Room",
+		"Qué modelo gana en cada tipo de tarea, medido sobre tu propio historial."},
+	{FeatureCrossProject, 20, "Cross-project memory",
+		"Lo aprendido en un repo alimenta los demás."},
+	{FeatureHyperAgent, 35, "HyperAgent",
+		"Re-afinar el routing automáticamente desde los datos del torneo."},
+	{FeatureAgentCardsA2A, 50, "Agent Cards A2A",
+		"Publicar NeuroFS como agente descubrible por otros agentes."},
+}
+
+// FeatureUnlocks returns the full ladder, locked and unlocked alike, so the UI
+// can show what is still ahead — a lock the player cannot see teaches nothing.
+func FeatureUnlocks() []Unlock {
+	out := make([]Unlock, len(featureUnlocks))
+	copy(out, featureUnlocks)
+	return out
+}
+
+// LevelFor returns the level at which feature becomes available, and whether
+// it is a known feature.
+func LevelFor(feature Feature) (int, bool) {
+	for _, u := range featureUnlocks {
+		if u.Feature == feature {
+			return u.MinLevel, true
+		}
+	}
+	return 0, false
+}
+
+// IsUnlocked reports whether the player has reached the level for feature.
+// Unknown features are treated as unlocked: a capability nobody put on the
+// ladder is not a secret, and failing open keeps a typo from hiding real UI.
+func (ps *PlayerState) IsUnlocked(feature Feature) bool {
+	minLevel, known := LevelFor(feature)
+	if !known {
+		return true
+	}
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return ps.Level >= minLevel
+}
+
+// UnlockState is the per-feature view handed to the UI.
+type UnlockState struct {
+	Unlock
+	Unlocked bool `json:"unlocked"`
+}
+
+// Unlocks returns the ladder annotated with what the player has reached.
+func (ps *PlayerState) Unlocks() []UnlockState {
+	ps.mu.RLock()
+	level := ps.Level
+	ps.mu.RUnlock()
+
+	out := make([]UnlockState, 0, len(featureUnlocks))
+	for _, u := range featureUnlocks {
+		out = append(out, UnlockState{Unlock: u, Unlocked: level >= u.MinLevel})
+	}
+	return out
+}
+
+// NextUnlock returns the next feature the player has not reached yet, so the
+// UI can name the reward instead of showing a bare progress bar. The second
+// result is false once everything is unlocked.
+func (ps *PlayerState) NextUnlock() (Unlock, bool) {
+	ps.mu.RLock()
+	level := ps.Level
+	ps.mu.RUnlock()
+
+	for _, u := range featureUnlocks {
+		if level < u.MinLevel {
+			return u, true
+		}
+	}
+	return Unlock{}, false
 }
 
 // xpForLevel returns the XP needed to reach a given level.
@@ -212,54 +333,122 @@ func (ps *PlayerState) AddXP(amount int, reason string) {
 	}
 }
 
+// TaskOutcome is one recorded task result. It is a struct rather than a
+// positional list because the card's stats keep growing and a nine-argument
+// call is where silent argument-order bugs live.
+type TaskOutcome struct {
+	Model              string
+	Grounding          float64
+	CostUSD            float64
+	CascadeLevel       int
+	CascadeSaved       float64
+	IsComplex          bool
+	InputTokens        int
+	OutputTokens       int
+	GroundingThreshold float64
+}
+
 // RecordTaskResult updates game state from a real orchestration task result.
-func (ps *PlayerState) RecordTaskResult(
-	modelName string,
-	grounding float64,
-	costUSD float64,
-	cascadeLevel int,
-	cascadeSaved float64,
-	isComplex bool,
-	groundingThreshold float64,
-) {
+func (ps *PlayerState) RecordTaskResult(o TaskOutcome) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	ps.TotalMissions++
-	ps.TotalCostUSD += costUSD
-	ps.TotalSavedUSD += cascadeSaved
+	ps.TotalCostUSD += o.CostUSD
+	ps.TotalSavedUSD += o.CascadeSaved
+	ps.TotalTokens += o.InputTokens + o.OutputTokens
 
-	// Update streak
-	today := time.Now().Format("2006-01-02")
-	if ps.LastActiveDay != today {
-		yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-		if ps.LastActiveDay == yesterday {
-			ps.Streak++
-		} else if ps.LastActiveDay != "" {
-			ps.Streak = 1 // reset
-		} else {
-			ps.Streak = 1 // first day
-		}
-		ps.LastActiveDay = today
-	}
+	cleared := o.Grounding >= o.GroundingThreshold
 
 	// Update agent stats
-	agent := ps.ensureAgent(modelName)
-	if grounding >= groundingThreshold {
+	agent := ps.ensureAgent(o.Model)
+	if cleared {
 		agent.Wins++
 	} else {
 		agent.Losses++
 	}
 	// Running average for reliability
 	total := agent.Wins + agent.Losses
-	agent.Reliability = (agent.Reliability*float64(total-1) + grounding) / float64(total)
-	agent.TotalCostUSD += costUSD
-	if cascadeLevel == 0 {
+	agent.Reliability = (agent.Reliability*float64(total-1) + o.Grounding) / float64(total)
+	agent.TotalCostUSD += o.CostUSD
+	if o.CascadeLevel == 0 {
 		agent.CascadesAvoided++
 	}
 
+	// Power: share of the hard tasks this model actually cleared.
+	if o.IsComplex {
+		agent.ComplexAttempted++
+		if cleared {
+			agent.ComplexResolved++
+		}
+		agent.Power = float64(agent.ComplexResolved) / float64(agent.ComplexAttempted)
+	}
+
 	// Update global mean grounding
-	ps.MeanGrounding = (ps.MeanGrounding*float64(ps.TotalMissions-1) + grounding) / float64(ps.TotalMissions)
+	ps.MeanGrounding = (ps.MeanGrounding*float64(ps.TotalMissions-1) + o.Grounding) / float64(ps.TotalMissions)
+}
+
+// AdvanceDailyStreak rolls the daily streak forward and reports whether this
+// call was the first activity of a new day. It used to live inside
+// RecordTaskResult, which made it per-task rather than per-session and left it
+// holding the lock, so no XP could be granted from it — AddXP takes the same
+// non-reentrant mutex. Callers now invoke it once per run and grant the streak
+// XP themselves.
+func (ps *PlayerState) AdvanceDailyStreak() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	today := time.Now().Format("2006-01-02")
+	if ps.LastActiveDay == today {
+		return false
+	}
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	if ps.LastActiveDay == yesterday {
+		ps.Streak++
+	} else {
+		// Both a first-ever day and a broken streak start at 1. Missing days
+		// costs the streak, never the progression: the vision is explicit
+		// that not playing must not be punished.
+		ps.Streak = 1
+	}
+	ps.LastActiveDay = today
+	return true
+}
+
+// GrantStreakXP awards the daily streak bonus if this is the first activity
+// today, and reports the XP granted.
+//
+// The vision's table reads "+10 XP × día", which can be read as a flat daily
+// bonus or as ten XP per day of streak. This takes the flat reading: it is the
+// conservative one, and an unbounded multiplier would let a long streak
+// out-earn every other source combined. Switch the amount here if the intent
+// was the multiplier.
+func (ps *PlayerState) GrantStreakXP() int {
+	if !ps.AdvanceDailyStreak() {
+		return 0
+	}
+	ps.mu.RLock()
+	streak := ps.Streak
+	ps.mu.RUnlock()
+
+	ps.AddXP(XPStreakDaily, fmt.Sprintf("Racha diaria: %d día(s)", streak))
+	return XPStreakDaily
+}
+
+// GrantProjectCompleteXP awards the project-completion bonus, the largest
+// single source in the vision's table.
+func (ps *PlayerState) GrantProjectCompleteXP(planID string) int {
+	ps.AddXP(XPProjectComplete, fmt.Sprintf("Proyecto completado: %s", planID))
+	return XPProjectComplete
+}
+
+// GrantLearnImprovedXP awards the learn-loop bonus. This is the "aprender" edge
+// of the vision's triple flywheel (jugar → aprender → mejorar) and was the one
+// XP source with no code path at all.
+func (ps *PlayerState) GrantLearnImprovedXP(fromRecall, toRecall float64) int {
+	ps.AddXP(XPLearnImproved, fmt.Sprintf(
+		"Learn loop mejoró los weights (recall %.1f%% → %.1f%%)", fromRecall*100, toRecall*100))
+	return XPLearnImproved
 }
 
 // ensureAgent returns the agent stats for a model, creating if needed.

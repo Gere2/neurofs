@@ -1,0 +1,253 @@
+{
+  "repo": "/tmp/vue",
+  "search_limit": 8,
+  "summary": {
+    "tasks": 6,
+    "fact_tasks": 6,
+    "scored": 6,
+    "search_miss": 0,
+    "mean_tokens_neurofs": 917,
+    "mean_tokens_native": 7727,
+    "mean_recall_neurofs": 0.7222222222222222,
+    "mean_recall_native": 0.8888888888888888,
+    "overall_recall_neurofs": 0.7222222222222222,
+    "miss_rate": 0,
+    "mean_token_reduction": 0.7280460934180363,
+    "median_token_reduction": 0.8537654521526852,
+    "threshold": 0.25,
+    "verdict": "PASS",
+    "detail": "mean iso-recall token reduction 72.8% \u003e= 25% (B 917 tok vs native 7727 tok); overall recall 72% over 6 fact tasks, 0 miss"
+  },
+  "tasks": [
+    {
+      "question": "How does the Vue compiler transform a template AST and generate render code?",
+      "source": "compiler.json",
+      "neurofs": {
+        "tokens": 1440,
+        "recall": 0.6666666666666666,
+        "files": [
+          "packages/compiler-core/src/transform.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/compiler-core/src/codegen.ts",
+          "packages/vue/README.md",
+          "packages/server-renderer/src/render.ts"
+        ],
+        "facts_hit": [
+          "function transform",
+          "function generate"
+        ]
+      },
+      "native_iso": {
+        "tokens": 11852,
+        "recall": 0.6666666666666666,
+        "files": [
+          "packages/compiler-core/src/transform.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/compiler-core/src/codegen.ts"
+        ],
+        "facts_hit": [
+          "function transform",
+          "function generate"
+        ]
+      },
+      "token_reduction": 0.8785015187310159,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How is a Vue component instance set up with its props and setup function?",
+      "source": "component-setup.json",
+      "neurofs": {
+        "tokens": 919,
+        "recall": 1,
+        "files": [
+          "packages/runtime-core/src/component.ts",
+          "packages/runtime-core/src/compat/instance.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/runtime-core/src/componentProps.ts",
+          "packages/vue-compat/src/esm-index.ts"
+        ],
+        "facts_hit": [
+          "setupComponent",
+          "setupStatefulComponent"
+        ]
+      },
+      "native_iso": {
+        "tokens": 8739,
+        "recall": 1,
+        "files": [
+          "packages/runtime-core/src/component.ts"
+        ],
+        "facts_hit": [
+          "setupComponent",
+          "setupStatefulComponent"
+        ]
+      },
+      "token_reduction": 0.8948392264561162,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does computed caching work in Vue reactivity?",
+      "source": "computed.json",
+      "neurofs": {
+        "tokens": 1128,
+        "recall": 1,
+        "files": [
+          "packages/reactivity/src/computed.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/runtime-core/src/apiComputed.ts",
+          "packages/vue/README.md",
+          "CHANGELOG.md"
+        ],
+        "facts_hit": [
+          "ComputedRefImpl",
+          "function computed"
+        ]
+      },
+      "native_iso": {
+        "tokens": 1270,
+        "recall": 1,
+        "files": [
+          "packages/reactivity/src/computed.ts"
+        ],
+        "facts_hit": [
+          "ComputedRefImpl",
+          "function computed"
+        ]
+      },
+      "token_reduction": 0.1118110236220472,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does Vue's reactivity system track and trigger dependencies?",
+      "source": "reactivity.json",
+      "neurofs": {
+        "tokens": 1132,
+        "recall": 0.6666666666666666,
+        "files": [
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/reactivity/src/dep.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/vue/README.md"
+        ],
+        "facts_hit": [
+          "function track",
+          "function trigger"
+        ]
+      },
+      "native_iso": {
+        "tokens": 3546,
+        "recall": 0.6666666666666666,
+        "files": [
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/reactivity/src/dep.ts"
+        ],
+        "facts_hit": [
+          "function track",
+          "function trigger"
+        ]
+      },
+      "token_reduction": 0.6807670614777214,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does the Vue renderer mount components and patch children?",
+      "source": "renderer.json",
+      "neurofs": {
+        "tokens": 499,
+        "recall": 0.3333333333333333,
+        "files": [
+          "packages/runtime-core/src/renderer.ts",
+          "packages/runtime-core/src/component.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/vue/README.md"
+        ],
+        "facts_hit": [
+          "createRenderer"
+        ]
+      },
+      "native_iso": {
+        "tokens": 18709,
+        "recall": 1,
+        "files": [
+          "packages/runtime-core/src/renderer.ts"
+        ],
+        "facts_hit": [
+          "mountComponent",
+          "patchChildren",
+          "createRenderer"
+        ]
+      },
+      "token_reduction": 0.9733283446469614,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How do nextTick and the scheduler job queue work in Vue?",
+      "source": "scheduler.json",
+      "neurofs": {
+        "tokens": 384,
+        "recall": 0.6666666666666666,
+        "files": [
+          "packages/runtime-core/src/scheduler.ts",
+          "packages/vue-compat/src/index.ts",
+          "packages/vue-compat/src/runtime.ts",
+          "packages/vue-compat/src/esm-index.ts",
+          "packages/vue-compat/src/esm-runtime.ts",
+          "packages/vue/README.md"
+        ],
+        "facts_hit": [
+          "nextTick",
+          "queueJob"
+        ]
+      },
+      "native_iso": {
+        "tokens": 2246,
+        "recall": 1,
+        "files": [
+          "packages/runtime-core/src/scheduler.ts"
+        ],
+        "facts_hit": [
+          "nextTick",
+          "queueJob",
+          "flushJobs"
+        ]
+      },
+      "token_reduction": 0.8290293855743545,
+      "has_facts": true,
+      "scored": true
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "71c398ffadeb7840f98f0e1855b09c802029519ba60c4e98f4bc7d0fba831a27",
+    "engine_source_tree_sha256": "1ba824b7fec67313b7d65293ee1d984ffeb2cb2e08006ff94ce734f5a4877593",
+    "target_source_tree_sha256": "6908cb68ee3957002bc5fe44b26621474b674f023dfbc97477ebcff006ae34aa",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "92733dbc37ce5e75306f4d4cc72e21f3886cbf66a9a7927391aadc70a583ddaa",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5",
+    "repo_remote_url": "https://github.com/vuejs/core",
+    "repo_dirty": false
+  }
+}

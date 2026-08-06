@@ -1,0 +1,431 @@
+{
+  "criteria": [
+    {
+      "id": "G1",
+      "name": "Real-use signal",
+      "verdict": "SKIP",
+      "detail": "no human-rated entries yet — run `neurofs task --rate` to produce them",
+      "numbers": {
+        "ignored_non_human": 0
+      }
+    },
+    {
+      "id": "G2",
+      "name": "Budget discipline",
+      "verdict": "PASS",
+      "detail": "13 bundles, no overshoot; median utilisation 81%, p95 99%",
+      "numbers": {
+        "bundles": 13,
+        "median_util": 0.80825,
+        "overshoots": 0,
+        "p95_util": 0.98725
+      }
+    },
+    {
+      "id": "G3",
+      "name": "Fact recovery",
+      "verdict": "PASS",
+      "detail": "mean recall 88% over 13 fixtures (threshold 80%); 9 perfect",
+      "numbers": {
+        "failed": 0,
+        "fixtures": 13,
+        "mean_recall": 0.8782051282051282,
+        "min_fixtures": 5,
+        "min_recall": 0.8,
+        "perfect": 9,
+        "worst_recall": 0.3333333333333333
+      }
+    },
+    {
+      "id": "G4",
+      "name": "Replay drift",
+      "verdict": "PASS",
+      "detail": "median drift rate 6.5% over 4 samples (pair=4; threshold 15%); mean 25.0%, worst: audit-diff-01 at 87%",
+      "numbers": {
+        "grounding": 0,
+        "max_drift": 0.15,
+        "mean_drift": 0.25,
+        "median_drift": 0.06521739130434782,
+        "pairs": 4,
+        "records": 0,
+        "samples": 4
+      }
+    },
+    {
+      "id": "G5",
+      "name": "Cross-shape sanity",
+      "verdict": "FAIL",
+      "detail": "cross-shape report integrity failed: go_service report attestation: target source-tree hash does not match the current Go indexed tree",
+      "numbers": {
+        "max_miss_rate": 0.3333333333333333,
+        "min_g3_fixtures": 5,
+        "min_g3_mean_recall": 0.8,
+        "min_token_reduction": 0.25,
+        "required_shapes": 3,
+        "shapes": 3
+      }
+    }
+  ],
+  "overall": "FAIL",
+  "g3_details": [
+    {
+      "fixture": {
+        "question": "How do exactSearchSignals, ReadIndexedFileBounded, and contentCache keep exact-content scoring on one indexed session snapshot?",
+        "expects_facts": [
+          "exactSearchSignals",
+          "ReadIndexedFileBounded",
+          "contentCache"
+        ],
+        "source": "correction",
+        "supersedes": "correction-retrieval-exact-snapshot.json",
+        "source_path": "audit/facts/correction-retrieval-snapshot-helpers.json"
+      },
+      "recall": 1,
+      "hits": [
+        "exactSearchSignals",
+        "ReadIndexedFileBounded",
+        "contentCache"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "how does the session pool invalidate cached sessions when the database or WAL index revision changes",
+        "expects_facts": [
+          "sessionFor",
+          "currentIndexRevision",
+          "SearchShared"
+        ],
+        "source": "correction",
+        "supersedes": "learned-13c0047c29b4.json",
+        "source_path": "audit/facts/correction-session-pool-index-revision.json"
+      },
+      "recall": 0.3333333333333333,
+      "hits": [
+        "currentIndexRevision"
+      ],
+      "misses": [
+        "sessionFor",
+        "SearchShared"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "how does neurofs setup wire CLAUDE.md idempotently",
+        "expects_facts": [
+          "claudeMDBlock",
+          "newSetupCmd",
+          "claudeMDMarker"
+        ],
+        "source": "feedback",
+        "source_path": "audit/facts/learned-5981833004cc.json"
+      },
+      "recall": 1,
+      "hits": [
+        "claudeMDBlock",
+        "newSetupCmd",
+        "claudeMDMarker"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "how does the ranker score filename matches",
+        "expects_facts": [
+          "scoreFile",
+          "RankWithOptions",
+          "DefaultWeights"
+        ],
+        "source": "feedback",
+        "source_path": "audit/facts/learned-5e0242030640.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "scoreFile",
+        "RankWithOptions"
+      ],
+      "misses": [
+        "DefaultWeights"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "cross shape toy TS repo economy inverts fixtures",
+        "expects_facts": [
+          "phase_g5_cross_shape"
+        ],
+        "source": "feedback",
+        "source_path": "audit/facts/learned-680b59f7aed5.json"
+      },
+      "recall": 1,
+      "hits": [
+        "phase_g5_cross_shape"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "how does promote validate that feedback facts exist in the repo",
+        "expects_facts": [
+          "Promote",
+          "factsPresentInRepo"
+        ],
+        "source": "feedback",
+        "source_path": "audit/facts/learned-c41f5c141a09.json"
+      },
+      "recall": 1,
+      "hits": [
+        "Promote",
+        "factsPresentInRepo"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "how does the gate warn when the index is stale",
+        "expects_facts": [
+          "staleIndexCount",
+          "CountStaleIndexFiles"
+        ],
+        "source": "feedback",
+        "source_path": "audit/facts/learned-f4ee1fc6237a.json"
+      },
+      "recall": 1,
+      "hits": [
+        "staleIndexCount",
+        "CountStaleIndexFiles"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "What tools does the MCP server expose to the client?",
+        "expects_facts": [
+          "neurofs_context",
+          "neurofs_task",
+          "neurofs_scan",
+          "neurofs_view_file"
+        ],
+        "source_path": "audit/facts/mcp-tools-list.json"
+      },
+      "recall": 1,
+      "hits": [
+        "neurofs_context",
+        "neurofs_task",
+        "neurofs_scan",
+        "neurofs_view_file"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?",
+        "expects_facts": [
+          "RepExcerpt",
+          "selectFragment",
+          "excerptTopN",
+          "PreferSignatures"
+        ],
+        "source_path": "audit/facts/packager-excerpt-vs-signature.json"
+      },
+      "recall": 0.75,
+      "hits": [
+        "RepExcerpt",
+        "excerptTopN",
+        "PreferSignatures"
+      ],
+      "misses": [
+        "selectFragment"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "What does UpgradeWithSlack do in the packager and what is the upgrade cap?",
+        "expects_facts": [
+          "UpgradeWithSlack",
+          "upgradeCandidate",
+          "fullCodeMaxTokens"
+        ],
+        "source_path": "audit/facts/packager-slack-upgrade.json"
+      },
+      "recall": 1,
+      "hits": [
+        "UpgradeWithSlack",
+        "upgradeCandidate",
+        "fullCodeMaxTokens"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does the ranker score filename matches and how is that weight defined?",
+        "expects_facts": [
+          "filename_match",
+          "scoreFile",
+          "DefaultWeights"
+        ],
+        "source_path": "audit/facts/ranking-filename-match.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "filename_match",
+        "DefaultWeights"
+      ],
+      "misses": [
+        "scoreFile"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "How does the session ledger manage timelines and cognitive histories?",
+        "expects_facts": [
+          "MemStore",
+          "FileStore",
+          "SqliteStore",
+          "Session"
+        ],
+        "source_path": "audit/facts/session-ledger-timeline.json"
+      },
+      "recall": 1,
+      "hits": [
+        "MemStore",
+        "FileStore",
+        "SqliteStore",
+        "Session"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does storage open the database with WAL mode and what parameters are set?",
+        "expects_facts": [
+          "PRAGMA journal_mode = WAL",
+          "PRAGMA busy_timeout",
+          "Open",
+          "sqlite"
+        ],
+        "source_path": "audit/facts/storage-schema-wal.json"
+      },
+      "recall": 1,
+      "hits": [
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA busy_timeout",
+        "Open",
+        "sqlite"
+      ],
+      "misses": null
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "0be29590489c827ebe356270cd369f40f84f14a573a4984a898332ae17902e9f",
+    "engine_source_tree_sha256": "1ba824b7fec67313b7d65293ee1d984ffeb2cb2e08006ff94ce734f5a4877593",
+    "target_source_tree_sha256": "782164ddb8fd30f10668b4a9508bd55ab51af1327179ae3ab578c955f774e141",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "a61a8990ed851c1a8514627b21da7231ac16db7f62394fd7244829fb0b4e4197",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "aa578c5ac3c6a75f1088ea8844c3cb7d11ca2621",
+    "repo_remote_url": "https://github.com/Gere2/neurofs.git",
+    "repo_dirty": true
+  },
+  "g5_gate_invocation": {
+    "fixture_budget": 8000,
+    "no_chunks": false,
+    "max_fixtures": 0,
+    "skip_fixtures": false,
+    "fixture_bundles": [
+      {
+        "fixture_source": "correction-retrieval-snapshot-helpers.json",
+        "question_sha256": "935a84194c6ac4fe9d5c8bf4588832237530330db6d96f5b7091da932569f4d2",
+        "bundle_hash": "75492d66bd538fe3ef889b04305341dffbdc1b7518b82b3bcfd74e344ce4e352",
+        "tokens_used": 7857,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "correction-session-pool-index-revision.json",
+        "question_sha256": "577b917355829d5533ac7b69fba57e9c9350040ad3c517b58aeb60b8504f626e",
+        "bundle_hash": "784a95acfcfd7e0ace5864241449892da82fdfca282a2ad15af5f421bd29b6cb",
+        "tokens_used": 5994,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "learned-5981833004cc.json",
+        "question_sha256": "5d9eaebf1502f3943c624f9cdea700cf8eed5807c8359bf452804186b5058c16",
+        "bundle_hash": "79bdc0bb527d19403488d1e32fc8165ca47acd9d9de75874c1fe1d9d279f0d16",
+        "tokens_used": 6966,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "learned-5e0242030640.json",
+        "question_sha256": "5e0242030640f512d39546248c449e7a4f2ab5769da8f3812b45a7e5e349f791",
+        "bundle_hash": "c66095b35ecb5a503b3e0209d036aa06709a1a02b6d4ed102eca595c2a7637b7",
+        "tokens_used": 6253,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "learned-680b59f7aed5.json",
+        "question_sha256": "0c9a11338c8c2f044008e8c897e89a2bdce952bcde8ea165755faffc6f4b4890",
+        "bundle_hash": "61e17ead081f9db69e7ff4e9ebc99e18844c6c339fdcfdf5104104d606122738",
+        "tokens_used": 7898,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "learned-c41f5c141a09.json",
+        "question_sha256": "c41f5c141a0904c614872ff47657c755826c1a4ea8a0388b5be3a717e36978c6",
+        "bundle_hash": "169ce777c677dbe408e6249f7262aa77578f614e18b4cb096311e20835f9478e",
+        "tokens_used": 6466,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "learned-f4ee1fc6237a.json",
+        "question_sha256": "f4ee1fc6237a0aa250700ed3ad0da6187c8f567df7cf7894dcbf6227c53056d1",
+        "bundle_hash": "b51b459f41d772470485b7d878f6c1bd40c9cb5cddf8738556fbe7fe8b31f509",
+        "tokens_used": 5220,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "mcp-tools-list.json",
+        "question_sha256": "10a24cc94ee406da3693e3ba4d928a9c3a630e7384639a2d862f3271a7eb2f48",
+        "bundle_hash": "ad02d07069e487eeb44491391c7a5302d44b35166bf191a33d6aaef16d7023e9",
+        "tokens_used": 7504,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "packager-excerpt-vs-signature.json",
+        "question_sha256": "332e6df909efe8e3a19e0838820466fdaa14aea76a41e47fe38294978e6f7a9f",
+        "bundle_hash": "268a0419dbef0ffa728a46589d35dca487abd23f70795b30e529e10555ea07b3",
+        "tokens_used": 5102,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "packager-slack-upgrade.json",
+        "question_sha256": "ac2660e03bf36a29d24c6e4b5530bb80465faa91165a59001b6587ddbe8d3e39",
+        "bundle_hash": "07e4e090951db97997a59083e1b9df64320be6258882877d1998bbec6cf59170",
+        "tokens_used": 7284,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "ranking-filename-match.json",
+        "question_sha256": "3d4745758a25544b9aba0a2db9a2f69f152816981fabc71a57aa1dca295f81b6",
+        "bundle_hash": "43aba25d5c5d3bf01dbc13d6c45355ea3dfb56965339076f5a7556d38fd7c4f9",
+        "tokens_used": 5919,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "session-ledger-timeline.json",
+        "question_sha256": "070c6e69e7946abf53fcf90cb9403fcca86de91b788750ccdc32586a2253ade2",
+        "bundle_hash": "6f58f8a33aa9ac8f829b8ae2241e92a69301ddfc2f8d300cf0d4a54042f49fe5",
+        "tokens_used": 6482,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "storage-schema-wal.json",
+        "question_sha256": "4b9704471ac648669ee0bff0935a30cda7e7d91b9907859fcd8ecc86e7dc35c3",
+        "bundle_hash": "ded58f21113912b04ca1e33a6cdd16cb000e281c14c2651fb5124b4585f11b04",
+        "tokens_used": 5730,
+        "tokens_budget": 8000
+      }
+    ]
+  }
+}

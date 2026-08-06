@@ -31,12 +31,28 @@ func RecordPlanOutcome(dir string, plan Plan) error {
 	}
 	logger := NewTournamentLogger(dir)
 
+	// Once per run, not per task: the streak measures days the player showed
+	// up, so a 12-task plan is one day of activity, not twelve.
+	ps.GrantStreakXP()
+
+	recorded := 0
 	for _, t := range plan.Tasks {
 		if t.Status != StatusDone || t.Synthetic {
 			continue
 		}
+		recorded++
 		isComplex := t.Complexity == Complex
-		ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, isComplex, acceptedGroundingFloor)
+		ps.RecordTaskResult(gamestate.TaskOutcome{
+			Model:              t.Model,
+			Grounding:          t.Grounding,
+			CostUSD:            t.CostUSD,
+			CascadeLevel:       t.CascadeLevel,
+			CascadeSaved:       t.CascadeSaved,
+			IsComplex:          isComplex,
+			InputTokens:        t.InputTokens,
+			OutputTokens:       t.OutputTokens,
+			GroundingThreshold: acceptedGroundingFloor,
+		})
 		ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, isComplex, acceptedGroundingFloor)
 
 		if err := logger.LogRecord(TournamentRecord{
@@ -54,6 +70,13 @@ func RecordPlanOutcome(dir string, plan Plan) error {
 		}); err != nil {
 			return err
 		}
+	}
+
+	// Project completion: every task in the plan finished, and every one of
+	// them was real. A keyless run whose tasks all came back as placeholders
+	// must not award the largest bonus in the table.
+	if recorded > 0 && recorded == len(plan.Tasks) {
+		ps.GrantProjectCompleteXP(plan.ID)
 	}
 
 	ps.CheckAchievements()
