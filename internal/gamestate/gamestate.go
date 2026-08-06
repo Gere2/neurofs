@@ -229,20 +229,6 @@ func (ps *PlayerState) RecordTaskResult(
 	ps.TotalCostUSD += costUSD
 	ps.TotalSavedUSD += cascadeSaved
 
-	// Update streak
-	today := time.Now().Format("2006-01-02")
-	if ps.LastActiveDay != today {
-		yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-		if ps.LastActiveDay == yesterday {
-			ps.Streak++
-		} else if ps.LastActiveDay != "" {
-			ps.Streak = 1 // reset
-		} else {
-			ps.Streak = 1 // first day
-		}
-		ps.LastActiveDay = today
-	}
-
 	// Update agent stats
 	agent := ps.ensureAgent(modelName)
 	if grounding >= groundingThreshold {
@@ -260,6 +246,69 @@ func (ps *PlayerState) RecordTaskResult(
 
 	// Update global mean grounding
 	ps.MeanGrounding = (ps.MeanGrounding*float64(ps.TotalMissions-1) + grounding) / float64(ps.TotalMissions)
+}
+
+// AdvanceDailyStreak rolls the daily streak forward and reports whether this
+// call was the first activity of a new day. It used to live inside
+// RecordTaskResult, which made it per-task rather than per-session and left it
+// holding the lock, so no XP could be granted from it — AddXP takes the same
+// non-reentrant mutex. Callers now invoke it once per run and grant the streak
+// XP themselves.
+func (ps *PlayerState) AdvanceDailyStreak() bool {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	today := time.Now().Format("2006-01-02")
+	if ps.LastActiveDay == today {
+		return false
+	}
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	if ps.LastActiveDay == yesterday {
+		ps.Streak++
+	} else {
+		// Both a first-ever day and a broken streak start at 1. Missing days
+		// costs the streak, never the progression: the vision is explicit
+		// that not playing must not be punished.
+		ps.Streak = 1
+	}
+	ps.LastActiveDay = today
+	return true
+}
+
+// GrantStreakXP awards the daily streak bonus if this is the first activity
+// today, and reports the XP granted.
+//
+// The vision's table reads "+10 XP × día", which can be read as a flat daily
+// bonus or as ten XP per day of streak. This takes the flat reading: it is the
+// conservative one, and an unbounded multiplier would let a long streak
+// out-earn every other source combined. Switch the amount here if the intent
+// was the multiplier.
+func (ps *PlayerState) GrantStreakXP() int {
+	if !ps.AdvanceDailyStreak() {
+		return 0
+	}
+	ps.mu.RLock()
+	streak := ps.Streak
+	ps.mu.RUnlock()
+
+	ps.AddXP(XPStreakDaily, fmt.Sprintf("Racha diaria: %d día(s)", streak))
+	return XPStreakDaily
+}
+
+// GrantProjectCompleteXP awards the project-completion bonus, the largest
+// single source in the vision's table.
+func (ps *PlayerState) GrantProjectCompleteXP(planID string) int {
+	ps.AddXP(XPProjectComplete, fmt.Sprintf("Proyecto completado: %s", planID))
+	return XPProjectComplete
+}
+
+// GrantLearnImprovedXP awards the learn-loop bonus. This is the "aprender" edge
+// of the vision's triple flywheel (jugar → aprender → mejorar) and was the one
+// XP source with no code path at all.
+func (ps *PlayerState) GrantLearnImprovedXP(fromRecall, toRecall float64) int {
+	ps.AddXP(XPLearnImproved, fmt.Sprintf(
+		"Learn loop mejoró los weights (recall %.1f%% → %.1f%%)", fromRecall*100, toRecall*100))
+	return XPLearnImproved
 }
 
 // ensureAgent returns the agent stats for a model, creating if needed.

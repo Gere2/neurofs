@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -76,4 +77,100 @@ func TestSyntheticTaskCount(t *testing.T) {
 	if got := SyntheticTaskCount(plan); got != 2 {
 		t.Errorf("SyntheticTaskCount = %d, want 2", got)
 	}
+}
+
+// Project completion is the largest single bonus, so it must require that
+// every task finished AND that none of them was a placeholder from a keyless
+// run.
+func TestRecordPlanOutcome_ProjectCompletionRequiresRealTasks(t *testing.T) {
+	t.Run("all real and done", func(t *testing.T) {
+		dir := t.TempDir()
+		plan := donePlan(
+			Task{ID: "a", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+			Task{ID: "b", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+		)
+		if err := RecordPlanOutcome(dir, plan); err != nil {
+			t.Fatalf("RecordPlanOutcome: %v", err)
+		}
+		if !hasXPReason(t, dir, "Proyecto completado") {
+			t.Error("a fully real, fully done plan must award project completion")
+		}
+	})
+
+	t.Run("one synthetic task", func(t *testing.T) {
+		dir := t.TempDir()
+		plan := donePlan(
+			Task{ID: "a", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+			Task{ID: "b", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9, Synthetic: true},
+		)
+		if err := RecordPlanOutcome(dir, plan); err != nil {
+			t.Fatalf("RecordPlanOutcome: %v", err)
+		}
+		if hasXPReason(t, dir, "Proyecto completado") {
+			t.Error("a plan containing placeholder output must not award project completion")
+		}
+	})
+
+	t.Run("one task still running", func(t *testing.T) {
+		dir := t.TempDir()
+		plan := donePlan(
+			Task{ID: "a", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+			Task{ID: "b", Kind: KindBackend, Status: StatusRunning, Model: "m"},
+		)
+		if err := RecordPlanOutcome(dir, plan); err != nil {
+			t.Fatalf("RecordPlanOutcome: %v", err)
+		}
+		if hasXPReason(t, dir, "Proyecto completado") {
+			t.Error("an unfinished plan must not award project completion")
+		}
+	})
+}
+
+// The streak must be awarded once for the run, not once per task.
+func TestRecordPlanOutcome_StreakAwardedOncePerRun(t *testing.T) {
+	dir := t.TempDir()
+	plan := donePlan(
+		Task{ID: "a", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+		Task{ID: "b", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+		Task{ID: "c", Kind: KindBackend, Status: StatusDone, Model: "m", Grounding: 0.9},
+	)
+	if err := RecordPlanOutcome(dir, plan); err != nil {
+		t.Fatalf("RecordPlanOutcome: %v", err)
+	}
+	if n := countXPReason(t, dir, "Racha diaria"); n != 1 {
+		t.Errorf("streak awarded %d times for a 3-task plan, want 1", n)
+	}
+}
+
+func loadPlayer(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, "player.json"))
+	if err != nil {
+		t.Fatalf("read player.json: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("parse player.json: %v", err)
+	}
+	return m
+}
+
+func countXPReason(t *testing.T, dir, needle string) int {
+	t.Helper()
+	m := loadPlayer(t, dir)
+	events, _ := m["recent_xp"].([]any)
+	n := 0
+	for _, e := range events {
+		ev, _ := e.(map[string]any)
+		reason, _ := ev["reason"].(string)
+		if strings.Contains(reason, needle) {
+			n++
+		}
+	}
+	return n
+}
+
+func hasXPReason(t *testing.T, dir, needle string) bool {
+	t.Helper()
+	return countXPReason(t, dir, needle) > 0
 }

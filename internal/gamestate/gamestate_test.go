@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewPlayerState(t *testing.T) {
@@ -203,17 +204,27 @@ func TestCheckAchievements_Multiple(t *testing.T) {
 	}
 }
 
+// The streak advances per run, not per task: it is driven by
+// AdvanceDailyStreak, which RecordPlanOutcome calls once, rather than by
+// RecordTaskResult, which runs for every task in a plan.
 func TestStreakTracking(t *testing.T) {
 	ps := NewPlayerState()
 
-	// First task today
+	// Recording task results is not by itself a day of activity.
 	ps.RecordTaskResult("gemini-flash", 0.90, 0.001, 0, 0, false, 0.85)
+	if ps.Streak != 0 {
+		t.Errorf("task recording must not touch the streak, got %d", ps.Streak)
+	}
+
+	// First activity of the day
+	ps.AdvanceDailyStreak()
 	if ps.Streak != 1 {
 		t.Errorf("expected streak 1, got %d", ps.Streak)
 	}
 
-	// Another task same day — streak shouldn't change
+	// Another run the same day — streak shouldn't change
 	ps.RecordTaskResult("gemini-flash", 0.90, 0.001, 0, 0, false, 0.85)
+	ps.AdvanceDailyStreak()
 	if ps.Streak != 1 {
 		t.Errorf("expected streak still 1, got %d", ps.Streak)
 	}
@@ -306,6 +317,78 @@ func TestSave_ReplacesRatherThanTruncates(t *testing.T) {
 	for _, e := range entries {
 		if e.Name() != "player.json" {
 			t.Errorf("save left a stray file behind: %s", e.Name())
+		}
+	}
+}
+
+// The streak is a per-day signal, so recording a twelve-task plan must count
+// as one day, and a second run the same day must not pay again.
+func TestGrantStreakXP_OncePerDay(t *testing.T) {
+	ps := NewPlayerState()
+
+	if got := ps.GrantStreakXP(); got != XPStreakDaily {
+		t.Fatalf("first activity of the day = %d XP, want %d", got, XPStreakDaily)
+	}
+	if ps.Streak != 1 {
+		t.Errorf("streak = %d, want 1", ps.Streak)
+	}
+	if got := ps.GrantStreakXP(); got != 0 {
+		t.Errorf("second call the same day = %d XP, want 0", got)
+	}
+	if ps.Streak != 1 {
+		t.Errorf("streak must not advance twice in a day, got %d", ps.Streak)
+	}
+}
+
+// A consecutive day extends the streak; a gap restarts it at 1 rather than
+// zeroing progression — the vision forbids punishing absence.
+func TestAdvanceDailyStreak_ContinuesAndResets(t *testing.T) {
+	ps := NewPlayerState()
+	ps.LastActiveDay = time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	ps.Streak = 4
+	if !ps.AdvanceDailyStreak() {
+		t.Fatal("a new day must advance")
+	}
+	if ps.Streak != 5 {
+		t.Errorf("consecutive day: streak = %d, want 5", ps.Streak)
+	}
+
+	gap := NewPlayerState()
+	gap.LastActiveDay = time.Now().AddDate(0, 0, -9).Format("2006-01-02")
+	gap.Streak = 7
+	gap.AdvanceDailyStreak()
+	if gap.Streak != 1 {
+		t.Errorf("after a gap: streak = %d, want 1", gap.Streak)
+	}
+}
+
+// All seven XP sources in the vision must have a code path. Three of them
+// (project completion, streak, learn loop) were declared and never granted.
+func TestEveryXPSourceIsReachable(t *testing.T) {
+	ps := NewPlayerState()
+
+	if got := ps.GrantProjectCompleteXP("plan-1"); got != XPProjectComplete {
+		t.Errorf("project completion = %d, want %d", got, XPProjectComplete)
+	}
+	if got := ps.GrantLearnImprovedXP(0.80, 0.91); got != XPLearnImproved {
+		t.Errorf("learn improvement = %d, want %d", got, XPLearnImproved)
+	}
+	if got := ps.GrantStreakXP(); got != XPStreakDaily {
+		t.Errorf("streak = %d, want %d", got, XPStreakDaily)
+	}
+	perTask, _ := ps.GrantXPForTask(0.97, 0, 0.02, true, 0.85)
+	want := XPTaskComplete + XPCascadeEfficient + XPComplexResolved + XPGroundingPerfect
+	if perTask != want {
+		t.Errorf("per-task XP = %d, want %d", perTask, want)
+	}
+
+	// Every grant must leave a feed entry the UI can render.
+	if len(ps.RecentXP) == 0 {
+		t.Fatal("no XP events recorded")
+	}
+	for _, e := range ps.RecentXP {
+		if e.Reason == "" {
+			t.Error("XP event with no reason would render as a blank feed row")
 		}
 	}
 }
