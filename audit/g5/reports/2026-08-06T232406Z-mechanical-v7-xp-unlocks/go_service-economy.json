@@ -1,0 +1,494 @@
+{
+  "repo": "/private/tmp/claude-501/-Users-gere-NeuroMFS/4acac4cd-e026-4fd0-bc5d-873c11e84ed1/scratchpad/xp29",
+  "search_limit": 8,
+  "summary": {
+    "tasks": 13,
+    "fact_tasks": 13,
+    "scored": 12,
+    "search_miss": 1,
+    "mean_tokens_neurofs": 2080,
+    "mean_tokens_native": 8484,
+    "mean_recall_neurofs": 0.8333333333333331,
+    "mean_recall_native": 0.9375,
+    "overall_recall_neurofs": 0.769230769230769,
+    "miss_rate": 0.07692307692307693,
+    "mean_token_reduction": 0.6406275219578182,
+    "median_token_reduction": 0.7895835733852348,
+    "threshold": 0.25,
+    "verdict": "PASS",
+    "detail": "mean iso-recall token reduction 64.1% \u003e= 25% (B 2080 tok vs native 8484 tok); overall recall 77% over 13 fact tasks, 1 miss"
+  },
+  "tasks": [
+    {
+      "question": "How do exactSearchSignals, ReadIndexedFileBounded, and contentCache keep exact-content scoring on one indexed session snapshot?",
+      "source": "correction-retrieval-snapshot-helpers.json",
+      "neurofs": {
+        "tokens": 2414,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/search.go",
+          "internal/fsutil/readfile.go",
+          "internal/memory/filestore.go",
+          "internal/contextusage/contextusage.go",
+          "internal/mcp/tools.go",
+          "internal/memory/session.go"
+        ],
+        "facts_hit": [
+          "exactSearchSignals",
+          "ReadIndexedFileBounded",
+          "contentCache"
+        ]
+      },
+      "native_iso": {
+        "tokens": 11204,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/search.go"
+        ],
+        "facts_hit": [
+          "exactSearchSignals",
+          "ReadIndexedFileBounded",
+          "contentCache"
+        ]
+      },
+      "token_reduction": 0.7845412352731167,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "how does the session pool invalidate cached sessions when the database or WAL index revision changes",
+      "source": "correction-session-pool-index-revision.json",
+      "neurofs": {
+        "tokens": 1808,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/sessionpool.go",
+          "internal/retrieval/search.go",
+          "internal/memory/session.go",
+          "internal/receipt/index.go"
+        ],
+        "facts_hit": [
+          "sessionFor",
+          "currentIndexRevision",
+          "SearchShared"
+        ]
+      },
+      "native_iso": {
+        "tokens": 1852,
+        "recall": 1,
+        "files": [
+          "internal/retrieval/sessionpool.go"
+        ],
+        "facts_hit": [
+          "sessionFor",
+          "currentIndexRevision",
+          "SearchShared"
+        ]
+      },
+      "token_reduction": 0.023758099352051865,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "how does neurofs setup wire CLAUDE.md idempotently",
+      "source": "learned-5981833004cc.json",
+      "neurofs": {
+        "tokens": 1412,
+        "recall": 0.6666666666666666,
+        "files": [
+          "CLAUDE.md",
+          "README.md",
+          "internal/cli/setup.go",
+          "internal/output/claude.go",
+          "internal/cli/mcp_claude.go"
+        ],
+        "facts_hit": [
+          "claudeMDBlock",
+          "claudeMDMarker"
+        ]
+      },
+      "native_iso": {
+        "tokens": 10314,
+        "recall": 1,
+        "files": [
+          "CLAUDE.md",
+          "README.md",
+          "internal/cli/setup.go"
+        ],
+        "facts_hit": [
+          "claudeMDBlock",
+          "newSetupCmd",
+          "claudeMDMarker"
+        ]
+      },
+      "token_reduction": 0.8630987007950359,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "how does the ranker score filename matches",
+      "source": "learned-5e0242030640.json",
+      "neurofs": {
+        "tokens": 2531,
+        "recall": 0.6666666666666666,
+        "files": [
+          "internal/ranking/ranking.go",
+          "internal/learn/files.go",
+          "internal/benchmark/benchmark.go",
+          "internal/mcp/tools.go",
+          "internal/retrieval/search.go"
+        ],
+        "facts_hit": [
+          "scoreFile",
+          "RankWithOptions"
+        ]
+      },
+      "native_iso": {
+        "tokens": 7014,
+        "recall": 1,
+        "files": [
+          "internal/ranking/ranking.go"
+        ],
+        "facts_hit": [
+          "scoreFile",
+          "RankWithOptions",
+          "DefaultWeights"
+        ]
+      },
+      "token_reduction": 0.6391502708867978,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "cross shape toy TS repo economy inverts fixtures",
+      "source": "learned-680b59f7aed5.json",
+      "neurofs": {
+        "tokens": 4614,
+        "recall": 0,
+        "files": [
+          "internal/learn/learn.go",
+          "internal/gate/gate.go",
+          "internal/receipt/receipt.go",
+          "internal/cli/economy.go",
+          "internal/gate/crossshape.go",
+          "internal/gate/crossshape_test.go",
+          "docs/phase_g5_cross_shape.md"
+        ]
+      },
+      "native_iso": {
+        "tokens": 6301,
+        "recall": 0,
+        "files": [
+          "internal/learn/learn.go"
+        ]
+      },
+      "token_reduction": 0,
+      "has_facts": true,
+      "scored": false,
+      "note": "neurofs_search recovered no facts (search miss)"
+    },
+    {
+      "question": "how does promote validate that feedback facts exist in the repo",
+      "source": "learned-c41f5c141a09.json",
+      "neurofs": {
+        "tokens": 2290,
+        "recall": 1,
+        "files": [
+          "internal/receipt/validate.go",
+          "internal/usage/usage.go",
+          "internal/learn/learn.go",
+          "internal/receipt/receipt.go",
+          "internal/runid/correlation.go",
+          "internal/config/config.go",
+          "internal/cli/validate.go"
+        ],
+        "facts_hit": [
+          "Promote",
+          "factsPresentInRepo"
+        ]
+      },
+      "native_iso": {
+        "tokens": 12325,
+        "recall": 1,
+        "files": [
+          "internal/receipt/validate.go",
+          "internal/usage/usage.go",
+          "internal/learn/learn.go"
+        ],
+        "facts_hit": [
+          "Promote",
+          "factsPresentInRepo"
+        ]
+      },
+      "token_reduction": 0.8141987829614604,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "how does the gate warn when the index is stale",
+      "source": "learned-f4ee1fc6237a.json",
+      "neurofs": {
+        "tokens": 1355,
+        "recall": 1,
+        "files": [
+          "internal/gate/gate.go",
+          "internal/cli/gate.go",
+          "docs/PIVOT_GATE.md",
+          "internal/gate/staleness.go",
+          "internal/receipt/index.go"
+        ],
+        "facts_hit": [
+          "staleIndexCount",
+          "CountStaleIndexFiles"
+        ]
+      },
+      "native_iso": {
+        "tokens": 12690,
+        "recall": 1,
+        "files": [
+          "internal/gate/gate.go",
+          "internal/cli/gate.go"
+        ],
+        "facts_hit": [
+          "staleIndexCount",
+          "CountStaleIndexFiles"
+        ]
+      },
+      "token_reduction": 0.8932230102442869,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "What tools does the MCP server expose to the client?",
+      "source": "mcp-tools-list.json",
+      "neurofs": {
+        "tokens": 2895,
+        "recall": 1,
+        "files": [
+          "internal/mcp/server.go",
+          "internal/mcp/protocol.go",
+          "internal/embeddings/embeddings.go",
+          "internal/cli/mcp.go",
+          "internal/cli/mcp_claude.go",
+          "internal/mcp/tools.go"
+        ],
+        "facts_hit": [
+          "neurofs_context",
+          "neurofs_task",
+          "neurofs_scan",
+          "neurofs_view_file"
+        ]
+      },
+      "native_iso": {
+        "tokens": 6938,
+        "recall": 1,
+        "files": [
+          "internal/mcp/server.go",
+          "internal/mcp/protocol.go",
+          "internal/embeddings/embeddings.go",
+          "internal/cli/mcp.go"
+        ],
+        "facts_hit": [
+          "neurofs_context",
+          "neurofs_task",
+          "neurofs_scan",
+          "neurofs_view_file"
+        ]
+      },
+      "token_reduction": 0.5827327760161429,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "When does the packager pick excerpt versus signature for a file, and which option does PreferSignatures change?",
+      "source": "packager-excerpt-vs-signature.json",
+      "neurofs": {
+        "tokens": 1893,
+        "recall": 0.75,
+        "files": [
+          "internal/packager/packager.go",
+          "internal/ranking/ranking.go",
+          "internal/retrieval/search.go",
+          "internal/audit/audit.go",
+          "internal/indexer/indexer.go",
+          "internal/ui/server.go",
+          "internal/abeval/abeval.go",
+          "internal/packager/excerpt.go",
+          "internal/learn/files.go"
+        ],
+        "facts_hit": [
+          "RepExcerpt",
+          "excerptTopN",
+          "PreferSignatures"
+        ]
+      },
+      "native_iso": {
+        "tokens": 3119,
+        "recall": 1,
+        "files": [
+          "internal/packager/packager.go"
+        ],
+        "facts_hit": [
+          "RepExcerpt",
+          "selectFragment",
+          "excerptTopN",
+          "PreferSignatures"
+        ]
+      },
+      "token_reduction": 0.3930747034305867,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "What does UpgradeWithSlack do in the packager and what is the upgrade cap?",
+      "source": "packager-slack-upgrade.json",
+      "neurofs": {
+        "tokens": 2368,
+        "recall": 1,
+        "files": [
+          "internal/packager/packager.go",
+          "internal/packager/packager_test.go",
+          "README.md",
+          "internal/a2a/agentcard.go"
+        ],
+        "facts_hit": [
+          "UpgradeWithSlack",
+          "upgradeCandidate",
+          "fullCodeMaxTokens"
+        ]
+      },
+      "native_iso": {
+        "tokens": 3119,
+        "recall": 1,
+        "files": [
+          "internal/packager/packager.go"
+        ],
+        "facts_hit": [
+          "UpgradeWithSlack",
+          "upgradeCandidate",
+          "fullCodeMaxTokens"
+        ]
+      },
+      "token_reduction": 0.24078230201987816,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does the ranker score filename matches and how is that weight defined?",
+      "source": "ranking-filename-match.json",
+      "neurofs": {
+        "tokens": 1680,
+        "recall": 0.6666666666666666,
+        "files": [
+          "internal/ranking/weights.go",
+          "internal/retrieval/weights.go",
+          "internal/learn/files.go",
+          "internal/ranking/ranking.go"
+        ],
+        "facts_hit": [
+          "filename_match",
+          "DefaultWeights"
+        ]
+      },
+      "native_iso": {
+        "tokens": 12028,
+        "recall": 1,
+        "files": [
+          "internal/ranking/weights.go",
+          "internal/retrieval/weights.go",
+          "internal/learn/files.go",
+          "internal/ranking/ranking.go"
+        ],
+        "facts_hit": [
+          "filename_match",
+          "scoreFile",
+          "DefaultWeights"
+        ]
+      },
+      "token_reduction": 0.8603259062188228,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does the session ledger manage timelines and cognitive histories?",
+      "source": "session-ledger-timeline.json",
+      "neurofs": {
+        "tokens": 2263,
+        "recall": 0.25,
+        "files": [
+          "internal/retrieval/search.go",
+          "internal/memory/ledger.go",
+          "internal/memory/session.go",
+          "internal/retrieval/sessionpool.go"
+        ],
+        "facts_hit": [
+          "Session"
+        ]
+      },
+      "native_iso": {
+        "tokens": 11204,
+        "recall": 0.25,
+        "files": [
+          "internal/retrieval/search.go"
+        ],
+        "facts_hit": [
+          "Session"
+        ]
+      },
+      "token_reduction": 0.7980185647982864,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does storage open the database with WAL mode and what parameters are set?",
+      "source": "storage-schema-wal.json",
+      "neurofs": {
+        "tokens": 2056,
+        "recall": 1,
+        "files": [
+          "internal/storage/storage.go",
+          "internal/contextladder/contextladder.go",
+          "internal/ui/static/app.js",
+          "internal/orchestrator/models_config.go",
+          "internal/audit/model.go",
+          "internal/storage/storage_test.go"
+        ],
+        "facts_hit": [
+          "PRAGMA journal_mode = WAL",
+          "PRAGMA busy_timeout",
+          "Open",
+          "sqlite"
+        ]
+      },
+      "native_iso": {
+        "tokens": 10011,
+        "recall": 1,
+        "files": [
+          "internal/storage/storage.go"
+        ],
+        "facts_hit": [
+          "PRAGMA journal_mode = WAL",
+          "PRAGMA busy_timeout",
+          "Open",
+          "sqlite"
+        ]
+      },
+      "token_reduction": 0.7946259114973528,
+      "has_facts": true,
+      "scored": true
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "0be29590489c827ebe356270cd369f40f84f14a573a4984a898332ae17902e9f",
+    "engine_source_tree_sha256": "1ba824b7fec67313b7d65293ee1d984ffeb2cb2e08006ff94ce734f5a4877593",
+    "target_source_tree_sha256": "782164ddb8fd30f10668b4a9508bd55ab51af1327179ae3ab578c955f774e141",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "a61a8990ed851c1a8514627b21da7231ac16db7f62394fd7244829fb0b4e4197",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "aa578c5ac3c6a75f1088ea8844c3cb7d11ca2621",
+    "repo_remote_url": "https://github.com/Gere2/neurofs.git",
+    "repo_dirty": true
+  }
+}

@@ -1,0 +1,224 @@
+{
+  "criteria": [
+    {
+      "id": "G1",
+      "name": "Real-use signal",
+      "verdict": "SKIP",
+      "detail": "no human-rated entries yet — run `neurofs task --rate` to produce them",
+      "numbers": {
+        "ignored_non_human": 0
+      }
+    },
+    {
+      "id": "G2",
+      "name": "Budget discipline",
+      "verdict": "PASS",
+      "detail": "6 bundles, no overshoot; median utilisation 52%, p95 68%",
+      "numbers": {
+        "bundles": 6,
+        "median_util": 0.51875,
+        "overshoots": 0,
+        "p95_util": 0.676
+      }
+    },
+    {
+      "id": "G3",
+      "name": "Fact recovery",
+      "verdict": "PASS",
+      "detail": "mean recall 83% over 6 fixtures (threshold 80%); 4 perfect",
+      "numbers": {
+        "failed": 0,
+        "fixtures": 6,
+        "mean_recall": 0.8333333333333334,
+        "min_fixtures": 5,
+        "min_recall": 0.8,
+        "perfect": 4,
+        "worst_recall": 0.3333333333333333
+      }
+    },
+    {
+      "id": "G4",
+      "name": "Replay drift",
+      "verdict": "SKIP",
+      "detail": "no drift evidence — run `neurofs audit replay`, save bundle+response pairs under audit/, or enable the grounding hook"
+    },
+    {
+      "id": "G5",
+      "name": "Cross-shape sanity",
+      "verdict": "SKIP",
+      "detail": "no cross-shape evidence available"
+    }
+  ],
+  "overall": "SKIP",
+  "g3_details": [
+    {
+      "fixture": {
+        "question": "How does the Vue compiler transform a template AST and generate render code?",
+        "expects_facts": [
+          "baseCompile",
+          "function transform",
+          "function generate"
+        ],
+        "source_path": "docs/g5_fixtures/vue/compiler.json"
+      },
+      "recall": 1,
+      "hits": [
+        "baseCompile",
+        "function transform",
+        "function generate"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How is a Vue component instance set up with its props and setup function?",
+        "expects_facts": [
+          "setupComponent",
+          "setupStatefulComponent"
+        ],
+        "source_path": "docs/g5_fixtures/vue/component-setup.json"
+      },
+      "recall": 1,
+      "hits": [
+        "setupComponent",
+        "setupStatefulComponent"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does computed caching work in Vue reactivity?",
+        "expects_facts": [
+          "ComputedRefImpl",
+          "function computed"
+        ],
+        "source_path": "docs/g5_fixtures/vue/computed.json"
+      },
+      "recall": 1,
+      "hits": [
+        "ComputedRefImpl",
+        "function computed"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does Vue's reactivity system track and trigger dependencies?",
+        "expects_facts": [
+          "function track",
+          "function trigger",
+          "ReactiveEffect"
+        ],
+        "source_path": "docs/g5_fixtures/vue/reactivity.json"
+      },
+      "recall": 1,
+      "hits": [
+        "function track",
+        "function trigger",
+        "ReactiveEffect"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does the Vue renderer mount components and patch children?",
+        "expects_facts": [
+          "mountComponent",
+          "patchChildren",
+          "createRenderer"
+        ],
+        "source_path": "docs/g5_fixtures/vue/renderer.json"
+      },
+      "recall": 0.3333333333333333,
+      "hits": [
+        "createRenderer"
+      ],
+      "misses": [
+        "mountComponent",
+        "patchChildren"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "How do nextTick and the scheduler job queue work in Vue?",
+        "expects_facts": [
+          "nextTick",
+          "queueJob",
+          "flushJobs"
+        ],
+        "source_path": "docs/g5_fixtures/vue/scheduler.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "nextTick",
+        "queueJob"
+      ],
+      "misses": [
+        "flushJobs"
+      ]
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "0be29590489c827ebe356270cd369f40f84f14a573a4984a898332ae17902e9f",
+    "engine_source_tree_sha256": "1ba824b7fec67313b7d65293ee1d984ffeb2cb2e08006ff94ce734f5a4877593",
+    "target_source_tree_sha256": "6908cb68ee3957002bc5fe44b26621474b674f023dfbc97477ebcff006ae34aa",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "92733dbc37ce5e75306f4d4cc72e21f3886cbf66a9a7927391aadc70a583ddaa",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5",
+    "repo_remote_url": "https://github.com/vuejs/core",
+    "repo_dirty": false
+  },
+  "g5_gate_invocation": {
+    "fixture_budget": 8000,
+    "no_chunks": false,
+    "max_fixtures": 0,
+    "skip_fixtures": false,
+    "fixture_bundles": [
+      {
+        "fixture_source": "compiler.json",
+        "question_sha256": "810e6ab24755db56ed5f44839ef17440f0fb5e01c180f1969faaf5e7b3e82f2b",
+        "bundle_hash": "a290d7d9d683ac90ed3bb7798c89fc967dce3c356be380c697b4381b150b4709",
+        "tokens_used": 5408,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "component-setup.json",
+        "question_sha256": "ccd7b4e1f856d8ca498fa3f0e739b56191089a339ed4f467586be1a8a9705452",
+        "bundle_hash": "1e8c03bdc2948945ac7cc5f7d4074fb1d6adb61a283aab9e55eea867beaa6279",
+        "tokens_used": 3433,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "computed.json",
+        "question_sha256": "305b22b429aa589e74aad5c96e69fe51ece83e5a902a2c877c69c9ce429dddef",
+        "bundle_hash": "ca035dd919fc5f4516c044e858f60d65b8470ccbf41609526b20df93aa1780a3",
+        "tokens_used": 4150,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "reactivity.json",
+        "question_sha256": "2fcc1a377126aceacecddc45be1808dea337653cc1f3a462da80566645fd497b",
+        "bundle_hash": "ee3c446dc8827562f554ab439f9be2d6ba3e849a04c6dee2d242ae3f33a0172b",
+        "tokens_used": 4319,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "renderer.json",
+        "question_sha256": "1d442553cf3d3c26f9be6fb00b665b61042e088825d4b502d2b383d1fcd83719",
+        "bundle_hash": "0f55d9465b3a9c114e67355e10680817ee7a9a6985692248f34a936ae04b6aed",
+        "tokens_used": 4037,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "scheduler.json",
+        "question_sha256": "a77e05edd55dec5875deb6b1e7602a87808d68829ad87429d7d48deddbba19a2",
+        "bundle_hash": "46af44d689047e2b1e4f6f269efd3a69a8a2f758e579d9a08cbcad497db6f45e",
+        "tokens_used": 5158,
+        "tokens_budget": 8000
+      }
+    ]
+  }
+}
