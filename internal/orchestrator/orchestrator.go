@@ -36,6 +36,10 @@ func NewOrchestrator(repoRoot string, client LLMClient) (*Orchestrator, error) {
 	decomposer := NewDecomposer(router, client)
 	dispatcher := NewDispatcher(router, client)
 
+	if cache, err := NewSemanticCache("", 24*time.Hour); err == nil {
+		dispatcher.Cache = cache
+	}
+
 	return &Orchestrator{
 		Config:     cfg,
 		Router:     router,
@@ -127,12 +131,15 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 		DurationMs:    duration.Milliseconds(),
 	}
 
-	// Aggregate cascade metrics
+	// Aggregate cascade and cache metrics
 	for _, t := range plan.Tasks {
 		if len(t.CascadeAttempts) > 1 {
 			result.CascadeEscalations += len(t.CascadeAttempts) - 1
 		}
 		result.CascadeSavedUSD += t.CascadeSaved
+		if t.Cached {
+			result.CacheHits++
+		}
 	}
 
 	return result, nil

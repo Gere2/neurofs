@@ -215,6 +215,7 @@ type ProgressCallback func(event StatusEvent)
 type Dispatcher struct {
 	Router    *Router
 	LLMClient LLMClient
+	Cache     *SemanticCache
 }
 
 // NewDispatcher creates a new task dispatcher.

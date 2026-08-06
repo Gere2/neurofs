@@ -24,6 +24,7 @@ type CascadeAttempt struct {
 	DurationMs   int64      `json:"duration_ms"`
 	Accepted     bool       `json:"accepted"`
 	Reason       string     `json:"reason,omitempty"` // why escalated or accepted
+	Cached       bool       `json:"cached,omitempty"`
 }
 
 // TaskKind classifies a sub-task so the router can pick a model.
@@ -93,6 +94,7 @@ type Task struct {
 	CascadeLevel    int              `json:"cascade_level,omitempty"`
 	CascadeAttempts []CascadeAttempt `json:"cascade_attempts,omitempty"`
 	CascadeSaved    float64          `json:"cascade_saved_usd,omitempty"` // cost saved vs using top model
+	Cached          bool             `json:"cached,omitempty"`
 }
 
 // Duration returns how long the task took, or zero if not finished.
@@ -165,6 +167,7 @@ type Result struct {
 	DurationMs        int64   `json:"duration_ms"`
 	CascadeEscalations int    `json:"cascade_escalations,omitempty"`
 	CascadeSavedUSD    float64 `json:"cascade_saved_usd,omitempty"`
+	CacheHits          int     `json:"cache_hits,omitempty"`
 }
 
 // StatusEvent is sent over SSE to update the UI in real time.
@@ -182,4 +185,5 @@ type StatusEvent struct {
 	Error        string     `json:"error,omitempty"`
 	CascadeLevel int        `json:"cascade_level,omitempty"`
 	CascadeReason string   `json:"cascade_reason,omitempty"` // "escalated: grounding 0.62 < 0.85" or "accepted"
+	Cached       bool       `json:"cached,omitempty"`
 }

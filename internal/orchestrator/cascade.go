@@ -90,6 +90,58 @@ func (d *Dispatcher) dispatchWithCascade(
 			})
 		}
 
+		// Check semantic cache before API call
+		if d.Cache != nil {
+			if cacheEntry, hit := d.Cache.Get(ctx, t.Description, t.Context, modelName, cascadeCfg.GroundingThreshold); hit {
+				attempt := CascadeAttempt{
+					Level:        level,
+					Model:        modelName,
+					Provider:     cacheEntry.Provider,
+					Response:     cacheEntry.Response,
+					Grounding:    cacheEntry.Grounding,
+					CostUSD:      0,
+					InputTokens:  cacheEntry.InputTokens,
+					OutputTokens: cacheEntry.OutputTokens,
+					DurationMs:   2,
+					Accepted:     true,
+					Reason:       "accepted: semantic cache hit",
+					Cached:       true,
+				}
+				attempts = append(attempts, attempt)
+
+				finished := time.Now()
+				t.FinishedAt = &finished
+				t.Status = StatusDone
+				t.Response = cacheEntry.Response
+				t.InputTokens = cacheEntry.InputTokens
+				t.OutputTokens = cacheEntry.OutputTokens
+				t.CostUSD = 0
+				t.Grounding = cacheEntry.Grounding
+				t.CascadeLevel = level
+				t.CascadeAttempts = attempts
+				t.Cached = true
+
+				if cb != nil {
+					cb(StatusEvent{
+						TaskID:        t.ID,
+						Status:        StatusDone,
+						Model:         modelName,
+						Provider:      cacheEntry.Provider,
+						InputTokens:   cacheEntry.InputTokens,
+						OutputTokens:  cacheEntry.OutputTokens,
+						CostUSD:       0,
+						Grounding:     cacheEntry.Grounding,
+						DurationMs:    2,
+						Response:      cacheEntry.Response,
+						CascadeLevel:  level,
+						CascadeReason: "accepted: semantic cache hit",
+						Cached:        true,
+					})
+				}
+				return nil
+			}
+		}
+
 		// Call LLM
 		response, inTokens, outTokens, err := d.LLMClient.Complete(ctx, entry, prompt)
 		attemptEnd := time.Now()
@@ -99,13 +151,13 @@ func (d *Dispatcher) dispatchWithCascade(
 
 		if err != nil {
 			attempts = append(attempts, CascadeAttempt{
-				Level:     level,
-				Model:     modelName,
-				Provider:  entry.Provider,
-				CostUSD:   attemptCost,
+				Level:      level,
+				Model:      modelName,
+				Provider:   entry.Provider,
+				CostUSD:    attemptCost,
 				DurationMs: attemptDuration.Milliseconds(),
-				Accepted:  false,
-				Reason:    fmt.Sprintf("error: %s", err.Error()),
+				Accepted:   false,
+				Reason:     fmt.Sprintf("error: %s", err.Error()),
 			})
 			// On error, try next model in chain
 			if cb != nil {
@@ -156,6 +208,20 @@ func (d *Dispatcher) dispatchWithCascade(
 		attempts = append(attempts, attempt)
 
 		if accepted {
+			// Save successful completion to cache
+			if d.Cache != nil {
+				_ = d.Cache.Put(ctx, t.Description, t.Context, CacheEntry{
+					Model:        modelName,
+					Provider:     entry.Provider,
+					Prompt:       prompt,
+					Response:     response,
+					Grounding:    grounding,
+					InputTokens:  inTokens,
+					OutputTokens: outTokens,
+					CostUSD:      attemptCost,
+				})
+			}
+
 			// This attempt passed — use it
 			finished := time.Now()
 			t.FinishedAt = &finished
