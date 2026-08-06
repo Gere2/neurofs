@@ -83,7 +83,9 @@ func Handler(baseURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		card := DefaultAgentCard(baseURL)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// No wildcard CORS: agent-to-agent discovery clients are not browsers
+		// and do not enforce it, so the header would only serve to let an
+		// arbitrary web page fingerprint the local NeuroFS instance.
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(card)
 	}

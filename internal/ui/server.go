@@ -140,7 +140,7 @@ func buildMux(opts Options, remote bool) (http.Handler, error) {
 		_, _ = w.Write(data)
 	})
 
-	registerAPI(mux, originsForAddr(opts.Addr))
+	registerAPI(mux, originsForAddr(opts.Addr), opts.RepoRoot)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

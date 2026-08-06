@@ -147,7 +147,6 @@ func handleOrchestrateStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	ch := make(chan orchestrator.StatusEvent, 32)
 
@@ -207,8 +206,10 @@ func handleOrchestrateModels(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 			return
 		}
-		// Save custom config to repo
-		if err := orchestrator.WriteDefaultConfig(repo); err != nil {
+		// Persist what the caller actually sent. Writing DefaultModelsConfig
+		// here instead would silently discard the user's edits and report
+		// success, which is how this endpoint used to behave.
+		if err := orchestrator.WriteModelsConfig(repo, cfg); err != nil {
 			writeErr(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
 			return
 		}

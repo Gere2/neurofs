@@ -23,7 +23,12 @@ import (
 // tab at evil.com cannot drive scan/pack/chat against the user's loopback
 // server, spend their API key, or write snapshot files into the repo.
 // allowedOrigins comes from the listen addr (see originsForAddr).
-func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
+//
+// repoRoot pins the stateless MCP endpoint's path-taking tools. It must be
+// the same root the rest of the server is sandboxed to; passing "" would let
+// the MCP handler fall back to the process cwd, which is not necessarily the
+// repo the user pointed --repo at.
+func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool, repoRoot string) {
 	mux.HandleFunc("/api/scan", safePost(allowedOrigins, handleScan))
 	mux.HandleFunc("/api/pack", safePost(allowedOrigins, handlePack))
 	mux.HandleFunc("/api/replay", safePost(allowedOrigins, handleReplay))
@@ -42,16 +47,22 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/proxy/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
 	mux.HandleFunc("/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
 	mux.HandleFunc("/api/orchestrate/run", safePost(allowedOrigins, handleOrchestrateRun))
-	mux.HandleFunc("/api/orchestrate/stream", handleOrchestrateStream)
-	mux.HandleFunc("/api/orchestrate/models", handleOrchestrateModels)
+	mux.HandleFunc("/api/orchestrate/stream", safeOrigin(allowedOrigins, getOnly(handleOrchestrateStream)))
+	// models is GET-or-POST in one handler; the POST branch writes models.json,
+	// so the whole endpoint needs the Origin check, not just a method gate.
+	mux.HandleFunc("/api/orchestrate/models", safeOrigin(allowedOrigins, handleOrchestrateModels))
 	mux.HandleFunc("/api/orchestrate/node/control", safePost(allowedOrigins, handleOrchestrateNodeControl))
 	mux.HandleFunc("/api/orchestrate/tournament", getOnly(handleOrchestrateTournament))
 	mux.HandleFunc("/api/orchestrate/tune", safePost(allowedOrigins, handleOrchestrateTune))
 	mux.HandleFunc("/api/player", getOnly(handlePlayer))
 	mux.HandleFunc("/.well-known/agent.json", getOnly(a2a.Handler("")))
 	mux.HandleFunc("/api/a2a/agent-card", getOnly(a2a.Handler("")))
-	mux.HandleFunc("/api/mcp", mcp.StatelessHandler("", ""))
-	mux.HandleFunc("/api/mcp/discover", getOnly(mcp.StatelessHandler("", "")))
+	// The MCP endpoint executes tool calls against the repo, so it carries the
+	// same Origin check as any other state-changing endpoint. Without it a page
+	// at evil.com could drive tools/call and read the response.
+	mcpHandler := mcp.StatelessHandler(repoRoot, "")
+	mux.HandleFunc("/api/mcp", safePost(allowedOrigins, mcpHandler))
+	mux.HandleFunc("/api/mcp/discover", safeOrigin(allowedOrigins, getOnly(mcpHandler)))
 	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			handleSkillsGet(w, r)

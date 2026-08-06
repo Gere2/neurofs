@@ -12,7 +12,7 @@ import (
 
 func TestAPISkills_GetAndPost(t *testing.T) {
 	mux := http.NewServeMux()
-	registerAPI(mux, map[string]bool{"http://localhost:8765": true})
+	registerAPI(mux, map[string]bool{"http://localhost:8765": true}, t.TempDir())
 
 	// 1. Post a new skill
 	skill := orchestrator.CrossProjectSkill{
