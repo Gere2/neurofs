@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/Gere2/neurofs/internal/config"
 )
 
 func TestNewResolvesAbsolutePath(t *testing.T) {
@@ -105,5 +105,66 @@ func TestConfigJSONLoading(t *testing.T) {
 	}
 	if cfg.Budget != 12000 {
 		t.Errorf("expected Budget 12000, got %d", cfg.Budget)
+	}
+}
+
+func TestNewRejectsSymlinkConfig(t *testing.T) {
+	dir := t.TempDir()
+	neurofsDir := filepath.Join(dir, config.DirName)
+	if err := os.Mkdir(neurofsDir, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	target := filepath.Join(dir, "outside-config.json")
+	if err := os.WriteFile(target, []byte(`{"budget": 1}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(neurofsDir, "config.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := config.New(dir); err == nil || !strings.Contains(err.Error(), "regular non-symlink") {
+		t.Fatalf("New error = %v, want symlink rejection", err)
+	}
+}
+
+func TestNewRejectsOversizedConfig(t *testing.T) {
+	dir := t.TempDir()
+	neurofsDir := filepath.Join(dir, config.DirName)
+	if err := os.Mkdir(neurofsDir, 0o700); err != nil {
+		t.Fatalf("Mkdir: %v", err)
+	}
+	oversized := strings.Repeat("x", 65<<10)
+	if err := os.WriteFile(filepath.Join(neurofsDir, "config.json"), []byte(oversized), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if _, err := config.New(dir); err == nil || !strings.Contains(err.Error(), "size limit") {
+		t.Fatalf("New error = %v, want bounded-read rejection", err)
+	}
+}
+
+func TestValidateRejectsNeuroFSSymlink(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(repo, config.DirName)
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := config.New(repo); err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		t.Fatalf("New error = %v, want .neurofs symlink rejection", err)
+	}
+
+	cfg := &config.Config{
+		RepoRoot: repo,
+		DBPath:   filepath.Join(link, config.DBName),
+		Budget:   config.DefaultBudget,
+	}
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "not a symlink") {
+		t.Fatalf("Validate error = %v, want .neurofs symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, config.DBName)); !os.IsNotExist(statErr) {
+		t.Fatalf("Validate must not create an external database; stat=%v", statErr)
 	}
 }

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestGetSessionID(t *testing.T) {
@@ -17,8 +17,7 @@ func TestGetSessionID(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Env Var override
-	os.Setenv("NEUROFS_SESSION_ID", "env-session-123")
-	defer os.Unsetenv("NEUROFS_SESSION_ID")
+	t.Setenv("NEUROFS_SESSION_ID", "env-session-123")
 
 	id, err := fs.GetSessionID(ctx)
 	if err != nil {
@@ -29,7 +28,9 @@ func TestGetSessionID(t *testing.T) {
 	}
 
 	// Unset to test file-based
-	os.Unsetenv("NEUROFS_SESSION_ID")
+	if err := os.Unsetenv("NEUROFS_SESSION_ID"); err != nil {
+		t.Fatalf("unset session override: %v", err)
+	}
 
 	// 2. Fresh session creation
 	id1, err := fs.GetSessionID(ctx)
@@ -38,6 +39,17 @@ func TestGetSessionID(t *testing.T) {
 	}
 	if !strings.HasPrefix(id1, "sess-") {
 		t.Errorf("expected session prefix 'sess-', got %q", id1)
+	}
+	sessionFile := filepath.Join(tempDir, ".neurofs", "session.txt")
+	sessionInfo, err := os.Lstat(sessionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionInfo.Mode()&os.ModeSymlink != 0 || !sessionInfo.Mode().IsRegular() {
+		t.Fatalf("generated session state is not a regular file: %v", sessionInfo.Mode())
+	}
+	if sessionInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("generated session permissions = %o, want 600", sessionInfo.Mode().Perm())
 	}
 
 	// 3. Cache hit on fresh session
@@ -50,7 +62,6 @@ func TestGetSessionID(t *testing.T) {
 	}
 
 	// 4. Stale session expiration (by modifying file mtime to >8 hours ago)
-	sessionFile := filepath.Join(tempDir, ".neurofs", "session.txt")
 	past := time.Now().Add(-9 * time.Hour)
 	err = os.Chtimes(sessionFile, past, past)
 	if err != nil {
@@ -63,6 +74,91 @@ func TestGetSessionID(t *testing.T) {
 	}
 	if id1 == id3 {
 		t.Errorf("expected new session ID after expiration, but got same %q", id3)
+	}
+}
+
+func TestSessionIDValidation(t *testing.T) {
+	for _, raw := range []string{"", "   ", "bad\nsession", "bad\rsession"} {
+		t.Run("env_"+strings.ReplaceAll(raw, "\n", "newline"), func(t *testing.T) {
+			t.Setenv("NEUROFS_SESSION_ID", raw)
+			if _, err := NewSqliteStore(t.TempDir()).GetSessionID(context.Background()); err == nil {
+				t.Fatalf("expected invalid environment session ID %q to fail", raw)
+			}
+		})
+	}
+
+	stores := []struct {
+		name string
+		new  func(string) Store
+	}{
+		{name: "sqlite", new: func(root string) Store { return NewSqliteStore(root) }},
+		{name: "file", new: func(root string) Store { return NewFileStore(root) }},
+	}
+	for _, tc := range stores {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			store := tc.new(repo)
+			for _, invalid := range []string{"", " ", "two\nlines"} {
+				if err := store.SaveSessionID(context.Background(), invalid); err == nil {
+					t.Fatalf("SaveSessionID(%q) unexpectedly succeeded", invalid)
+				}
+			}
+			if err := store.SaveSessionID(context.Background(), "  manual-session  "); err != nil {
+				t.Fatalf("save valid session: %v", err)
+			}
+			id, err := store.GetSessionID(context.Background())
+			if err != nil {
+				t.Fatalf("get saved session: %v", err)
+			}
+			if id != "manual-session" {
+				t.Fatalf("saved session ID = %q, want trimmed value", id)
+			}
+			info, err := os.Lstat(filepath.Join(repo, ".neurofs", "session.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0o600 {
+				t.Fatalf("session permissions = %o, want 600", info.Mode().Perm())
+			}
+		})
+	}
+}
+
+func TestSessionFileRejectsSymlinkAndSaveReplacesItSafely(t *testing.T) {
+	repo := t.TempDir()
+	stateDir := filepath.Join(repo, ".neurofs")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(target, []byte("outside-session"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sessionFile := filepath.Join(stateDir, "session.txt")
+	if err := os.Symlink(target, sessionFile); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSqliteStore(repo)
+	if _, err := store.GetSessionID(context.Background()); err == nil {
+		t.Fatal("expected symlink session file to be rejected")
+	}
+	if err := store.SaveSessionID(context.Background(), "safe-session"); err != nil {
+		t.Fatalf("atomic save over symlink: %v", err)
+	}
+	info, err := os.Lstat(sessionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		t.Fatalf("session path was not replaced with a regular file: %v", info.Mode())
+	}
+	outside, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(outside) != "outside-session" {
+		t.Fatalf("symlink target was modified: %q", outside)
 	}
 }
 
@@ -114,6 +210,115 @@ func TestAppendAndReadEntries(t *testing.T) {
 	if len(matches2) != 0 {
 		t.Errorf("expected 0 search matches, got %d", len(matches2))
 	}
+
+	// SQLite search must cover bundle hashes and treat SQL wildcard
+	// characters as ordinary text, matching the in-memory implementation.
+	err = m.AppendEntry(ctx, models.LedgerEntry{
+		Query:      "second entry",
+		BundleHash: "bundle%_ABC",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashMatches, err := m.SearchEntries(ctx, "HASH123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hashMatches) != 1 || hashMatches[0].BundleHash != "hash123" {
+		t.Fatalf("bundle hash search = %+v, want hash123 entry", hashMatches)
+	}
+	literalMatches, err := m.SearchEntries(ctx, "%_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(literalMatches) != 1 || literalMatches[0].BundleHash != "bundle%_ABC" {
+		t.Fatalf("literal wildcard search = %+v, want bundle%%_ABC entry", literalMatches)
+	}
+}
+
+func TestPersistentStoresShareLiteralSearchSemantics(t *testing.T) {
+	stores := []struct {
+		name string
+		new  func(string) Store
+	}{
+		{name: "sqlite", new: func(root string) Store { return NewSqliteStore(root) }},
+		{name: "file", new: func(root string) Store { return NewFileStore(root) }},
+	}
+	for _, tc := range stores {
+		t.Run(tc.name, func(t *testing.T) {
+			store := tc.new(t.TempDir())
+			ctx := context.Background()
+			entries := []models.LedgerEntry{
+				{Timestamp: time.Now(), Query: "first", BundleHash: "bundle%_ABC"},
+				{Timestamp: time.Now(), Query: "second", BundleHash: "plain"},
+			}
+			for _, entry := range entries {
+				if err := store.Append(ctx, entry); err != nil {
+					t.Fatalf("append: %v", err)
+				}
+			}
+			matches, err := store.Search(ctx, "%_")
+			if err != nil {
+				t.Fatalf("literal search: %v", err)
+			}
+			if len(matches) != 1 || matches[0].BundleHash != "bundle%_ABC" {
+				t.Fatalf("literal search = %+v, want bundle%%_ABC entry", matches)
+			}
+		})
+	}
+}
+
+func TestFileStoreLedgerIsPrivateAndRejectsSymlink(t *testing.T) {
+	ctx := context.Background()
+	repo := t.TempDir()
+	store := NewFileStore(repo)
+	if err := store.Append(ctx, models.LedgerEntry{
+		Timestamp: time.Now(),
+		Query:     "private",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	ledgerPath := filepath.Join(repo, ".neurofs", "ledger.jsonl")
+	info, err := os.Lstat(ledgerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("ledger mode = %v (%o), want regular 600", info.Mode(), info.Mode().Perm())
+	}
+
+	if err := os.Remove(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.jsonl")
+	const sentinel = "outside must not change\n"
+	if err := os.WriteFile(outside, []byte(sentinel), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, ledgerPath); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Append(ctx, models.LedgerEntry{Query: "unsafe"}); err == nil {
+		t.Fatal("Append followed ledger symlink")
+	}
+	if _, err := store.Read(ctx, ""); err == nil {
+		t.Fatal("Read followed ledger symlink")
+	}
+	if _, err := store.Search(ctx, "outside"); err == nil {
+		t.Fatal("Search followed ledger symlink")
+	}
+	if _, err := store.Prune(ctx, time.Hour); err == nil {
+		t.Fatal("Prune followed ledger symlink")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != sentinel {
+		t.Fatalf("symlink target changed: %q", got)
+	}
 }
 
 func TestMemStoreSearch(t *testing.T) {
@@ -148,8 +353,7 @@ func TestExportEntries(t *testing.T) {
 	m := New(fs)
 
 	sessionID := "test-session-xyz"
-	os.Setenv("NEUROFS_SESSION_ID", sessionID)
-	defer os.Unsetenv("NEUROFS_SESSION_ID")
+	t.Setenv("NEUROFS_SESSION_ID", sessionID)
 
 	err := m.AppendEntry(ctx, models.LedgerEntry{
 		Query:   "implement something",
@@ -350,5 +554,52 @@ func TestPrune(t *testing.T) {
 	}
 	if len(keptFile) != 1 || keptFile[0].Query != "new query" {
 		t.Errorf("expected to keep only 'new query' in filestore, got: %+v", keptFile)
+	}
+	ledgerInfo, err := os.Lstat(filepath.Join(tempDirFile, ".neurofs", "ledger.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ledgerInfo.Mode().IsRegular() || ledgerInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("pruned ledger mode = %v (%o), want regular 600", ledgerInfo.Mode(), ledgerInfo.Mode().Perm())
+	}
+}
+
+func TestSqliteAutoPruneCompletesBeforeAppendReturns(t *testing.T) {
+	repo := t.TempDir()
+	store := NewSqliteStore(repo)
+	ctx := context.Background()
+	lockPath := filepath.Join(repo, ".neurofs", "last_prune_sqlite.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lockPath, []byte("orphaned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-2 * autoPruneLockStaleAfter)
+	if err := os.Chtimes(lockPath, stale, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.Append(ctx, models.LedgerEntry{
+		SessionID: "old-session",
+		Query:     "expired",
+		Timestamp: time.Now().Add(-60 * 24 * time.Hour),
+	}); err != nil {
+		t.Fatalf("append expired entry: %v", err)
+	}
+
+	marker := filepath.Join(repo, ".neurofs", "last_prune_sqlite.txt")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("auto-prune marker missing when Append returned: %v", err)
+	}
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
+		t.Fatalf("auto-prune lock was not released: %v", err)
+	}
+	entries, err := store.Read(ctx, "")
+	if err != nil {
+		t.Fatalf("read after auto-prune: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expired entry survived synchronous auto-prune: %+v", entries)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // RepoSummary is a short, token-cheap profile of the repository the bundle
@@ -46,8 +46,12 @@ func WriteClaude(w io.Writer, b models.Bundle, summary RepoSummary) error {
 
 // WriteClaudeWithOptions renders a prompt-shaped view of the bundle with options.
 func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, opts Options) error {
+	var writeErr error
 	p := func(format string, args ...any) {
-		fmt.Fprintf(w, format, args...)
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format, args...)
 	}
 
 	if opts.Machine {
@@ -67,7 +71,7 @@ func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, o
 		if len(b.Fragments) == 0 {
 			p("\n(no context available — the bundle is empty)\n")
 		}
-		return nil
+		return writeErr
 	}
 
 	if hasSummary(summary) {
@@ -144,7 +148,7 @@ func WriteClaudeWithOptions(w io.Writer, b models.Bundle, summary RepoSummary, o
 	if len(b.Fragments) == 0 {
 		p("\n(no context available — the bundle is empty)\n")
 	}
-	return nil
+	return writeErr
 }
 
 func fragmentLocationAttrs(frag models.ContextFragment) string {

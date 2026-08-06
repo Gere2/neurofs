@@ -5,22 +5,119 @@ package indexer
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/parser"
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/parser"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
-// ProjectMetaKey is the metadata-table key under which indexer persists the
-// decoded project.Info. Exposed so other packages (CLI, ranking) can read it.
-const ProjectMetaKey = "project_info"
+const (
+	// ProjectMetaKey is the metadata-table key under which indexer persists
+	// the decoded project.Info. Exposed so other packages can read it.
+	ProjectMetaKey = "project_info"
+
+	indexerVersionMetaKey = "indexer_version"
+	// indexerVersion changes whenever parser or chunk-boundary semantics
+	// change. Source checksums alone cannot detect that a newer NeuroFS binary
+	// must rebuild unchanged files with a corrected index representation.
+	indexerVersion = "3"
+)
+
+// RequiresReindex reports whether db was built with different parser/chunker
+// semantics. Callers that consume an existing non-empty index (notably
+// retrieval.NewSession) use it to avoid serving stale chunks after a NeuroFS
+// binary upgrade.
+func RequiresReindex(db *storage.DB) (bool, error) {
+	storedVersion, ok, err := db.GetMeta(indexerVersionMetaKey)
+	if err != nil {
+		return false, err
+	}
+	return !ok || storedVersion != indexerVersion, nil
+}
+
+// RequiresEmbeddingReindex reports whether db's persisted vectors belong to
+// a different provider/model space than the currently configured client.
+// Comparing vectors across spaces silently corrupts semantic ranking even
+// when their dimensions happen to match.
+func RequiresEmbeddingReindex(db *storage.DB, provider, model string) (bool, error) {
+	storedProvider, ok, err := db.GetMeta("embedding_provider")
+	if err != nil {
+		return false, err
+	}
+	return !ok || storedProvider != provider+":"+model, nil
+}
+
+var errSourceIndexStale = errors.New("source index is stale")
+
+// RequiresSourceReindex reports whether the indexable working tree differs
+// from the file generations persisted in db. It applies the same traversal,
+// language, size, line-count, and checksum rules as Run, but never mutates the
+// database. Retrieval uses this check before loading a new session so a normal
+// working-tree edit is indexed before its chunks are searched.
+func RequiresSourceReindex(cfg *config.Config, db *storage.DB) (bool, error) {
+	files, err := db.AllFiles()
+	if err != nil {
+		return false, fmt.Errorf("indexer: load index for freshness check: %w", err)
+	}
+	indexed := make(map[string]models.FileRecord, len(files))
+	for _, file := range files {
+		indexed[file.Path] = file
+	}
+
+	walkErr := fsutil.Walk(cfg.RepoRoot, func(path string, info os.FileInfo) error {
+		lang := fsutil.LangForPath(path)
+		if lang == models.LangUnknown {
+			return nil
+		}
+
+		cached, wasIndexed := indexed[path]
+		if info.Size() > config.MaxFileSize {
+			if wasIndexed {
+				return errSourceIndexStale
+			}
+			return nil
+		}
+
+		content, _, err := fsutil.ReadRegularFileBounded(path, config.MaxFileSize)
+		if err != nil {
+			if wasIndexed {
+				return errSourceIndexStale
+			}
+			return nil
+		}
+		if fsutil.CountLines(content) > config.MaxFileLines {
+			if wasIndexed {
+				return errSourceIndexStale
+			}
+			return nil
+		}
+		if !wasIndexed {
+			return errSourceIndexStale
+		}
+
+		checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+		if checksum != cached.Checksum {
+			return errSourceIndexStale
+		}
+		delete(indexed, path)
+		return nil
+	})
+	if errors.Is(walkErr, errSourceIndexStale) {
+		return true, nil
+	}
+	if walkErr != nil {
+		return false, fmt.Errorf("indexer: check source index freshness: %w", walkErr)
+	}
+	return len(indexed) > 0, nil
+}
 
 // Stats summarises what happened during an indexing run.
 type Stats struct {
@@ -53,28 +150,35 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 
 	start := time.Now()
 
-	// Record repo root in metadata.
-	if err := db.SetMeta("repo_root", cfg.RepoRoot); err != nil {
-		return Stats{}, fmt.Errorf("indexer: set meta: %w", err)
-	}
-
-	// Extract and persist project info (package.json, tsconfig.json) so
-	// ranking can consume it without re-reading disk on every query.
-	projInfo := project.Scan(cfg.RepoRoot)
-	if err := db.SetMeta(ProjectMetaKey, projInfo.Encode()); err != nil {
-		return Stats{}, fmt.Errorf("indexer: set project meta: %w", err)
-	}
-
 	// existingPaths tracks files that still exist on disk (for stale cleanup).
 	existingPaths := make(map[string]bool)
 
 	embClient := embeddings.NewClient(cfg.HybridMode)
+	if err := embClient.Validate(); err != nil {
+		return Stats{}, fmt.Errorf("indexer: invalid embedding configuration: %w", err)
+	}
 
 	// Check if the embedding provider/model configuration has changed.
 	// If it has, we invalidate the cached files and embeddings to force a clean re-scan
 	// and ensure vector dimensionality and model coherence.
-	currentProvider := embClient.ProviderName() + ":" + embClient.ModelName()
-	storedProvider, hasStored, _ := db.GetMeta("embedding_provider")
+	providerName := embClient.ProviderName()
+	modelName := embClient.ModelName()
+	currentProvider := providerName + ":" + modelName
+	storedIndexerVersion, hasIndexerVersion, err := db.GetMeta(indexerVersionMetaKey)
+	if err != nil {
+		return Stats{}, fmt.Errorf("indexer: read indexer version: %w", err)
+	}
+	if !hasIndexerVersion || storedIndexerVersion != indexerVersion {
+		opts.Logf("  indexer version changed from %q to %q; clearing index to rebuild chunks...", storedIndexerVersion, indexerVersion)
+		if err := db.ClearIndex(); err != nil {
+			return Stats{}, fmt.Errorf("indexer: clear index on version change: %w", err)
+		}
+	}
+
+	storedProvider, hasStored, err := db.GetMeta("embedding_provider")
+	if err != nil {
+		return Stats{}, fmt.Errorf("indexer: read embedding provider: %w", err)
+	}
 	if hasStored && storedProvider != currentProvider {
 		opts.Logf("  embedding provider/model changed from %q to %q; clearing index to force fresh re-scan...", storedProvider, currentProvider)
 		if err := db.ClearIndex(); err != nil {
@@ -82,9 +186,20 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		}
 	}
 
-	// Persist the current provider name in metadata.
+	// ClearIndex also clears metadata, so publish all metadata only after any
+	// provider-driven reset. This keeps one coherent generation visible.
+	if err := db.SetMeta("repo_root", cfg.RepoRoot); err != nil {
+		return Stats{}, fmt.Errorf("indexer: set meta: %w", err)
+	}
+	projInfo := project.Scan(cfg.RepoRoot)
+	if err := db.SetMeta(ProjectMetaKey, projInfo.Encode()); err != nil {
+		return Stats{}, fmt.Errorf("indexer: set project meta: %w", err)
+	}
 	if err := db.SetMeta("embedding_provider", currentProvider); err != nil {
 		return Stats{}, fmt.Errorf("indexer: set embedding provider: %w", err)
+	}
+	if err := db.SetMeta(indexerVersionMetaKey, indexerVersion); err != nil {
+		return Stats{}, fmt.Errorf("indexer: set indexer version: %w", err)
 	}
 
 	dbFiles, err := db.AllFiles()
@@ -113,27 +228,21 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 			return nil
 		}
 
-		existingPaths[path] = true
-
-		relPath := fsutil.RelPath(cfg.RepoRoot, path)
-		if cached, ok := cachedFiles[path]; ok {
-			if info.Size() == cached.Size && info.ModTime().Unix() <= cached.IndexedAt.Unix() {
-				chunks, err := db.GetChunksForFile(path)
-				if err == nil && len(chunks) > 0 {
-					opts.Logf("  cached: %s", relPath)
-					stats.Cached++
-					return nil
-				}
-				opts.Logf("  cache missing chunks, refreshing: %s", relPath)
-			}
-		}
-
-		content, err := os.ReadFile(path)
+		content, currentInfo, err := fsutil.ReadRegularFileBounded(path, config.MaxFileSize)
 		if err != nil {
+			if errors.Is(err, fsutil.ErrFileTooLarge) || errors.Is(err, fsutil.ErrNotRegular) {
+				opts.Logf("  skip (unsafe or too large): %s", path)
+				stats.Skipped++
+				return nil
+			}
+			// Preserve the previous generation on transient I/O or concurrent
+			// edit errors; a future scan/watch event can retry it.
+			existingPaths[path] = true
 			opts.Logf("  error reading %s: %v", path, err)
 			stats.Errors++
 			return nil
 		}
+		info = currentInfo
 
 		lines := fsutil.CountLines(content)
 		if lines > config.MaxFileLines {
@@ -141,27 +250,38 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 			stats.Skipped++
 			return nil
 		}
+		existingPaths[path] = true
 
 		checksum := fmt.Sprintf("%x", sha256.Sum256(content))
+		relPath := fsutil.RelPath(cfg.RepoRoot, path)
+
+		// Size/mtime are only hints: checkouts and copy tools can preserve both.
+		// The checksum is the integrity boundary before reusing persisted chunks
+		// and embeddings.
+		if cached, ok := cachedFiles[path]; ok && info.Size() == cached.Size && checksum == cached.Checksum {
+			chunks, chunkErr := db.GetChunksForFile(path)
+			hasEmbedding, embeddingErr := db.HasFileEmbedding(path, checksum, providerName, modelName)
+			if chunkErr == nil && embeddingErr == nil && len(chunks) > 0 && hasEmbedding {
+				opts.Logf("  cached: %s", relPath)
+				stats.Cached++
+				return nil
+			}
+			opts.Logf("  cache incomplete, refreshing: %s", relPath)
+		}
 
 		parsed := parser.Parse(lang, string(content))
 
 		record := models.FileRecord{
-			Path:      path,
-			RelPath:   relPath,
-			Lang:      lang,
-			Size:      info.Size(),
-			Lines:     lines,
-			Symbols:   parsed.Symbols,
-			Imports:   parsed.Imports,
-			Checksum:  checksum,
-			IndexedAt: time.Now().UTC(),
-		}
-
-		if err := db.UpsertFile(record); err != nil {
-			opts.Logf("  error storing %s: %v", path, err)
-			stats.Errors++
-			return nil
+			Path:            path,
+			RelPath:         relPath,
+			Lang:            lang,
+			Size:            info.Size(),
+			ModTimeUnixNano: info.ModTime().UnixNano(),
+			Lines:           lines,
+			Symbols:         parsed.Symbols,
+			Imports:         parsed.Imports,
+			Checksum:        checksum,
+			IndexedAt:       time.Now().UTC(),
 		}
 
 		chunkCount, err := persistChunks(context.Background(), db, embClient, record, string(content))
@@ -180,12 +300,15 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		if err != nil {
 			opts.Logf("  warning: embedding failed for %s: %v", relPath, err)
 		} else {
-			if err := db.SaveEmbedding(path, emb); err != nil {
+			if err := db.SaveEmbeddingWithMetadata(path, emb, checksum, providerName, modelName); err != nil {
 				opts.Logf("  warning: failed to save embedding for %s: %v", relPath, err)
 			}
 		}
 
 		stats.Indexed++
+		if _, existed := cachedFiles[path]; existed {
+			stats.Updated++
+		}
 		stats.Symbols += len(parsed.Symbols)
 		stats.Imports += len(parsed.Imports)
 		stats.Chunks += chunkCount
@@ -203,6 +326,9 @@ func Run(cfg *config.Config, db *storage.DB, opts Options) (Stats, error) {
 		return stats, fmt.Errorf("indexer: cleanup: %w", err)
 	}
 	stats.Removed = removed
+	if err := db.PruneUnreferencedChunkEmbeddings(); err != nil {
+		return stats, fmt.Errorf("indexer: prune chunk embeddings: %w", err)
+	}
 
 	// Rebuild and save semantic dependency graph
 	opts.Logf("  building semantic dependency graph...")

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/neuromfs/neuromfs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/embeddings"
 )
 
 // Query embeddings are memoized per process. Two callers repeat queries

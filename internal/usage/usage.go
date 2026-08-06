@@ -12,6 +12,7 @@ package usage
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +21,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/runid"
+	"github.com/Gere2/neurofs/internal/safefile"
 )
 
 // Hit is one delivered chunk, trimmed to what learning needs: identity and
@@ -36,6 +40,7 @@ type Hit struct {
 
 // Entry is one retrieval served to a consumer.
 type Entry struct {
+	runid.Availability
 	Timestamp time.Time `json:"ts"`
 	ID        string    `json:"id"`
 	Source    string    `json:"source"` // "mcp" or "cli"
@@ -57,6 +62,7 @@ const (
 
 // Feedback is one post-task judgement about a served retrieval.
 type Feedback struct {
+	runid.Availability
 	Timestamp     time.Time `json:"ts"`
 	UsageID       string    `json:"usage_id,omitempty"`
 	Query         string    `json:"query"`
@@ -79,6 +85,18 @@ func FeedbackPath(repoRoot string) string {
 
 // Append writes one usage entry, filling Timestamp and ID when empty.
 func Append(repoRoot string, e Entry) (Entry, error) {
+	return AppendContext(context.Background(), repoRoot, e)
+}
+
+// AppendContext writes one usage entry and binds it to the current run
+// attribution. Legacy callers can keep using Append; context-aware producers
+// should pass their request context here.
+func AppendContext(ctx context.Context, repoRoot string, e Entry) (Entry, error) {
+	attribution, err := runid.Bind(ctx, e.Availability)
+	if err != nil {
+		return e, fmt.Errorf("usage: bind run identity: %w", err)
+	}
+	e.Availability = attribution
 	if e.Timestamp.IsZero() {
 		e.Timestamp = time.Now().UTC()
 	}
@@ -93,14 +111,26 @@ func Append(repoRoot string, e Entry) (Entry, error) {
 
 // AppendFeedback writes one feedback entry, filling Timestamp when empty.
 func AppendFeedback(repoRoot string, f Feedback) error {
+	return AppendFeedbackContext(context.Background(), repoRoot, f)
+}
+
+// AppendFeedbackContext appends feedback with the same immutable run
+// attribution rules as retrieval usage.
+func AppendFeedbackContext(ctx context.Context, repoRoot string, f Feedback) error {
+	attribution, err := runid.Bind(ctx, f.Availability)
+	if err != nil {
+		return fmt.Errorf("usage: bind feedback run identity: %w", err)
+	}
+	f.Availability = attribution
 	if f.Timestamp.IsZero() {
 		f.Timestamp = time.Now().UTC()
 	}
 	return appendJSONL(FeedbackPath(repoRoot), f)
 }
 
-// Load reads the usage ledger, oldest first. Unparseable lines are skipped:
-// a corrupted line must not invalidate the rest of the history.
+// Load reads the usage ledger, oldest first. Corrupt lines fail closed:
+// silently dropping a negative or missing retrieval would reshape the tuning
+// signal and could turn a regression into an apparent pass.
 func Load(repoRoot string) ([]Entry, error) {
 	return loadJSONL[Entry](Path(repoRoot))
 }
@@ -133,43 +163,56 @@ func appendJSONL(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("usage: mkdir: %w", err)
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := safefile.OpenAppend(path, 0o600)
 	if err != nil {
 		return fmt.Errorf("usage: open %s: %w", path, err)
 	}
-	defer f.Close()
 	if err := json.NewEncoder(f).Encode(v); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("usage: encode: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("usage: sync %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("usage: close %s: %w", path, err)
 	}
 	return nil
 }
 
 func loadJSONL[T any](path string) ([]T, error) {
-	f, err := os.Open(path)
+	f, err := safefile.OpenRead(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("usage: open %s: %w", path, err)
 	}
-	defer f.Close()
 
 	var out []T
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	lineNumber := 0
 	for sc.Scan() {
+		lineNumber++
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
 		var v T
 		if err := json.Unmarshal([]byte(line), &v); err != nil {
-			continue
+			_ = f.Close()
+			return nil, fmt.Errorf("usage: parse %s line %d: %w", path, lineNumber, err)
 		}
 		out = append(out, v)
 	}
 	if err := sc.Err(); err != nil {
+		_ = f.Close()
 		return out, fmt.Errorf("usage: scan %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return nil, fmt.Errorf("usage: close %s: %w", path, err)
 	}
 	return out, nil
 }

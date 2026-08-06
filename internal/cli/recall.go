@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/loopstate"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/loopstate"
 	"github.com/spf13/cobra"
 )
 
@@ -48,8 +48,7 @@ and 'neurofs ground --feed'. Defaults to the active session.`,
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(state)
 			}
-			printRecall(cmd.OutOrStdout(), state)
-			return nil
+			return printRecall(cmd.OutOrStdout(), state)
 		},
 	}
 
@@ -59,53 +58,55 @@ and 'neurofs ground --feed'. Defaults to the active session.`,
 	return cmd
 }
 
-func printRecall(w io.Writer, s loopstate.State) {
-	fmt.Fprintf(w, "NeuroFS — session recall\n  %s\n", s.Summary)
+func printRecall(dst io.Writer, s loopstate.State) error {
+	w := newReportWriter(dst)
+	w.printf("NeuroFS — session recall\n  %s\n", s.Summary)
 
 	if len(s.PendingNextActions) > 0 {
-		fmt.Fprintf(w, "\n  next actions (pending):\n")
+		w.printf("\n  next actions (pending):\n")
 		for _, a := range s.PendingNextActions {
 			reason := a.Reason
 			if reason != "" {
 				reason = " — " + reason
 			}
-			fmt.Fprintf(w, "    → %s %s%s\n", a.Tool, compactInput(a.Input), reason)
+			w.printf("    → %s %s%s\n", a.Tool, compactInput(a.Input), reason)
 		}
 	}
 
 	if len(s.Failures) > 0 {
-		fmt.Fprintf(w, "\n  failures / flagged:\n")
+		w.printf("\n  failures / flagged:\n")
 		for _, f := range lastNAttempts(s.Failures, 5) {
-			fmt.Fprintf(w, "    ✗ [%s] %s %s\n", f.When.Local().Format("01-02 15:04"),
+			w.printf("    ✗ [%s] %s %s\n", f.When.Local().Format("01-02 15:04"),
 				firstNonEmptyStr(f.Query, f.Command), f.Outcome)
 			if len(f.Files) > 0 {
-				fmt.Fprintf(w, "        files: %s\n", strings.Join(f.Files, ", "))
+				w.printf("        files: %s\n", strings.Join(f.Files, ", "))
 			}
 		}
 	}
 
 	if len(s.Decisions) > 0 {
-		fmt.Fprintf(w, "\n  decisions:\n")
+		w.printf("\n  decisions:\n")
 		for _, d := range lastN(s.Decisions, 5) {
-			fmt.Fprintf(w, "    • [%s] %s\n", d.When.Local().Format("01-02 15:04"), d.Text)
+			w.printf("    • [%s] %s\n", d.When.Local().Format("01-02 15:04"), d.Text)
 		}
 	}
 
 	if len(s.Attempts) > 0 {
-		fmt.Fprintf(w, "\n  recent attempts:\n")
+		w.printf("\n  recent attempts:\n")
 		for _, a := range lastNAttempts(s.Attempts, 5) {
 			label := firstNonEmptyStr(a.Query, a.Command, "(activity)")
 			mark := "·"
 			if a.Failed {
 				mark = "✗"
 			}
-			fmt.Fprintf(w, "    %s [%s] %s\n", mark, a.When.Local().Format("01-02 15:04"), label)
+			w.printf("    %s [%s] %s\n", mark, a.When.Local().Format("01-02 15:04"), label)
 		}
 	}
 
 	if s.Grounding.Events == 0 && len(s.Attempts) == 0 {
-		fmt.Fprintf(w, "\n  (fresh session — nothing recorded yet)\n")
+		w.printf("\n  (fresh session — nothing recorded yet)\n")
 	}
+	return w.err
 }
 
 func compactInput(input map[string]any) string {

@@ -1,19 +1,23 @@
 package cli
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/output"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/output"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -52,7 +56,7 @@ Examples:
   neurofs pack "review my edits" --for claude --changed --max-files 6 \
       --out /tmp/changed.prompt`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			query := args[0]
 			if err := validateBudget(budget); err != nil {
 				return fmt.Errorf("pack: %w", err)
@@ -70,7 +74,11 @@ Examples:
 			if err != nil {
 				return fmt.Errorf("pack: open index (did you run 'neurofs scan'?): %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("pack: close index: %w", err))
+				}
+			}()
 
 			count, err := db.FileCount()
 			if err != nil {
@@ -136,30 +144,34 @@ Examples:
 					searchLimit = 12
 				}
 				searchRes, err := retrieval.Search(cmd.Context(), retrieval.Options{
-					Query: query,
-					Repo:  cfg.RepoRoot,
-					Limit: searchLimit,
+					Query:                   query,
+					Repo:                    cfg.RepoRoot,
+					Limit:                   searchLimit,
+					ExpandStructuralContext: true,
 				})
 				if err != nil {
 					return fmt.Errorf("pack: chunk search: %w", err)
 				}
-				bundle, err = packager.PackChunks(chunkHitsFromSearch(searchRes, files), query, packOpts)
+				packed, packErr := packager.PackChunks(chunkHitsFromSearch(searchRes, files), query, packOpts)
+				if packErr != nil {
+					return fmt.Errorf("pack: %w", packErr)
+				}
+				bundle = packed
 			} else {
 				ranked := ranking.RankWithOptions(files, query, rankOpts)
-				bundle, err = packager.Pack(ranked, query, packOpts)
-			}
-			if err != nil {
-				return fmt.Errorf("pack: %w", err)
+				packed, packErr := packager.Pack(ranked, query, packOpts)
+				if packErr != nil {
+					return fmt.Errorf("pack: %w", packErr)
+				}
+				bundle = packed
 			}
 
-			dest, err := os.Create(outPath)
-			if err != nil {
-				return fmt.Errorf("pack: create output file: %w", err)
-			}
-			defer dest.Close()
-
-			if err := writeBundle(cfg.RepoRoot, dest, bundle, format, forTarget, files, info, machine); err != nil {
+			var rendered bytes.Buffer
+			if err := writeBundle(cfg.RepoRoot, &rendered, bundle, format, forTarget, files, info, machine); err != nil {
 				return fmt.Errorf("pack: write: %w", err)
+			}
+			if err := atomicfile.WriteFile(outPath, rendered.Bytes(), 0o644); err != nil {
+				return fmt.Errorf("pack: save output file: %w", err)
 			}
 
 			if saveBundle != "" {
@@ -230,7 +242,7 @@ func chunkHitsFromSearch(searchRes retrieval.Response, files []models.FileRecord
 // writeBundle dispatches to the correct serialiser. The Claude path takes a
 // RepoSummary derived from the already-loaded index, so the prompt gets
 // repo orientation for free without another DB query.
-func writeBundle(repoRoot string, dest *os.File, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info, machine bool) error {
+func writeBundle(repoRoot string, dest io.Writer, b models.Bundle, format, forTarget string, files []models.FileRecord, info *project.Info, machine bool) error {
 	eff := effectiveFormat(format, forTarget)
 	if eff == string(output.FormatClaude) {
 		return output.WriteClaudeWithOptions(dest, b, taskflow.BuildRepoSummary(repoRoot, files, info), output.Options{Machine: machine})

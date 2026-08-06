@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestBuildJSChunks(t *testing.T) {
@@ -194,6 +194,67 @@ func TestBuildJSChunksClassHeaderKeepsFields(t *testing.T) {
 	}
 }
 
+func TestBuildJSChunksMultilineFunctionIgnoresDefaultObjectLiteral(t *testing.T) {
+	code := `export function baseCompile(
+  source: string,
+  options: CompilerOptions = {},
+): CodegenResult {
+  const mode = options.mode
+  return { source, mode }
+}
+`
+
+	chunks := BuildChunks("compile.ts", "compile.ts", models.LangTypeScript, code, time.Now())
+	byID := make(map[string]models.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		byID[chunk.ChunkID] = chunk
+	}
+
+	baseCompile, ok := byID["export_func-basecompile"]
+	if !ok {
+		t.Fatalf("missing baseCompile chunk: %+v", chunks)
+	}
+	if baseCompile.StartLine != 1 || baseCompile.EndLine != 7 {
+		t.Fatalf("baseCompile range = %d-%d, want 1-7", baseCompile.StartLine, baseCompile.EndLine)
+	}
+	if !strings.Contains(baseCompile.Content, "const mode = options.mode") {
+		t.Fatalf("baseCompile body was truncated at the default object literal: %q", baseCompile.Content)
+	}
+}
+
+func TestBuildJSChunksUnterminatedTypeStopsAtNextDeclaration(t *testing.T) {
+	code := `export type Mode = "development" | "production"
+export function compile(mode: Mode): string {
+  return mode
+}
+`
+
+	chunks := BuildChunks("compile.ts", "compile.ts", models.LangTypeScript, code, time.Now())
+	byID := make(map[string]models.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		byID[chunk.ChunkID] = chunk
+	}
+
+	mode, ok := byID["export_type-mode"]
+	if !ok {
+		t.Fatalf("missing Mode chunk: %+v", chunks)
+	}
+	if mode.StartLine != 1 || mode.EndLine != 1 {
+		t.Fatalf("Mode range = %d-%d, want 1-1", mode.StartLine, mode.EndLine)
+	}
+	if strings.Contains(mode.Content, "function compile") {
+		t.Fatalf("unbraced type declaration swallowed the following function: %q", mode.Content)
+	}
+
+	compile, ok := byID["export_func-compile"]
+	if !ok {
+		t.Fatalf("missing compile chunk: %+v", chunks)
+	}
+	if compile.StartLine != 2 || compile.EndLine != 4 {
+		t.Fatalf("compile range = %d-%d, want 2-4", compile.StartLine, compile.EndLine)
+	}
+}
+
 func TestBuildMarkdownChunksSplitsAtHeadings(t *testing.T) {
 	doc := `Intro line before any heading.
 
@@ -316,5 +377,36 @@ func TestBuildPythonChunksClassHeaderKeepsDocstring(t *testing.T) {
 	}
 	if got, ok := byID["method-context.meta"]; !ok || got.start != 7 || got.end != 8 {
 		t.Fatalf("method chunk = %+v (ok=%t), want 7-8: %+v", got, ok, chunks)
+	}
+}
+
+func TestBuildPythonChunksMultilineSignatureKeepsBody(t *testing.T) {
+	code := `class CliRunner:
+    def isolation(
+        self,
+        color: bool = False,
+    ) -> object:
+        """Capture command output."""
+        yield "captured"
+
+    def invoke(self):
+        return self.isolation()
+`
+
+	chunks := BuildChunks("testing.py", "testing.py", models.LangPython, code, time.Now())
+	byID := make(map[string]models.Chunk, len(chunks))
+	for _, chunk := range chunks {
+		byID[chunk.ChunkID] = chunk
+	}
+
+	isolation, ok := byID["method-clirunner.isolation"]
+	if !ok {
+		t.Fatalf("missing isolation chunk: %+v", chunks)
+	}
+	if isolation.StartLine != 2 || isolation.EndLine != 7 {
+		t.Fatalf("isolation range = %d-%d, want 2-7", isolation.StartLine, isolation.EndLine)
+	}
+	if !strings.Contains(isolation.Content, `yield "captured"`) {
+		t.Fatalf("isolation body was truncated: %q", isolation.Content)
 	}
 }

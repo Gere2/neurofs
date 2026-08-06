@@ -6,7 +6,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // citationPattern matches file-like references in free text. It is
@@ -14,9 +15,11 @@ import (
 // containing a dotted phrase ("e.g.") is not pulled in as a citation. Line
 // numbers are optional and captured separately.
 //
-// Accepted extensions are the subset NeuroFS already indexes.
+// The regexp deliberately accepts a generic extension. ParseCitations then
+// asks fsutil whether the path is actually supported, keeping citation parsing
+// in lockstep with the scanner's language registry.
 var citationPattern = regexp.MustCompile(
-	`([A-Za-z0-9_./\-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|md|json|ya?ml))(?::(\d+))?`,
+	`([A-Za-z0-9_./\-]+\.[A-Za-z0-9]+)(?::(\d+))?`,
 )
 
 // ParseCitations extracts every file reference from a model response. Each
@@ -34,6 +37,9 @@ func ParseCitations(text string) []Citation {
 	for _, m := range matches {
 		raw := m[0]
 		rel := strings.TrimPrefix(m[1], "./")
+		if !fsutil.IsSupported(rel) {
+			continue
+		}
 		line := 0
 		if len(m) > 2 && m[2] != "" {
 			if n, err := strconv.Atoi(m[2]); err == nil {
@@ -50,54 +56,99 @@ func ParseCitations(text string) []Citation {
 	return out
 }
 
-// ValidateCitations marks each citation as Valid when the bundle contains a
-// fragment with a matching relpath. Path matching is case-sensitive and uses
-// forward slashes (packager already normalises that way). We also accept a
-// basename match so responses that refer to a file by name alone
-// ("see crypto.ts") still get credit when unambiguous.
+type citationRange struct {
+	start int
+	end   int
+}
+
+// excerptRangePattern recognises the source-range markers emitted by the
+// packager for discontiguous excerpts. ContextFragment only has one structured
+// range, so the markers are the authoritative ranges for those fragments.
+var excerptRangePattern = regexp.MustCompile(`(?m)^\s*//\s*──\s+[^:\n]+:(\d+)-(\d+)\b`)
+
+// ValidateCitations marks a citation valid only when its path is in the bundle
+// and, when a line is supplied, that line is actually visible in one of the
+// bundle's source ranges. Path matching is case-sensitive and uses forward
+// slashes. A basename is accepted only when it resolves to one unique path.
 func ValidateCitations(cs []Citation, bundle models.Bundle) []Citation {
 	if len(cs) == 0 {
 		return cs
 	}
 	relSet := make(map[string]bool, len(bundle.Fragments))
-	baseIndex := make(map[string][]string, len(bundle.Fragments))
+	ranges := make(map[string][]citationRange, len(bundle.Fragments))
+	basePaths := make(map[string]map[string]struct{}, len(bundle.Fragments))
 	for _, f := range bundle.Fragments {
 		p := filepath.ToSlash(f.RelPath)
 		relSet[p] = true
+		if f.StartLine > 0 && f.EndLine >= f.StartLine {
+			ranges[p] = append(ranges[p], citationRange{start: f.StartLine, end: f.EndLine})
+		}
+		for _, match := range excerptRangePattern.FindAllStringSubmatch(f.Content, -1) {
+			start, startErr := strconv.Atoi(match[1])
+			end, endErr := strconv.Atoi(match[2])
+			if startErr == nil && endErr == nil && start > 0 && end >= start {
+				ranges[p] = append(ranges[p], citationRange{start: start, end: end})
+			}
+		}
 		base := filepath.Base(p)
-		baseIndex[base] = append(baseIndex[base], p)
+		if basePaths[base] == nil {
+			basePaths[base] = make(map[string]struct{})
+		}
+		basePaths[base][p] = struct{}{}
 	}
 
 	out := make([]Citation, len(cs))
 	for i, c := range cs {
 		out[i] = c
 		path := filepath.ToSlash(c.RelPath)
-		if relSet[path] {
+		if !relSet[path] {
+			// Fall back to basename: count unique paths, not fragments. A
+			// chunked bundle commonly contains several fragments of one file.
+			matches := basePaths[filepath.Base(path)]
+			switch len(matches) {
+			case 1:
+				for match := range matches {
+					path = match
+				}
+				out[i].RelPath = path
+			case 0:
+				out[i].Reason = "not in bundle"
+				continue
+			default:
+				out[i].Reason = "ambiguous basename"
+				continue
+			}
+		}
+
+		if c.Line == 0 {
 			out[i].Valid = true
 			continue
 		}
-		// Fall back to basename: only accept when a single fragment claims it,
-		// otherwise the citation is ambiguous and we refuse to validate.
-		matches := baseIndex[filepath.Base(path)]
-		switch len(matches) {
-		case 1:
-			out[i].Valid = true
-			out[i].RelPath = matches[0] // normalise for downstream consumers
-		case 0:
-			out[i].Reason = "not in bundle"
-		default:
-			out[i].Reason = "ambiguous basename"
+		visible := ranges[path]
+		if len(visible) == 0 {
+			out[i].Reason = "bundle fragment has no source line range"
+			continue
+		}
+		for _, r := range visible {
+			if c.Line >= r.start && c.Line <= r.end {
+				out[i].Valid = true
+				break
+			}
+		}
+		if !out[i].Valid {
+			out[i].Reason = "line not present in bundle"
 		}
 	}
 	return out
 }
 
-// GroundedRatio returns valid_citations / total_citations. Returns 1.0 when
-// there are no citations at all — "no claims, no drift" — and 0.0 when
-// there are claims but none validated.
+// GroundedRatio returns valid_citations / total_citations. An answer with no
+// citations receives 0 rather than a perfect score: citation parsing cannot
+// infer that prose contains no claims, so treating absence as grounded would
+// be a dangerous false positive.
 func GroundedRatio(cs []Citation) float64 {
 	if len(cs) == 0 {
-		return 1.0
+		return 0
 	}
 	valid := 0
 	for _, c := range cs {

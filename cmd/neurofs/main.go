@@ -4,7 +4,7 @@ package main
 import (
 	"os"
 
-	"github.com/neuromfs/neuromfs/internal/cli"
+	"github.com/Gere2/neurofs/internal/cli"
 )
 
 func main() {

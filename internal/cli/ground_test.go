@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/grounding"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/grounding"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func ctxBundle() models.Bundle {
@@ -15,7 +16,7 @@ func ctxBundle() models.Bundle {
 		Query:      "auth",
 		BundleHash: "h",
 		Fragments: []models.ContextFragment{
-			{RelPath: "src/auth.ts", Content: "function verifyToken(){}"},
+			{RelPath: "src/auth.ts", Content: "function verifyToken(){}", StartLine: 1, EndLine: 1},
 		},
 	}
 }
@@ -24,7 +25,10 @@ func TestBuildGroundingEventEdit(t *testing.T) {
 	repo := "/repo"
 	ti, _ := json.Marshal(toolInput{FilePath: "/repo/src/auth.ts", NewString: "function verifyToken(){return 1}"})
 	ev := hookEvent{HookEventName: "PostToolUse", ToolName: "Edit", CWD: repo, ToolInput: ti}
-	got, ok := buildGroundingEvent(repo, ev, ctxBundle())
+	got, ok, err := buildGroundingEvent(repo, ev, ctxBundle())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("edit event should be actionable")
 	}
@@ -41,7 +45,9 @@ func TestBuildGroundingEventEdit(t *testing.T) {
 
 func TestBuildGroundingEventNonActionableTool(t *testing.T) {
 	ev := hookEvent{HookEventName: "PostToolUse", ToolName: "Bash"}
-	if _, ok := buildGroundingEvent("/repo", ev, ctxBundle()); ok {
+	if _, ok, err := buildGroundingEvent("/repo", ev, ctxBundle()); err != nil {
+		t.Fatal(err)
+	} else if ok {
 		t.Fatal("a Bash tool event should not be recorded as grounding")
 	}
 }
@@ -56,7 +62,10 @@ func TestBuildGroundingEventStopFromTranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	ev := hookEvent{HookEventName: "Stop", TranscriptPath: tp}
-	got, ok := buildGroundingEvent("/repo", ev, ctxBundle())
+	got, ok, err := buildGroundingEvent("/repo", ev, ctxBundle())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("stop event with a transcript should be actionable")
 	}
@@ -70,7 +79,9 @@ func TestBuildGroundingEventStopFromTranscript(t *testing.T) {
 
 func TestBuildGroundingEventStopEmptyTranscript(t *testing.T) {
 	ev := hookEvent{HookEventName: "Stop", TranscriptPath: ""}
-	if _, ok := buildGroundingEvent("/repo", ev, ctxBundle()); ok {
+	if _, ok, err := buildGroundingEvent("/repo", ev, ctxBundle()); err != nil {
+		t.Fatal(err)
+	} else if ok {
 		t.Fatal("a Stop with no recoverable response should be skipped, not recorded")
 	}
 }
@@ -99,10 +110,45 @@ func TestLastAssistantMessageTakesLast(t *testing.T) {
 	if err := os.WriteFile(tp, []byte(lines), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := lastAssistantMessage(tp); got != "second" {
+	got, err := lastAssistantMessage(tp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "second" {
 		t.Fatalf("lastAssistantMessage = %q, want %q", got, "second")
 	}
-	if got := lastAssistantMessage(filepath.Join(dir, "missing.jsonl")); got != "" {
+	got, err = lastAssistantMessage(filepath.Join(dir, "missing.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "" {
 		t.Fatalf("missing transcript should yield empty, got %q", got)
+	}
+}
+
+func TestGroundInputsAreBoundedAndUnsafeFilesRejected(t *testing.T) {
+	if _, err := readGroundInput(strings.NewReader(strings.Repeat("x", int(maxHookEventBytes)+1)), maxHookEventBytes); err == nil {
+		t.Fatal("oversized hook input was accepted")
+	}
+
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "oversized.jsonl")
+	if err := os.WriteFile(transcript, []byte(strings.Repeat("x", maxTranscriptLineBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lastAssistantMessage(transcript); err == nil {
+		t.Fatal("oversized transcript line was accepted")
+	}
+
+	outside := filepath.Join(dir, "outside.bundle.json")
+	link := filepath.Join(dir, "link.bundle.json")
+	if err := os.WriteFile(outside, []byte(`{"query":"secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := readBundleFile(link); err == nil {
+		t.Fatal("symlinked grounding bundle was loaded")
 	}
 }

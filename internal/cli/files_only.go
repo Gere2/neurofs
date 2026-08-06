@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 type filesOnlyOptions struct {
@@ -72,8 +72,10 @@ func writeFilesOnly(w io.Writer, ranked []models.ScoredFile, opts filesOnlyOptio
 		return enc.Encode(entries)
 	}
 	for _, entry := range entries {
-		fmt.Fprintf(w, "%s (score=%.2f) - Reasons: %s\n",
-			entry.Path, entry.Score, formatReasonsSingleLine(entry.Reasons))
+		if _, err := fmt.Fprintf(w, "%s (score=%.2f) - Reasons: %s\n",
+			entry.Path, entry.Score, formatReasonsSingleLine(entry.Reasons)); err != nil {
+			return fmt.Errorf("write files-only result: %w", err)
+		}
 	}
 	return nil
 }

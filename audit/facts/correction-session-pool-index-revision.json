@@ -1,0 +1,11 @@
+{
+  "question": "how does the session pool invalidate cached sessions when the database or WAL index revision changes",
+  "expects_facts": [
+    "sessionFor",
+    "currentIndexRevision",
+    "SearchShared"
+  ],
+  "source": "correction",
+  "supersedes": "learned-13c0047c29b4.json",
+  "created_at": "2026-07-28T20:45:27Z"
+}

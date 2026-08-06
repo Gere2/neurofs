@@ -3,7 +3,7 @@ package tokenbudget_test
 import (
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 func TestEstimateTokens(t *testing.T) {

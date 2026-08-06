@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
 
 // Weights holds every tunable scoring weight used by chunk search. The
@@ -52,6 +55,8 @@ type Weights struct {
 	LegacyPathKeep float64 `json:"legacy_path_keep"`
 }
 
+const maxWeightsFileSize int64 = 1 << 20
+
 // DefaultWeights returns the hand-calibrated values the scoring constants
 // held before weights became tunable. Any change here shifts ranking for
 // every repo without a weights.json, so treat it like a ranking change.
@@ -97,7 +102,7 @@ func WeightsPath(repoRoot string) string {
 // retrieval down) while `neurofs learn status` surfaces it.
 func LoadWeights(repoRoot string) (Weights, bool, error) {
 	w := DefaultWeights()
-	data, err := os.ReadFile(WeightsPath(repoRoot))
+	data, _, err := fsutil.ReadRegularFileBounded(WeightsPath(repoRoot), maxWeightsFileSize)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return w, false, nil
@@ -115,14 +120,14 @@ func LoadWeights(repoRoot string) (Weights, bool, error) {
 func SaveWeights(repoRoot string, w Weights) error {
 	w.Clamp()
 	p := WeightsPath(repoRoot)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return fmt.Errorf("weights: mkdir: %w", err)
-	}
 	data, err := json.MarshalIndent(w, "", "  ")
 	if err != nil {
 		return fmt.Errorf("weights: marshal: %w", err)
 	}
-	return os.WriteFile(p, append(data, '\n'), 0o644)
+	if err := atomicfile.WriteFile(p, append(data, '\n'), 0o600); err != nil {
+		return fmt.Errorf("weights: write: %w", err)
+	}
+	return nil
 }
 
 // Clamp bounds every weight to its safe range: additive boosts to [0, 60]

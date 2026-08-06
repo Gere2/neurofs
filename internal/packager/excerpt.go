@@ -21,8 +21,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/ranking"
 )
 
 // excerptTopN caps how many of the top-ranked files in a Pack call may be
@@ -442,8 +442,22 @@ func renderExcerptWithOptions(rec models.FileRecord, lines []string, blocks []bl
 				fmt.Fprintf(&sb, "\n// ... %d lines omitted ...\n\n", gap)
 			}
 		}
-		fmt.Fprintf(&sb, "// ── %s:%d-%d (%s) ──\n", rec.RelPath, b.startLine, b.endLine, b.symbol)
-		writeBlockBody(&sb, lines, b, opts.truncateBlocksOver)
+		if blockNeedsTruncation(b, opts.truncateBlocksOver) {
+			headEnd := b.startLine + excerptBlockHeadLines - 1
+			tailStart := b.endLine - excerptBlockTailLines + 1
+			fmt.Fprintf(&sb, "// ── %s:%d-%d (%s; head) ──\n", rec.RelPath, b.startLine, headEnd, b.symbol)
+			writeSourceLines(&sb, lines, b.startLine, headEnd)
+			fmt.Fprintf(
+				&sb,
+				"// ... %d lines elided in extracted excerpt ...\n",
+				tailStart-headEnd-1,
+			)
+			fmt.Fprintf(&sb, "// ── %s:%d-%d (%s; tail) ──\n", rec.RelPath, tailStart, b.endLine, b.symbol)
+			writeSourceLines(&sb, lines, tailStart, b.endLine)
+		} else {
+			fmt.Fprintf(&sb, "// ── %s:%d-%d (%s) ──\n", rec.RelPath, b.startLine, b.endLine, b.symbol)
+			writeSourceLines(&sb, lines, b.startLine, b.endLine)
+		}
 		prevEnd = b.endLine
 	}
 	if prevEnd < totalLines {
@@ -452,36 +466,20 @@ func renderExcerptWithOptions(rec models.FileRecord, lines []string, blocks []bl
 	return sb.String()
 }
 
-// writeBlockBody emits the source lines for a block, optionally
-// truncating the middle when the block is wider than truncateOver.
-// truncateOver == 0 disables truncation (intact body).
-func writeBlockBody(sb *strings.Builder, lines []string, b block, truncateOver int) {
-	totalLines := len(lines)
+func blockNeedsTruncation(b block, truncateOver int) bool {
 	span := b.endLine - b.startLine + 1
-	keepIntact := truncateOver <= 0 ||
-		span <= truncateOver ||
+	return truncateOver > 0 &&
+		span > truncateOver &&
 		// Refuse to truncate when the head + tail would itself meet or
 		// exceed the block — the elision marker would only add tokens.
-		span <= excerptBlockHeadLines+excerptBlockTailLines+1
-	if keepIntact {
-		for li := b.startLine; li <= b.endLine && li-1 < totalLines; li++ {
-			sb.WriteString(lines[li-1])
-			sb.WriteByte('\n')
-		}
-		return
-	}
+		span > excerptBlockHeadLines+excerptBlockTailLines+1
+}
 
-	// Head: first excerptBlockHeadLines lines from the block.
-	headEnd := b.startLine + excerptBlockHeadLines - 1
-	for li := b.startLine; li <= headEnd && li-1 < totalLines; li++ {
-		sb.WriteString(lines[li-1])
-		sb.WriteByte('\n')
-	}
-	elided := span - excerptBlockHeadLines - excerptBlockTailLines
-	fmt.Fprintf(sb, "// ... %d lines elided in extracted excerpt ...\n", elided)
-	// Tail: last excerptBlockTailLines lines.
-	tailStart := b.endLine - excerptBlockTailLines + 1
-	for li := tailStart; li <= b.endLine && li-1 < totalLines; li++ {
+func writeSourceLines(sb *strings.Builder, lines []string, startLine, endLine int) {
+	for li := startLine; li <= endLine && li-1 < len(lines); li++ {
+		if li < 1 {
+			continue
+		}
 		sb.WriteString(lines[li-1])
 		sb.WriteByte('\n')
 	}

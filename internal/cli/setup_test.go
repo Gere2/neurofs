@@ -74,3 +74,26 @@ func TestSetupAppendsToExistingClaudeMD(t *testing.T) {
 		t.Fatalf("retrieval block not appended:\n%s", claude)
 	}
 }
+
+func TestWireClaudeMDRejectsSymlink(t *testing.T) {
+	repo := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.md")
+	const original = "# External file\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(repo, "CLAUDE.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := wireClaudeMD(repo); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("wireClaudeMD error = %v, want symbolic-link rejection", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != original {
+		t.Fatalf("symlink target changed: %q", got)
+	}
+}

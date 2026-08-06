@@ -1,11 +1,12 @@
 package ui
 
 import (
+	"log"
 	"net/http"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 // --------------------- /api/scan ---------------------
@@ -38,7 +39,11 @@ func handleScan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "open db: "+err.Error())
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("neurofs ui: close scan database: %v", err)
+		}
+	}()
 
 	start := time.Now()
 	stats, err := indexer.Run(cfg, db, indexer.Options{})

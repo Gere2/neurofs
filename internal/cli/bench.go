@@ -3,22 +3,23 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/benchmark"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/mcp"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/benchmark"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/mcp"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 	"github.com/spf13/cobra"
 )
 
@@ -37,10 +38,12 @@ func newBenchCmd() *cobra.Command {
 		search               bool
 		searchLimit          int
 		searchStability      bool
+		minSearchStability   float64
 		maxMeanSearchTokens  int
 		contextBench         bool
 		contextLimit         int
 		maxMeanContextTokens int
+		outPath              string
 	)
 
 	cmd := &cobra.Command{
@@ -55,7 +58,7 @@ Use this to spot-check ranking changes before they regress real queries.
 With --min-top3 you can fail the command (non-zero exit) when precision
 drops below a threshold — wire this into CI as a ranking regression gate.`,
 		Args: cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			cfg, err := config.New(repoPath)
 			if err != nil {
 				return fmt.Errorf("bench: %w", err)
@@ -81,7 +84,11 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 			if err != nil {
 				return fmt.Errorf("bench: open index (did you run 'neurofs scan'?): %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("bench: close index: %w", err))
+				}
+			}()
 
 			count, err := db.FileCount()
 			if err != nil {
@@ -101,7 +108,7 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 			rels, _ := db.AllRelations()
 
 			rankWeights, _, _ := ranking.LoadWeights(cfg.RepoRoot)
-			results, summary := benchmark.Run(files, questions, benchmark.RunOptions{
+			results, summary, err := benchmark.RunChecked(files, questions, benchmark.RunOptions{
 				Weights:          &rankWeights,
 				TopK:             topK,
 				Project:          loadProjectInfo(db),
@@ -112,13 +119,14 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 				EmbClient:        embClient,
 				Relations:        rels,
 			})
+			if err != nil {
+				return fmt.Errorf("bench: %w", err)
+			}
 
-			fmt.Fprintf(os.Stderr, "NeuroFS — benchmark on %s\n", cfg.RepoRoot)
-			fmt.Fprintf(os.Stderr, "  questions : %s\n\n", benchPath)
-
-			var sb strings.Builder
-			benchmark.FormatResults(&sb, results, summary, topK)
-			fmt.Fprint(os.Stderr, sb.String())
+			var report strings.Builder
+			fmt.Fprintf(&report, "NeuroFS — benchmark on %s\n", cfg.RepoRoot)
+			fmt.Fprintf(&report, "  questions : %s\n\n", benchPath)
+			benchmark.FormatResults(&report, results, summary, topK)
 
 			var searchSummary searchBenchSummary
 			if search || maxMeanSearchTokens > 0 {
@@ -127,9 +135,7 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 					return fmt.Errorf("bench search: %w", err)
 				}
 				searchSummary = s
-				var searchOut strings.Builder
-				formatSearchBenchmark(&searchOut, searchResults, searchSummary, topK, summary.BundleMeanTokens)
-				fmt.Fprint(os.Stderr, searchOut.String())
+				formatSearchBenchmark(&report, searchResults, searchSummary, topK, summary.BundleMeanTokens)
 			}
 
 			var contextSummary contextBenchSummary
@@ -139,9 +145,16 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 					return fmt.Errorf("bench context: %w", err)
 				}
 				contextSummary = s
-				var contextOut strings.Builder
-				formatContextBenchmark(&contextOut, contextResults, contextSummary, topK)
-				fmt.Fprint(os.Stderr, contextOut.String())
+				formatContextBenchmark(&report, contextResults, contextSummary, topK)
+			}
+
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), report.String()); err != nil {
+				return fmt.Errorf("bench: write report: %w", err)
+			}
+			if outPath != "" {
+				if err := atomicfile.WriteFile(outPath, []byte(report.String()), 0o644); err != nil {
+					return fmt.Errorf("bench: write %s: %w", outPath, err)
+				}
 			}
 
 			if minTop3 > 0 && summary.Top3 < minTop3 {
@@ -155,6 +168,17 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 				if searchSummary.Top3 < minSearchTop3 {
 					return fmt.Errorf("bench: search top-3 precision %.1f%% below threshold %.1f%%",
 						searchSummary.Top3, minSearchTop3)
+				}
+			}
+			if minSearchStability > 0 {
+				if !search || !searchStability {
+					return fmt.Errorf("bench: --min-search-stability requires --search and --search-stability")
+				}
+				if searchSummary.Stability < minSearchStability {
+					return fmt.Errorf(
+						"bench: search stability %.1f%% below threshold %.1f%%",
+						searchSummary.Stability, minSearchStability,
+					)
 				}
 			}
 			if minContextTop3 > 0 {
@@ -195,10 +219,12 @@ drops below a threshold — wire this into CI as a ranking regression gate.`,
 	cmd.Flags().BoolVar(&search, "search", false, "Also run neurofs_search per question and report top-k, token, and stability metrics")
 	cmd.Flags().IntVar(&searchLimit, "search-limit", 5, "Number of neurofs_search chunk hits to keep per benchmark question")
 	cmd.Flags().BoolVar(&searchStability, "search-stability", false, "Run neurofs_search twice per question and compare stable JSON prefixes")
+	cmd.Flags().Float64Var(&minSearchStability, "min-search-stability", 0, "Fail when stable neurofs_search prefixes fall below this % (requires --search --search-stability)")
 	cmd.Flags().IntVar(&maxMeanSearchTokens, "max-mean-search-tokens", 0, "Fail when mean neurofs_search token count exceeds this ceiling")
 	cmd.Flags().BoolVar(&contextBench, "context", false, "Also run neurofs_context per question and report routing, token, and top-k metrics")
 	cmd.Flags().IntVar(&contextLimit, "context-limit", 5, "Number of neurofs_context hits to keep per benchmark question")
 	cmd.Flags().IntVar(&maxMeanContextTokens, "max-mean-context-tokens", 0, "Fail when mean neurofs_context output token count exceeds this ceiling")
+	cmd.Flags().StringVar(&outPath, "out", "", "Also write the complete text report to this path")
 	return cmd
 }
 
@@ -280,10 +306,11 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 	for _, q := range questions {
 		start := time.Now()
 		resp, err := retrieval.SearchShared(ctx, retrieval.Options{
-			Query:              q.Question,
-			Repo:               repo,
-			Limit:              limit,
-			NeutralizeGitState: true,
+			Query:                   q.Question,
+			Repo:                    repo,
+			Limit:                   limit,
+			NeutralizeGitState:      true,
+			ExpandStructuralContext: true,
 		})
 		latency := time.Since(start)
 		if err != nil {
@@ -316,10 +343,11 @@ func runSearchBenchmark(ctx context.Context, repo string, questions []benchmark.
 		stablePrefix := false
 		if checkStability {
 			again, err := retrieval.SearchShared(ctx, retrieval.Options{
-				Query:              q.Question,
-				Repo:               repo,
-				Limit:              limit,
-				NeutralizeGitState: true,
+				Query:                   q.Question,
+				Repo:                    repo,
+				Limit:                   limit,
+				NeutralizeGitState:      true,
+				ExpandStructuralContext: true,
 			})
 			if err != nil {
 				return nil, searchBenchSummary{}, err

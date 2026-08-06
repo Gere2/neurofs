@@ -1,19 +1,20 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/output"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/output"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +45,7 @@ Each included fragment shows:
 
 Run 'neurofs scan' first to build the index.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (retErr error) {
 			query := args[0]
 			if err := validateBudget(budget); err != nil {
 				return fmt.Errorf("ask: %w", err)
@@ -67,7 +68,11 @@ Run 'neurofs scan' first to build the index.`,
 			if err != nil {
 				return fmt.Errorf("ask: open index: %w", err)
 			}
-			defer db.Close()
+			defer func() {
+				if err := db.Close(); err != nil {
+					retErr = errors.Join(retErr, fmt.Errorf("ask: close index: %w", err))
+				}
+			}()
 
 			files, err := db.AllFiles()
 			if err != nil {
@@ -113,8 +118,11 @@ Run 'neurofs scan' first to build the index.`,
 			}
 
 			if explain {
-				writeExplain(os.Stderr, query, ranked, includedSet)
+				if err := writeExplain(cmd.ErrOrStderr(), query, ranked, includedSet); err != nil {
+					return fmt.Errorf("ask: write explanation: %w", err)
+				}
 			} else {
+				w := newReportWriter(cmd.ErrOrStderr())
 				// Compact ranking summary: top 20 candidates with a ✓/space marker.
 				for i, sf := range ranked {
 					if sf.Score < 0.1 || i >= 20 {
@@ -124,8 +132,11 @@ Run 'neurofs scan' first to build the index.`,
 					if includedSet[sf.Record.RelPath] {
 						mark = "✓"
 					}
-					fmt.Fprintf(os.Stderr, "  [%s] %-50s score=%.2f\n",
+					w.printf("  [%s] %-50s score=%.2f\n",
 						mark, sf.Record.RelPath, sf.Score)
+				}
+				if w.err != nil {
+					return fmt.Errorf("ask: write ranking summary: %w", w.err)
 				}
 			}
 
@@ -170,18 +181,19 @@ func pctFloat(used, total int) float64 {
 // writeExplain prints a verbose scoring breakdown meant for humans auditing
 // why a file was (or wasn't) picked. Every number the ranker produced is
 // shown so the output is reproducible from code alone.
-func writeExplain(w io.Writer, query string, ranked []models.ScoredFile, included map[string]bool) {
+func writeExplain(dst io.Writer, query string, ranked []models.ScoredFile, included map[string]bool) error {
+	w := newReportWriter(dst)
 	terms := ranking.Tokenise(query)
-	fmt.Fprintf(w, "NeuroFS — explain mode\n\n")
-	fmt.Fprintf(w, "  query            : %q\n", query)
+	w.printf("NeuroFS — explain mode\n\n")
+	w.printf("  query            : %q\n", query)
 	if len(terms) == 0 {
-		fmt.Fprintf(w, "  tokens used      : (none — query contains only stop-words or short tokens)\n")
+		w.printf("  tokens used      : (none — query contains only stop-words or short tokens)\n")
 	} else {
-		fmt.Fprintf(w, "  tokens used      : [%s]\n", strings.Join(terms, ", "))
+		w.printf("  tokens used      : [%s]\n", strings.Join(terms, ", "))
 	}
-	fmt.Fprintf(w, "  files considered : %d\n\n", len(ranked))
+	w.printf("  files considered : %d\n\n", len(ranked))
 
-	fmt.Fprintf(w, "  signal weights:\n")
+	w.printf("  signal weights:\n")
 	weights := ranking.SignalWeights()
 	names := make([]string, 0, len(weights))
 	for k := range weights {
@@ -189,23 +201,23 @@ func writeExplain(w io.Writer, query string, ranked []models.ScoredFile, include
 	}
 	sort.Slice(names, func(i, j int) bool { return weights[names[i]] > weights[names[j]] })
 	for _, n := range names {
-		fmt.Fprintf(w, "    %-18s %+4.1f\n", n, weights[n])
+		w.printf("    %-18s %+4.1f\n", n, weights[n])
 	}
-	fmt.Fprintf(w, "\n")
+	w.printf("\n")
 
-	fmt.Fprintf(w, "  ranking breakdown (%-3s %-50s %8s %-8s):\n", "#", "file", "score", "status")
-	fmt.Fprintf(w, "  %s\n", strings.Repeat("─", 80))
+	w.printf("  ranking breakdown (%-3s %-50s %8s %-8s):\n", "#", "file", "score", "status")
+	w.printf("  %s\n", strings.Repeat("─", 80))
 
 	for i, sf := range ranked {
 		status := "dropped"
 		if included[sf.Record.RelPath] {
 			status = "included"
 		}
-		fmt.Fprintf(w, "  [%-2d] %-50s %8.2f %-8s\n",
+		w.printf("  [%-2d] %-50s %8.2f %-8s\n",
 			i+1, truncate(sf.Record.RelPath, 50), sf.Score, status)
 
 		if len(sf.Reasons) == 0 {
-			fmt.Fprintf(w, "       (no signals fired)\n")
+			w.printf("       (no signals fired)\n")
 			continue
 		}
 		// De-duplicate identical (signal, detail) pairs, sum their weights so
@@ -221,11 +233,12 @@ func writeExplain(w io.Writer, query string, ranked []models.ScoredFile, include
 			agg[k] += r.Weight
 		}
 		for _, k := range order {
-			fmt.Fprintf(w, "       %-18s %-30s %+5.2f\n",
+			w.printf("       %-18s %-30s %+5.2f\n",
 				k.signal, truncate(k.detail, 30), agg[k])
 		}
 	}
-	fmt.Fprintf(w, "\n")
+	w.printf("\n")
+	return w.err
 }
 
 func truncate(s string, n int) string {

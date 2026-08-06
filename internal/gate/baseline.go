@@ -3,15 +3,18 @@ package gate
 import (
 	"encoding/json"
 	"fmt"
-	"os"
+
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
+
+const maxBaselineBytes = int64(16 << 20)
 
 // LoadBaseline reads a prior `neurofs gate --json` output from disk so it
 // can be diffed against the current run. Returns a zero Report and a
 // helpful error when the path is missing or malformed — the caller
 // surfaces this to the CI runner rather than silently skipping the diff.
 func LoadBaseline(path string) (Report, error) {
-	data, err := os.ReadFile(path)
+	data, _, err := fsutil.ReadRegularFileBounded(path, maxBaselineBytes)
 	if err != nil {
 		return Report{}, fmt.Errorf("baseline: read %s: %w", path, err)
 	}
@@ -25,11 +28,13 @@ func LoadBaseline(path string) (Report, error) {
 // Diff returns regressions present in `current` relative to `baseline`.
 // A regression is one of:
 //   - verdict_downgrade: a criterion's verdict moved toward FAIL
-//     (PASS/SKIP → WARN/FAIL, or WARN → FAIL).
+//     (PASS → SKIP/WARN/FAIL, SKIP → WARN/FAIL, or WARN → FAIL).
 //   - fixture_failed: a G3 fixture whose recall was 1.0 in the baseline
 //     is now below 1.0 in current.
 //   - recall_dropped: a G3 fixture whose recall dropped by more than
 //     5 percentage points even when both runs are below 1.0.
+//   - fixture_removed: a G3 fixture present in the baseline is absent
+//     from current, which is a loss of regression coverage.
 //
 // New criteria or new fixtures present in current but not in baseline
 // are not regressions — adding coverage cannot regress.
@@ -54,6 +59,7 @@ func Diff(current, baseline Report) []Regression {
 	}
 
 	baseFix := indexFactsByQuestion(baseline.G3Details)
+	currentFix := indexFactsByQuestion(current.G3Details)
 	for _, f := range current.G3Details {
 		b, ok := baseFix[f.Fixture.Question]
 		if !ok {
@@ -84,6 +90,22 @@ func Diff(current, baseline Report) []Regression {
 			})
 		}
 	}
+	for _, b := range baseline.G3Details {
+		if _, ok := currentFix[b.Fixture.Question]; ok {
+			continue
+		}
+		where := b.Fixture.SourcePath
+		if where == "" {
+			where = b.Fixture.Question
+		}
+		out = append(out, Regression{
+			Kind:   "fixture_removed",
+			Where:  where,
+			Before: fmt.Sprintf("recall=%.2f", b.Recall),
+			After:  "removed",
+			Detail: fmt.Sprintf("fixture %q is absent from the current report", b.Fixture.Question),
+		})
+	}
 	return out
 }
 
@@ -103,18 +125,19 @@ func indexFactsByQuestion(facts []FactResult) map[string]FactResult {
 	return m
 }
 
-// verdictRank orders verdicts for diff purposes. PASS and SKIP share rank
-// 0: moving from PASS to SKIP (e.g. someone removed fixtures) is a loss
-// of coverage but not a hard regression — flagging it as a PR-blocker
-// would produce too many false positives. WARN is rank 1, FAIL rank 2.
+// verdictRank orders verdicts for diff purposes. SKIP ranks below PASS
+// because losing enough evidence to make a previously measured criterion
+// unevaluable is itself a regression.
 func verdictRank(v Verdict) int {
 	switch v {
-	case Pass, Skip:
+	case Pass:
 		return 0
-	case Warn:
+	case Skip:
 		return 1
-	case Fail:
+	case Warn:
 		return 2
+	case Fail:
+		return 3
 	}
 	return -1
 }

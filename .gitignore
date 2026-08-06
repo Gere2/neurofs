@@ -1,4 +1,8 @@
 bin/
+/.tools/
+/coverage.out
+/output/
+/tmp/
 *.db
 # .neurofs is local state (ledgers, caches, index) EXCEPT the tuned weight
 # files: those are gate-validated engine tuning worth versioning — measured
@@ -14,7 +18,10 @@ bin/
 .DS_Store
 
 audit/records/
-audit/bundles/
+audit/bundles/*
+!audit/bundles/g4-gate-pooling.json
+!audit/bundles/g4-packager-selection.json
+!audit/bundles/g4-storage-wal.json
 audit/grounding.jsonl
 
 /neurofs

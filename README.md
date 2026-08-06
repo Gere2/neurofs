@@ -16,8 +16,10 @@ verifies grounding.
 
 ## Get started in 3 steps
 
-You need [Go 1.23+](https://go.dev/dl/), [ripgrep](https://github.com/BurntSushi/ripgrep#installation),
-and an MCP-capable agent (Claude Code, Codex, Cursor…).
+You need [Go 1.25.12+](https://go.dev/dl/) and an MCP-capable agent (Claude
+Code, Codex, Cursor…). [ripgrep](https://github.com/BurntSushi/ripgrep#installation)
+is optional and enables faster stale-fact validation during learning and gate
+diagnostics; retrieval itself uses the indexed snapshot.
 
 ```bash
 # 1. Build it
@@ -30,11 +32,12 @@ claude mcp add --scope user neurofs -- "$(pwd)/bin/neurofs" mcp
 cd /path/to/your/project && /path/to/neurofs/bin/neurofs setup
 ```
 
-`setup` indexes the repo, adds a short retrieval block to its `CLAUDE.md`,
-and reprints the registration line. That's it — now when your agent works in
-that project it asks NeuroFS for targeted, citable context (over the
-`neurofs_context` / `neurofs_search` tools) instead of reading whole files,
-and reports back what helped (`neurofs_feedback`).
+`setup` is safe to repeat: it indexes the repo when needed, adds one idempotent
+retrieval block to `CLAUDE.md`, and reprints the registration line. Add
+generated directories to the target repo's `.neurofsignore` when they should
+never enter retrieval context. Once wired, the agent asks NeuroFS for targeted,
+citable context (over `neurofs_context` / `neurofs_search`) and reports what
+helped (`neurofs_feedback`).
 
 **And it gets better the more you use it.** That feedback accumulates; every
 week or so, in the project:
@@ -42,12 +45,37 @@ week or so, in the project:
 ```bash
 neurofs learn status     # how much usage signal has piled up
 neurofs learn promote    # turn feedback into regression fixtures
-neurofs learn tune       # optimize retrieval against them (see docs/self_improvement.md
-                         #   for the one rule: always tune across ≥2 repo shapes)
+neurofs learn tune       # optimize retrieval against them; always use ≥2 repo shapes
 neurofs gate             # the guardrail — confirm nothing regressed
 ```
 
 Full loop and evidence: [`docs/self_improvement.md`](docs/self_improvement.md).
+
+---
+
+## Agent Commander & Multi-Agent Orchestration
+
+NeuroFS includes a **multi-model task dispatcher and verified orchestration engine** with real-data gamification:
+
+```bash
+# Run multi-agent plan with Speculative Cascade & Claim Entailment Verification
+neurofs orchestrate "Add user authentication with JWT and DB migrations"
+
+# View your Agent Commander progression, level badge, model squad stats & achievements
+neurofs player
+
+# View War Room empirical model squad rankings and recommendations
+neurofs tournament
+```
+
+### Key Capabilities
+
+1. **⚡ Speculative Cascade**: Tries cheap models (`gemini-flash`) first, escalating to `claude-sonnet` or `claude-opus` only if verified grounding score falls below threshold. Saves 40%-85% API cost per task.
+2. **🛡️ Receipt-Based Verification**: Decomposes claims (file citations, code symbols), verifies entailment against context, and runs `go build` / `go test` sandbox checks.
+3. **💾 SQLite Semantic Cache**: Caches verified completions in WAL-mode SQLite (~2ms latency, $0 USD cost).
+4. **🏆 Model Tournament**: Logs all runs to `routing_history.jsonl`, computes empirical win rates, and auto-tunes `models.json` routing rules via HyperAgent.
+5. **🌐 A2A Protocol & Stateless MCP**: Exports A2A v1.0 Agent Cards at `/.well-known/agent.json` and supports stateless MCP 2026 HTTP transport at `/api/mcp`.
+6. **🎮 Agent Commander UI**: Cyber-strategy strategy interface (`neurofs ui`) with RPG levels, titles, model squad cards, and achievements gallery.
 
 ---
 
@@ -72,13 +100,15 @@ real code, with the reason for every included fragment on the record.
 
 ## The economy, measured
 
-The thesis is falsifiable, so it was measured first. On this repository,
-delivering context with `neurofs_search` costs **42.1% fewer tokens (median
-71.5%) than native whole-file reading, at equal fact recall**, with 0 search
-misses — well above the 25% decision threshold, stable across runs. On a
-large Python repo (pallets/click) the same measurement reads **82.3% fewer
-tokens, 0 misses, 67% recall** after method-level chunking, the exact-symbol
-signal, and same-symbol dedupe landed. Both shapes PASS; the per-task losers
+The thesis is falsifiable, so CI reruns `make check-economy` with deterministic
+mock embeddings and fails below the unchanged **25% mean iso-recall token
+reduction** decision threshold. The report includes overall recall, search
+misses, mean and median savings, and every per-task loser; savings cannot hide a
+retrieval failure. Treat the command output as the current result rather than a
+permanent marketing constant. On a large Python repo (pallets/click), the
+latest immutable cross-shape record reports a passing reduction with zero
+search misses; the exact percentage and recall live in the evidence-linked
+cross-shape table so this overview cannot drift from the gate. The per-task losers
 and every measured trade-off are documented, not hidden. Method, numbers,
 cross-shape verdicts, and proxy limits:
 [`docs/phase0_economy.md`](docs/phase0_economy.md) and
@@ -86,9 +116,8 @@ cross-shape verdicts, and proxy limits:
 any indexed repo with:
 
 ```
-neurofs economy            # human-readable A/B report
-neurofs economy --json     # machine-readable
-neurofs economy --gate     # exit non-zero on a FAIL verdict (CI)
+NEUROFS_EMBEDDING_PROVIDER=mock neurofs economy --gate \
+  --threshold 0.25 --search-limit 8
 ```
 
 ## It improves from use
@@ -101,10 +130,11 @@ becomes regression fixtures (`learn promote`), and a coordinate-descent
 tuner optimizes both scoring surfaces against them (`learn tune` for chunk
 search, `learn tune-files` for the file ranker), always as a macro-average
 across repository shapes so no single repo can overfit the objective.
-Measured on this repo: defaults vs tuned is 61% vs 89% search-surface
-recall at fewer delivered tokens. The tuned weight files are committed;
-`make check-retrieval` and the pivot gate hold every level once reached.
-Full loop, evidence tables, and the falsified hypotheses:
+The tuned weight files are committed; `make check-retrieval` prints and
+enforces the current recall, precision, stability, and token ceilings.
+`neurofs gate` remains the stricter longitudinal readiness oracle and can
+legitimately report `SKIP` until enough real-use evidence exists. Full loop,
+evidence tables, and the falsified hypotheses:
 [`docs/self_improvement.md`](docs/self_improvement.md).
 
 ---
@@ -160,17 +190,20 @@ compare, and global search in one page at <http://127.0.0.1:7777>.
 
 ## Installation
 
-**Requirements:** Go 1.22+ and optionally [ripgrep (rg)](https://github.com/BurntSushi/ripgrep) (highly recommended for fast regex-based retrieval).
+**Requirements:** Go 1.25.12+ and optionally [ripgrep (rg)](https://github.com/BurntSushi/ripgrep) for stale-fact validation.
 
 ```bash
 # From source
-git clone https://github.com/neuromfs/neuromfs
-cd neuromfs
+git clone https://github.com/Gere2/neurofs
+cd neurofs
 make install   # installs to $GOPATH/bin
 
-# Direct installation (requires Go 1.22+)
-go install github.com/neuromfs/neuromfs/cmd/neurofs@latest
+# Or install the latest tagged module directly
+go install github.com/Gere2/neurofs/cmd/neurofs@latest
 ```
+
+Tagged releases publish Linux, macOS, and Windows archives, checksums, and a
+CycloneDX SBOM on the [GitHub Releases page](https://github.com/Gere2/neurofs/releases).
 
 ---
 
@@ -292,16 +325,21 @@ The server exposes these tools to any MCP host:
   (file count, total size, top extensions). Args: `repo` (default: cwd).
 - **`neurofs_view_file`** — read one repository-confined file by relative path.
 - **`neurofs_get_outline`** — return the indexed file outline.
+- **`neurofs_expand`** — expand an outline, excerpt, or full file with hash validation.
+- **`neurofs_measure`** — report context consumed by a measured agent session.
 - **`neurofs_list_signatures`** — return compact signatures for one file.
 - **`neurofs_get_excerpt`** — return query-matching code excerpts for one file.
 - **`neurofs_search`** — return ranked code chunks with line ranges,
   snippets, scores, reasons, content hashes, exact `rg` matches, semantic
   matches, and graph dependency/working-set bridges.
 - **`neurofs_log_memory`** / **`neurofs_search_memory`** /
-  **`neurofs_export_memory`** — write and read the session ledger.
+  **`neurofs_export_memory`** / **`neurofs_prune_memory`** — manage the
+  session ledger.
 - **`neurofs_recall_state`** — the "where am I" digest a restarting loop reads:
   what was tried, what failed, what was decided, the pending NextActions to
   continue, and the rolling grounding signal. See [`neurofs recall`](#neurofs-recall).
+- **`neurofs_feedback`** — report whether retrieved context served the task,
+  feeding the append-only learn loop once per completed retrieval task.
 
 ### `neurofs watch [path]`
 
@@ -586,22 +624,24 @@ chunk hits, returned-token counts, p50/p95 latency, fact recall over
 returned snippets, token ratio versus bundle output, and optional stable
 JSON prefix checks. `--context` exercises the `neurofs_context` broker
 itself, reporting route distribution, structural hint counts, output
-tokens, latency, and top-k hits from routed results.
+tokens, latency, and top-k hits from routed results. `--out <path>`
+atomically retains the complete text report.
 Combine the ceilings to fail the job when either retrieval quality drops
 or context gets fatter:
 
 ```
-neurofs bench --bundle --prefer-signatures --search --context --search-stability \
-    --min-top3 75 \
-    --max-mean-bundle-tokens 1200 \
-    --max-mean-search-tokens 700 \
-    --max-mean-context-tokens 900
+neurofs bench --bundle --pack-budget 4000 --prefer-signatures \
+    --search --context --search-stability \
+    --min-top3 60 --min-search-top3 70 --min-context-top3 65 \
+    --min-search-stability 100 \
+    --max-mean-bundle-tokens 4000 \
+    --max-mean-search-tokens 1500 \
+    --max-mean-context-tokens 2750
 ```
 
-If the ranker regresses *or* the packager starts emitting bigger bundles
-for the same questions, the exit code is non-zero. With `--search` and
-`--context`, the same gate also catches chunk retrieval and broker output
-bloat.
+These repository-specific ceilings live in `Makefile`; change them only with a
+new measured baseline. If ranking regresses or any surface gets materially
+fatter, the exit code is non-zero.
 
 ### `neurofs economy`
 
@@ -613,6 +653,7 @@ reading the whole files those hits came from (arm A, native):
 ```
 neurofs economy                 # human-readable report + PASS/FAIL verdict
 neurofs economy --json          # machine-readable
+neurofs economy --out run.json  # atomically retain the complete JSON report
 neurofs economy --gate          # exit non-zero on FAIL (decision gate / CI)
 neurofs economy --search-limit 8 --threshold 0.25
 ```
@@ -622,6 +663,9 @@ the gate's G3). The baseline is deliberately conservative — native inherits
 NeuroFS's own file selection and stops the instant it matches B's recall — so
 the reported reduction is a lower bound. See
 [`docs/phase0_economy.md`](docs/phase0_economy.md) for methodology and limits.
+The three-shape G5 run retains and verifies raw economy, gate, and bench
+reports; its attested procedure and current results are in
+[`docs/phase_g5_cross_shape.md`](docs/phase_g5_cross_shape.md).
 
 ---
 
@@ -689,7 +733,7 @@ internal/
   config/             — configuration and defaults
   fsutil/             — file system helpers, language detection
   storage/            — SQLite persistence (database/sql + modernc.org/sqlite)
-  embeddings/         — OpenAI and mock vector embeddings for semantic ranking
+  embeddings/         — opt-in cloud, local Ollama, and deterministic mock embeddings
   parser/             — symbol and import extraction (mostly regex)
   project/            — metadata extraction (package.json, tsconfig.json) to aid ranking
   indexer/            — orchestrates walk/watch → parse → store → graph
@@ -719,15 +763,26 @@ make deps         # go mod tidy
 make build        # compile binary to ./bin/neurofs
 make install      # install system-wide to $GOPATH/bin
 make test         # run all tests including integration
-make test-short   # run tests skipping integration tests
+make test-short   # skip the top-level end-to-end integration test
+make race         # run all tests with the race detector
+make coverage     # enforce the current cross-package coverage floor
 make run-ui       # start the local web UI
 make run-scan     # scan testdata/sample-repo
 make run-ask      # ask against testdata/sample-repo
 make vet          # go vet
 make fmt          # gofmt
-make lint         # run golangci-lint
+make fmt-check    # verify formatting without changing files
+make mod-check    # verify go.mod/go.sum are tidy
+make lint         # bootstrap and run pinned golangci-lint
+make vuln         # scan reachable vulnerabilities with pinned govulncheck
+make quality      # fmt + modules + vet + race + coverage + vulnerabilities
+make check-retrieval
+make check-economy
+make check-gate   # full readiness oracle; may SKIP without longitudinal evidence
 make help         # print all available targets
 ```
+
+`make lint` is repository-pinned and already blocks `make quality`.
 
 ---
 
@@ -811,4 +866,4 @@ verification out — never the orchestrator.
 
 ## License
 
-MIT
+[MIT](LICENSE)

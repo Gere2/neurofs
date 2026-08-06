@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // SymbolRange is the indexed, line-addressable view of a symbol or chunk.

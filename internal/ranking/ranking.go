@@ -3,6 +3,7 @@
 // Scoring is purely structural and lexical — no embeddings, no LLM calls.
 // Signals and their weights:
 //
+//	filename_exact   (+6.0)  query term equals the file stem
 //	filename_match   (+3.0)  query term appears in the file name
 //	path_match       (+1.5)  query term appears anywhere in the path
 //	symbol_match     (+2.5)  query term appears in a symbol name
@@ -14,15 +15,16 @@ package ranking
 import (
 	"fmt"
 	"math"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 const (
@@ -88,13 +90,17 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	terms := tokenise(query)
 	if len(terms) == 0 {
 		out := make([]models.ScoredFile, len(files))
+		var entries []string
+		if opts.Project != nil {
+			entries = opts.Project.EntryPoints()
+		}
 		for i, f := range files {
 			out[i] = models.ScoredFile{Record: f}
 			// Even with no terms, entry-point, focus, and changed bonuses
 			// still give structure to "what's in this repo" or
 			// "review my edits" queries.
-			if opts.Project != nil {
-				addEntryPointBonus(&out[i], opts.Project, w)
+			if len(entries) > 0 {
+				addEntryPointBonus(&out[i], entries, w)
 			}
 		}
 		applyFocusBoost(out, opts.Focus, w)
@@ -108,9 +114,10 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 		return out
 	}
 
+	preparedTerms := prepareQueryTerms(terms)
 	scored := make([]models.ScoredFile, len(files))
 	for i, f := range files {
-		sc, reasons := scoreFile(f, terms, w)
+		sc, reasons := scoreFile(f, preparedTerms, w)
 		scored[i] = models.ScoredFile{Record: f, Score: sc, Reasons: reasons}
 	}
 
@@ -145,7 +152,7 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	} else {
 		expandByImports(scored, terms, opts.Project, w)
 	}
-	enrichWithContent(scored, terms, w)
+	enrichWithContent(scored, preparedTerms, w)
 
 	applyTestPenalty(scored, query)
 
@@ -159,44 +166,72 @@ func RankWithOptions(files []models.FileRecord, query string, opts Options) []mo
 	return scored
 }
 
+type queryTerm struct {
+	value    string
+	variants []string
+}
+
+func prepareQueryTerms(terms []string) []queryTerm {
+	prepared := make([]queryTerm, len(terms))
+	for i, term := range terms {
+		prepared[i] = queryTerm{value: term, variants: termVariants(term)}
+	}
+	return prepared
+}
+
 // scoreFile computes the base score for a single file.
-func scoreFile(f models.FileRecord, terms []string, w *Weights) (float64, []models.InclusionReason) {
+func scoreFile(f models.FileRecord, terms []queryTerm, w *Weights) (float64, []models.InclusionReason) {
 	score := 0.0
 	var reasons []models.InclusionReason
 
 	baseName := strings.ToLower(filepath.Base(f.RelPath))
 	baseStem := stripExt(baseName)
 	relPath := strings.ToLower(f.RelPath)
+	symbolNames := make([]string, len(f.Symbols))
+	for i := range f.Symbols {
+		symbolNames[i] = strings.ToLower(f.Symbols[i].Name)
+	}
+	importNames := make([]string, len(f.Imports))
+	for i := range f.Imports {
+		importNames[i] = strings.ToLower(f.Imports[i])
+	}
 
 	for _, term := range terms {
-		variants := termVariants(term)
-
-		// Filename match — highest value signal.
+		// An exact filename stem is a stronger intent signal than mere
+		// containment: a query for "tools" should prefer tools.go over files
+		// that only mention tools in a longer name.
 		// Also treat reverse containment (e.g. stem "auth" inside term
 		// "authentication") as a filename match, so descriptive queries
 		// still find files with abbreviated names.
-		if anyContains(baseName, variants) ||
-			(len(baseStem) >= 3 && anyContainsReverse(variants, baseStem)) {
+		if term.value == baseStem {
+			weight := w.Filename * 2
+			score += weight
+			reasons = append(reasons, models.InclusionReason{
+				Signal: "filename_exact",
+				Detail: term.value,
+				Weight: weight,
+			})
+		} else if anyContains(baseName, term.variants) ||
+			(len(baseStem) >= 3 && anyContainsReverse(term.variants, baseStem)) {
 			score += w.Filename
 			reasons = append(reasons, models.InclusionReason{
 				Signal: "filename_match",
-				Detail: term,
+				Detail: term.value,
 				Weight: w.Filename,
 			})
-		} else if anyContains(relPath, variants) {
+		} else if anyContains(relPath, term.variants) {
 			// Path match (directory components, not just filename).
 			score += w.Path
 			reasons = append(reasons, models.InclusionReason{
 				Signal: "path_match",
-				Detail: term,
+				Detail: term.value,
 				Weight: w.Path,
 			})
 		}
 
 		// Symbol match.
-		for _, sym := range f.Symbols {
-			symLower := strings.ToLower(sym.Name)
-			if anyContains(symLower, variants) {
+		for i, sym := range f.Symbols {
+			if anyContains(symbolNames[i], term.variants) {
 				score += w.Symbol
 				reasons = append(reasons, models.InclusionReason{
 					Signal: "symbol_match",
@@ -208,8 +243,8 @@ func scoreFile(f models.FileRecord, terms []string, w *Weights) (float64, []mode
 		}
 
 		// Import match.
-		for _, imp := range f.Imports {
-			if anyContains(strings.ToLower(imp), variants) {
+		for i, imp := range f.Imports {
+			if anyContains(importNames[i], term.variants) {
 				score += w.Import
 				reasons = append(reasons, models.InclusionReason{
 					Signal: "import_match",
@@ -289,32 +324,37 @@ func expandByGraphRelations(scored []models.ScoredFile, relations []models.FileR
 		return
 	}
 
+	// A path may appear more than once in scored (for example while merging
+	// indexes). Keep all positions so the indexed implementation has exactly
+	// the same behaviour as the previous full scan.
+	positionsByPath := make(map[string][]int, len(scored))
+	for i := range scored {
+		path := scored[i].Record.Path
+		positionsByPath[path] = append(positionsByPath[path], i)
+	}
+
 	// 2. Propagate scores:
 	for _, rel := range relations {
 		// If source is a seed, target gets a dependency boost (imported by top file)
 		if seeds[rel.SourcePath] {
-			for i := range scored {
-				if scored[i].Record.Path == rel.TargetPath {
-					scored[i].Score += 1.0
-					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
-						Signal: "dependency_relation",
-						Detail: "imported by top file",
-						Weight: 1.0,
-					})
-				}
+			for _, i := range positionsByPath[rel.TargetPath] {
+				scored[i].Score += 1.0
+				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
+					Signal: "dependency_relation",
+					Detail: "imported by top file",
+					Weight: 1.0,
+				})
 			}
 		}
 		// If target is a seed, source gets a consumer boost (imports top file)
 		if seeds[rel.TargetPath] {
-			for i := range scored {
-				if scored[i].Record.Path == rel.SourcePath {
-					scored[i].Score += 0.8
-					scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
-						Signal: "consumer_relation",
-						Detail: "imports top file",
-						Weight: 0.8,
-					})
-				}
+			for _, i := range positionsByPath[rel.SourcePath] {
+				scored[i].Score += 0.8
+				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
+					Signal: "consumer_relation",
+					Detail: "imports top file",
+					Weight: 0.8,
+				})
 			}
 		}
 	}
@@ -335,12 +375,22 @@ func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info,
 	}
 	seeds := tmp[:limit]
 
-	importedPaths := make(map[string]bool)
+	aliases := orderedPathAliases(info)
+	importedSet := make(map[string]struct{})
+	importedPaths := make([]string, 0)
+	addImportedPath := func(path string) {
+		path = strings.ToLower(path)
+		if _, ok := importedSet[path]; ok {
+			return
+		}
+		importedSet[path] = struct{}{}
+		importedPaths = append(importedPaths, path)
+	}
 	for _, s := range seeds {
 		for _, imp := range s.Record.Imports {
-			importedPaths[strings.ToLower(imp)] = true
-			if resolved := resolveAlias(imp, info); resolved != "" {
-				importedPaths[strings.ToLower(resolved)] = true
+			addImportedPath(imp)
+			if resolved := resolveAlias(imp, aliases); resolved != "" {
+				addImportedPath(resolved)
 			}
 		}
 	}
@@ -349,27 +399,61 @@ func expandByImports(scored []models.ScoredFile, _ []string, info *project.Info,
 		return
 	}
 
-	for i, sf := range scored {
-		base := strings.ToLower(stripExt(filepath.Base(sf.Record.RelPath)))
-		for imp := range importedPaths {
-			// Require a path- or extension-boundary match. Plain substring
-			// (imp contains base) used to fire here too, but that matched
-			// `util` against `futility` / `auth_utilities` and inflated the
-			// expansion score for accidental lookalikes.
-			if imp == base ||
-				strings.HasSuffix(imp, "/"+base) ||
-				strings.HasPrefix(imp, base+".") ||
-				strings.Contains(imp, "/"+base+".") {
+	positionsByBase := make(map[string][]int, len(scored))
+	for i := range scored {
+		base := strings.ToLower(stripExt(filepath.Base(scored[i].Record.RelPath)))
+		positionsByBase[base] = append(positionsByBase[base], i)
+	}
+	expanded := make([]bool, len(scored))
+	for _, imp := range importedPaths {
+		for _, base := range importExpansionBases(imp) {
+			for _, i := range positionsByBase[base] {
+				if expanded[i] {
+					continue
+				}
+				expanded[i] = true
 				scored[i].Score += w.ImportExpansion
 				scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 					Signal: "import_expansion",
 					Detail: imp,
 					Weight: w.ImportExpansion,
 				})
-				break
 			}
 		}
 	}
+}
+
+// importExpansionBases extracts every basename that can satisfy the boundary
+// checks used by import expansion. Looking those names up in a precomputed map
+// avoids comparing every candidate file with every seed import.
+func importExpansionBases(imp string) []string {
+	seen := make(map[string]struct{})
+	bases := make([]string, 0, 4)
+	add := func(base string) {
+		if _, ok := seen[base]; ok {
+			return
+		}
+		seen[base] = struct{}{}
+		bases = append(bases, base)
+	}
+
+	add(imp) // imp == base
+	segments := strings.Split(imp, "/")
+	if len(segments) > 1 {
+		add(segments[len(segments)-1]) // strings.HasSuffix(imp, "/"+base)
+	}
+	for _, segment := range segments {
+		for offset := 0; offset < len(segment); {
+			dot := strings.IndexByte(segment[offset:], '.')
+			if dot < 0 {
+				break
+			}
+			offset += dot
+			add(segment[:offset])
+			offset++
+		}
+	}
+	return bases
 }
 
 // applyProjectSignals folds package.json / tsconfig.json data into the score.
@@ -385,20 +469,16 @@ func applyProjectSignals(scored []models.ScoredFile, terms []string, info *proje
 
 	entries := info.EntryPoints()
 	for i := range scored {
-		addEntryPointBonus(&scored[i], info, w)
-		applyDependencyMatch(&scored[i], terms, info, w)
-		_ = entries // referenced via addEntryPointBonus
+		addEntryPointBonus(&scored[i], entries, w)
 	}
+	applyDependencyMatches(scored, terms, info.Dependencies, w)
 }
 
 // addEntryPointBonus tags a file as an entry point when its relative path
 // matches one of the project's declared entries.
-func addEntryPointBonus(sf *models.ScoredFile, info *project.Info, w *Weights) {
-	if info == nil {
-		return
-	}
+func addEntryPointBonus(sf *models.ScoredFile, entries []string, w *Weights) {
 	rel := filepath.ToSlash(sf.Record.RelPath)
-	for _, entry := range info.EntryPoints() {
+	for _, entry := range entries {
 		if pathsMatchEntry(rel, entry) {
 			sf.Score += w.EntryPoint
 			sf.Reasons = append(sf.Reasons, models.InclusionReason{
@@ -411,37 +491,72 @@ func addEntryPointBonus(sf *models.ScoredFile, info *project.Info, w *Weights) {
 	}
 }
 
-// applyDependencyMatch boosts a file when a query term names a declared
-// production dependency and the file imports that dependency. The bonus is
-// only applied once per file.
-func applyDependencyMatch(sf *models.ScoredFile, terms []string, info *project.Info, w *Weights) {
-	if info == nil || len(info.Dependencies) == 0 {
+// applyDependencyMatches boosts each file at most once when a query term names
+// a declared production dependency imported by that file. Dependency
+// candidates and the inverse import index are built once per ranking pass.
+func applyDependencyMatches(scored []models.ScoredFile, terms, dependencies []string, w *Weights) {
+	if len(dependencies) == 0 {
 		return
 	}
-	depSet := make(map[string]bool, len(info.Dependencies))
-	for _, d := range info.Dependencies {
-		depSet[strings.ToLower(d)] = true
+
+	dependencySet := make(map[string]struct{}, len(dependencies))
+	normalisedDependencies := make([]string, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		dependency = strings.ToLower(dependency)
+		if _, ok := dependencySet[dependency]; ok {
+			continue
+		}
+		dependencySet[dependency] = struct{}{}
+		normalisedDependencies = append(normalisedDependencies, dependency)
 	}
-	fileImports := make(map[string]bool, len(sf.Record.Imports))
-	for _, imp := range sf.Record.Imports {
-		fileImports[strings.ToLower(imp)] = true
+	sort.Strings(normalisedDependencies)
+
+	// Preserve query-term priority, then use lexical dependency order to make
+	// the selected explanation stable when several dependencies match.
+	candidateSet := make(map[string]struct{}, len(normalisedDependencies))
+	candidates := make([]string, 0, len(normalisedDependencies))
+	for _, term := range terms {
+		for _, dependency := range normalisedDependencies {
+			if !strings.Contains(dependency, term) {
+				continue
+			}
+			if _, ok := candidateSet[dependency]; ok {
+				continue
+			}
+			candidateSet[dependency] = struct{}{}
+			candidates = append(candidates, dependency)
+		}
+	}
+	if len(candidates) == 0 {
+		return
 	}
 
-	for _, term := range terms {
-		for dep := range depSet {
-			if !strings.Contains(dep, term) {
+	positionsByImport := make(map[string][]int)
+	for i := range scored {
+		seenImports := make(map[string]struct{}, len(scored[i].Record.Imports))
+		for _, fileImport := range scored[i].Record.Imports {
+			fileImport = strings.ToLower(fileImport)
+			if _, ok := seenImports[fileImport]; ok {
 				continue
 			}
-			if !fileImports[dep] {
+			seenImports[fileImport] = struct{}{}
+			positionsByImport[fileImport] = append(positionsByImport[fileImport], i)
+		}
+	}
+
+	matched := make([]bool, len(scored))
+	for _, dependency := range candidates {
+		for _, i := range positionsByImport[dependency] {
+			if matched[i] {
 				continue
 			}
-			sf.Score += w.DependencyMatch
-			sf.Reasons = append(sf.Reasons, models.InclusionReason{
+			matched[i] = true
+			scored[i].Score += w.DependencyMatch
+			scored[i].Reasons = append(scored[i].Reasons, models.InclusionReason{
 				Signal: "dependency_match",
-				Detail: dep,
+				Detail: dependency,
 				Weight: w.DependencyMatch,
 			})
-			return
 		}
 	}
 }
@@ -472,21 +587,41 @@ func pathsMatchEntry(rel, entry string) bool {
 	return false
 }
 
-// resolveAlias rewrites an import path through tsconfig path aliases, if any
-// alias matches as a prefix. Returns "" when no alias applies.
-func resolveAlias(imp string, info *project.Info) string {
+type pathAlias struct {
+	prefix string
+	target string
+}
+
+func orderedPathAliases(info *project.Info) []pathAlias {
 	if info == nil || len(info.PathAliases) == 0 {
-		return ""
+		return nil
 	}
+	aliases := make([]pathAlias, 0, len(info.PathAliases))
 	for alias, target := range info.PathAliases {
 		if alias == "" {
 			continue
 		}
-		if imp == alias {
-			return target
+		aliases = append(aliases, pathAlias{prefix: alias, target: target})
+	}
+	sort.Slice(aliases, func(i, j int) bool {
+		if len(aliases[i].prefix) == len(aliases[j].prefix) {
+			return aliases[i].prefix < aliases[j].prefix
 		}
-		if strings.HasPrefix(imp, alias+"/") {
-			return target + strings.TrimPrefix(imp, alias)
+		return len(aliases[i].prefix) > len(aliases[j].prefix)
+	})
+	return aliases
+}
+
+// resolveAlias rewrites an import path through preordered tsconfig path
+// aliases. The most-specific prefix wins, so overlapping aliases no longer
+// depend on Go map iteration order.
+func resolveAlias(imp string, aliases []pathAlias) string {
+	for _, alias := range aliases {
+		if imp == alias.prefix {
+			return alias.target
+		}
+		if strings.HasPrefix(imp, alias.prefix+"/") {
+			return alias.target + strings.TrimPrefix(imp, alias.prefix)
 		}
 	}
 	return ""
@@ -494,7 +629,7 @@ func resolveAlias(imp string, info *project.Info) string {
 
 // enrichWithContent adds a content-match bonus by reading files for the top
 // candidates. We cap at the top 30 to avoid I/O on the whole repo.
-func enrichWithContent(scored []models.ScoredFile, terms []string, w *Weights) {
+func enrichWithContent(scored []models.ScoredFile, terms []queryTerm, w *Weights) {
 	// Work on a snapshot sorted by current score.
 	type indexed struct {
 		pos int
@@ -512,7 +647,7 @@ func enrichWithContent(scored []models.ScoredFile, terms []string, w *Weights) {
 	}
 
 	for _, entry := range tmp[:limit] {
-		content, err := os.ReadFile(entry.sf.Record.Path)
+		content, _, err := fsutil.ReadIndexedFileBounded(entry.sf.Record, config.MaxFileSize)
 		if err != nil {
 			continue
 		}
@@ -521,7 +656,7 @@ func enrichWithContent(scored []models.ScoredFile, terms []string, w *Weights) {
 
 		for _, term := range terms {
 			count := 0
-			for _, v := range termVariants(term) {
+			for _, v := range term.variants {
 				count += strings.Count(lower, v)
 			}
 			if count == 0 {
@@ -536,7 +671,7 @@ func enrichWithContent(scored []models.ScoredFile, terms []string, w *Weights) {
 			scored[entry.pos].Score += bonus
 			scored[entry.pos].Reasons = append(scored[entry.pos].Reasons, models.InclusionReason{
 				Signal: "content_match",
-				Detail: term,
+				Detail: term.value,
 				Weight: bonus,
 			})
 		}
@@ -624,6 +759,7 @@ func Tokenise(query string) []string {
 func SignalWeights() map[string]float64 {
 	w := DefaultWeights()
 	return map[string]float64{
+		"filename_exact":   w.Filename * 2,
 		"filename_match":   w.Filename,
 		"path_match":       w.Path,
 		"symbol_match":     w.Symbol,

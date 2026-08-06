@@ -33,8 +33,14 @@ weights, fed by two append-only ledgers that fill themselves while you work.
 - **Promote** turns each distinct judged query into a G3-style fixture
   (identifier-shaped facts, 6 max). Later feedback on the same query
   replaces earlier judgements at promote time; existing fixture files are
-  never overwritten, so hand-tweaks survive. Because learned fixtures live
-  in `audit/facts/`, the pivot gate's G3 evaluates them automatically.
+  never overwritten, so manual fixtures and correction history survive.
+  Because learned fixtures live in `audit/facts/`, the pivot gate's G3
+  evaluates them automatically.
+- **Correct** an obsolete fixture by adding a complete new fixture with
+  `"source": "correction"` and `"supersedes": "<older-basename>.json"`.
+  Never edit or delete the older evidence. `learn` and gate G3 share the same
+  resolver: only the active end of a correction chain is scored, and invalid,
+  missing, ambiguous, or cyclic links fail closed.
 - **Tune** runs coordinate descent over the scoring weights in
   `internal/retrieval/weights.go`, evaluating every fixture on the search
   surface with `audit.ScoreFacts` — the identical scorer G3 and the Phase-0
@@ -139,8 +145,10 @@ CLAUDE.md snippet for any repo where NeuroFS is registered:
 2. **The tuner optimizes the search surface.** The gate's G3 scores the
    bundle surface; `bench` scores ranker precision on a synthetic corpus.
    Those stay independent — a tune must survive them, not replace them.
-3. **Ledgers are append-only.** A wrong feedback entry is corrected by a
-   newer entry for the same query, never by editing history.
+3. **Ledgers and fixtures are append-only.** A wrong feedback entry is
+   corrected by a newer entry for the same query. An obsolete fact fixture is
+   corrected by a new `supersedes` fixture in the same directory. Never edit
+   history; never use a path in `supersedes`, only the exact older basename.
 4. **Weights are per-repo.** `.neurofs/weights.json` travels with the repo
    index, not with the binary; a repo without one uses the hand-calibrated
    defaults in `DefaultWeights()`.

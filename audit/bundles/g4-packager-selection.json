@@ -1,0 +1,628 @@
+{
+  "query": "how does the packager choose between excerpt and signature for a file",
+  "budget": 4000,
+  "fragments": [
+    {
+      "rel_path": "internal/packager/excerpt.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/excerpt.go\n// lines: 28-33\n// chunk: excerptTopN\n// content_hash: 5c7531ae3ac3cb366857ffa4fd3e922ddf6cafacd8b24ed38d5689d2b2d0eaca\n\n// excerptTopN caps how many of the top-ranked files in a Pack call may be\n// considered for sub-file extraction. The constraint exists for two reasons:\n// extraction is more expensive per file than signature, and excerpts are\n// verbose enough that more than three would crowd out coverage of the rest\n// of the bundle.\nconst excerptTopN = 3",
+      "tokens": 126,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/excerpt.go:28-33",
+          "weight": 1
+        }
+      ],
+      "start_line": 28,
+      "end_line": 33,
+      "content_hash": "5c7531ae3ac3cb366857ffa4fd3e922ddf6cafacd8b24ed38d5689d2b2d0eaca"
+    },
+    {
+      "rel_path": "internal/packager/excerpt.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/excerpt.go\n// lines: 35-39\n// chunk: excerptMaxTokens\n// content_hash: 6fee2060588c7f6a1eb3cde89a4c34e1722b27084b2878ab42390b920211813f\n\n// excerptMaxTokens caps a single excerpt fragment. Sized between\n// signatureMaxTokens (350) and fullCodeMaxTokens (600 default) — past 800 we\n// would be better off either including the whole file (if budget allows) or\n// falling back to a signature (if it does not).\nconst excerptMaxTokens = 800",
+      "tokens": 116,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/excerpt.go:35-39",
+          "weight": 1
+        }
+      ],
+      "start_line": 35,
+      "end_line": 39,
+      "content_hash": "6fee2060588c7f6a1eb3cde89a4c34e1722b27084b2878ab42390b920211813f"
+    },
+    {
+      "rel_path": "internal/packager/excerpt.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/excerpt.go\n// lines: 70-80\n// chunk: isExcerptLang\n// content_hash: 72cf2a6c3763d13532edca9c8cac64ae46247d02a03d2463fb52ca2ce1e71e6e\n\n// isExcerptLang reports whether sub-file extraction is supported for lang.\n// Each supported language has its own walker matched to its actual scoping\n// rules — no language gets a generic fallback because broken excerpts\n// would be worse than the signature representation we already have.\nfunc isExcerptLang(lang models.Lang) bool {\n  switch lang {\n  case models.LangTypeScript, models.LangJavaScript, models.LangPython, models.LangGo:\n    return true\n  }\n  return false\n}",
+      "tokens": 160,
+      "score": 44.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/excerpt.go:70-80",
+          "weight": 1
+        }
+      ],
+      "start_line": 70,
+      "end_line": 80,
+      "content_hash": "72cf2a6c3763d13532edca9c8cac64ae46247d02a03d2463fb52ca2ce1e71e6e"
+    },
+    {
+      "rel_path": "internal/mcp/tools.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/mcp/tools.go\n// lines: 1244-1292\n// chunk: runListSignaturesTool\n// content_hash: 2c23848384da05a587d74b4a3f19e60754fc77c49fa4086549a6be82c917b6a5\n\nfunc runListSignaturesTool(ctx context.Context, raw json.RawMessage) ToolCallResult {\n  var args listSignaturesArgs\n  if len(raw) \u003e 0 {\n    if err := json.Unmarshal(raw, \u0026args); err != nil {\n      return errResult(fmt.Sprintf(\"invalid arguments: %v\", err))\n    }\n  }\n  args.Path = strings.TrimSpace(args.Path)\n  if args.Path == \"\" {\n    return errResult(\"path must not be empty\")\n  }\n  repo, err := resolveRepo(ctx, args.Repo)\n  if err != nil {\n    return errResult(err.Error())\n  }\n\n  cfg, err := config.New(repo)\n  if err != nil {\n    return errResult(err.Error())\n  }\n  db, err := storage.Open(cfg.DBPath)\n  if err != nil {\n    return errResult(err.Error())\n  }\n  defer db.Close()\n\n  rec, err := db.GetFileByRelPath(args.Path)\n  if err != nil {\n    return errResult(fmt.Sprintf(\"find file in index: %v\", err))\n  }\n\n  absPath, err := fsutil.ConfineToRepoStrict(repo, args.Path)\n  if err != nil {\n    return errResult(err.Error())\n  }\n\n  contentBytes, err := os.ReadFile(absPath)\n  if err != nil {\n    return errResult(fmt.Sprintf(\"read file: %v\", err))\n  }\n\n  sf := models.ScoredFile{\n    Record: rec,\n    Score:  1.0,\n  }\n\n  sig := packager.BuildSignature(sf, string(contentBytes))\n  return textResult(sig)\n}",
+      "tokens": 345,
+      "score": 41.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/mcp/tools.go:1244-1292",
+          "weight": 1
+        }
+      ],
+      "start_line": 1244,
+      "end_line": 1292,
+      "content_hash": "2c23848384da05a587d74b4a3f19e60754fc77c49fa4086549a6be82c917b6a5"
+    },
+    {
+      "rel_path": "internal/mcp/tools.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/mcp/tools.go\n// lines: 1300-1360\n// chunk: runGetExcerptTool\n// content_hash: 62ca2124bbb1ab990953f1faf9fbb3ed1d06ca6f86921c1b904a75ddb193ba50\n\nfunc runGetExcerptTool(ctx context.Context, raw json.RawMessage) ToolCallResult {\n  var args getExcerptArgs\n  if len(raw) \u003e 0 {\n    if err := json.Unmarshal(raw, \u0026args); err != nil {\n      return errResult(fmt.Sprintf(\"invalid arguments: %v\", err))\n    }\n  }\n  args.Path = strings.TrimSpace(args.Path)\n  if args.Path == \"\" {\n    return errResult(\"path must not be empty\")\n  }\n  args.Query = strings.TrimSpace(args.Query)\n  if args.Query == \"\" {\n    return errResult(\"query must not be empty\")\n  }\n  repo, err := resolveRepo(ctx, args.Repo)\n  if err != nil {\n    return errResult(err.Error())\n  }\n\n  cfg, err := config.New(repo)\n  if err != nil {\n    return errResult(err.Error())\n  }\n  db, err := storage.Open(cfg.DBPath)\n  if err != nil {\n    return errResult(err.Error())\n  }\n  defer db.Close()\n\n  rec, err := db.GetFileByRelPath(args.Path)\n  if err != nil {\n    return errResult(fmt.Sprintf(\"find file in index: %v\", err))\n  }\n\n  absPath, err := fsutil.ConfineToRepoStrict(repo, args.Path)\n  if err != nil {\n    return errResult(err.Error())\n  }\n\n  contentBytes, err := os.ReadFile(absPath)\n  if err != nil {\n    return errResult(fmt.Sprintf(\"read file: %v\", err))\n  }\n\n  terms := ranking.Tokenise(args.Query)\n  chunks, err := db.GetChunksForFile(rec.Path)\n  if err != nil {\n    return errResult(fmt.Sprintf(\"load chunks: %v\", err))\n  }\n  if excerpt, ok := excerptFromPersistedChunks(rec, string(contentBytes), terms, chunks); ok {\n    return textResult(excerpt)\n  }\n\n  excerpt, ok := packager.ExtractExcerpt(rec, string(contentBytes), terms)\n  if !ok {\n    return errResult(\"could not extract excerpt matching query terms\")\n  }\n\n  return textResult(excerpt)\n}",
+      "tokens": 457,
+      "score": 41.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/mcp/tools.go:1300-1360",
+          "weight": 1
+        }
+      ],
+      "start_line": 1300,
+      "end_line": 1360,
+      "content_hash": "62ca2124bbb1ab990953f1faf9fbb3ed1d06ca6f86921c1b904a75ddb193ba50"
+    },
+    {
+      "rel_path": "internal/mcp/tools.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/mcp/tools.go\n// lines: 89-96\n// chunk: listSignaturesInputSchema\n// content_hash: d79b9b841bb6b7969470769cf68a6b9ed633da69b69013b0dda3ae1cffbd22a1\n\nconst listSignaturesInputSchema = `{\n \"type\": \"object\",\n \"properties\": {\n  \"path\": { \"type\": \"string\", \"description\": \"Relative path to the file from the repository root.\" },\n  \"repo\": { \"type\": \"string\", \"description\": \"Absolute path to repo. Default: cwd.\" }\n },\n \"required\": [\"path\"]\n}`",
+      "tokens": 114,
+      "score": 39.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependent",
+          "detail": "internal/mcp/tools.go:89-96",
+          "weight": 1
+        }
+      ],
+      "start_line": 89,
+      "end_line": 96,
+      "content_hash": "d79b9b841bb6b7969470769cf68a6b9ed633da69b69013b0dda3ae1cffbd22a1"
+    },
+    {
+      "rel_path": "internal/packager/packager.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/packager.go\n// lines: 26-32\n// chunk: signatureMaxTokens\n// content_hash: ef15fe46dc5587c2eee97ec43f8ec78a1f14872b189b18320b053d0bd144af9d\n\n// signatureMaxTokens caps a single fragment's signature. Massive files\n  // (a 2000-line UI bundle, a wide API surface) used to dump 500-700\n  // tokens of bare function names — useful as orientation but enough to\n  // crowd out half the bundle on a tight budget. We truncate the symbol\n  // list to fit and append a \"// + N more symbols\" line so the model can\n  // still ask for the body if it actually needs them.\n  signatureMaxTokens = 350",
+      "tokens": 153,
+      "score": 36.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/packager.go:26-32",
+          "weight": 1
+        }
+      ],
+      "start_line": 26,
+      "end_line": 32,
+      "content_hash": "ef15fe46dc5587c2eee97ec43f8ec78a1f14872b189b18320b053d0bd144af9d"
+    },
+    {
+      "rel_path": "internal/packager/packager.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/packager.go\n// lines: 266-276\n// chunk: BuildSignature\n// content_hash: fb79703445a6adc771c98ed85f2726a2a58de15802d430b532f98c0c32553416\n\n// BuildSignature returns a compact signature derived from the parser output.\nfunc BuildSignature(sf models.ScoredFile, content string) string {\n  parsed := parser.Parse(sf.Record.Lang, content)\n  if parsed.Signature == \"\" {\n    return buildStructuralNote(sf)\n  }\n  return fmt.Sprintf(\n    \"// file: %s\\n// lang: %s\\n// representation: signature\\n\\n%s\",\n    sf.Record.RelPath, sf.Record.Lang, parsed.Signature,\n  )\n}",
+      "tokens": 146,
+      "score": 36.75,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/packager.go:266-276",
+          "weight": 1
+        }
+      ],
+      "start_line": 266,
+      "end_line": 276,
+      "content_hash": "fb79703445a6adc771c98ed85f2726a2a58de15802d430b532f98c0c32553416"
+    },
+    {
+      "rel_path": "internal/packager/packager.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/packager/packager.go\n// lines: 85-184\n// chunk: Pack\n// content_hash: c3013917e60d69e211f03c1e8a443acad0178f823b69e186b3006d33c276c6bb\n\n// Pack takes a ranked list of scored files and assembles an auditable Bundle.\nfunc Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle, error) {\n  budget := tokenbudget.NewManager(opts.Budget)\n  budget.Consume(headerReserve)\n\n  var fragments []models.ContextFragment\n  var upgrades []upgradeCandidate\n  totalRawTokens := 0\n  rankPos := 0 // position among files that pass the score gate, used to gate excerpts\n\n  for _, sf := range ranked {\n    if sf.Score \u003c minScore {\n      break // list is sorted; stop at the first irrelevant file\n    }\n    if budget.Remaining() \u003c= 0 {\n      break\n    }\n    if opts.MaxFiles \u003e 0 \u0026\u0026 len(fragments) \u003e= opts.MaxFiles {\n      break\n    }\n    if opts.MaxFragments \u003e 0 \u0026\u0026 len(fragments) \u003e= opts.MaxFragments {\n      break\n    }\n\n    contentBytes, err := os.ReadFile(sf.Record.Path)\n    if err != nil {\n      rankPos++ // count the slot — a top-3 file that fails to read should not move the gate down\n      continue\n    }\n    content := CompressCode(sf.Record.Lang, string(contentBytes), opts.StripComments, opts.StripBlankLines)\n\n    rawTokens := tokenbudget.EstimateTokens(content)\n    totalRawTokens += rawTokens\n\n    tryExcerpt := rankPos \u003c excerptTopN \u0026\u0026 len(opts.QueryTerms) \u003e 0\n    rankPos++\n\n    frag := selectFragment(sf, content, rawTokens, budget, opts, tryExcerpt)\n    if frag == nil {\n      continue // nothing fits even as a structural note\n    }\n\n    budget.Consume(frag.Tokens)\n    fragments = append(fragments, *frag)\n\n    if opts.UpgradeWithSlack \u0026\u0026\n      (frag.Representation == models.RepSignature || frag.Representation == models.RepExcerpt) {\n      upgrades = append(upgrades, upgradeCandidate{\n        idx:               len(fragments) - 1,\n        path:              sf.Record.Path,\n        rawToks:           rawTokens,\n        compressedContent: content,\n        lines:             sf.Record.Lines,\n      })\n    }\n  }\n\n  // Second pass: promote signatures to full_code while slack remains.\n  // Fragments are already in score order, so iterating upgrades in order\n  // preserves the \"best file gets the body first\" property. We cap the\n  // upgrade at fullCodeMaxTokens — past that, one monolithic body would\n  // crowd out coverage from all the smaller signatures we still want.\n  for _, u := range upgrades {\n    if u.rawToks \u003e fullCodeMaxTokens {\n      continue\n    }\n    current := fragments[u.idx]\n    delta := u.rawToks - current.Tokens\n    if delta \u003c= 0 || !budget.CanFit(delta) {\n      continue\n    }\n    fragments[u.idx].Representation = models.RepFullCode\n    fragments[u.idx].Content = u.compressedContent\n    fragments[u.idx].Tokens = u.rawToks\n    if u.lines \u003e 0 {\n      fragments[u.idx].StartLine = 1\n      fragments[u.idx].EndLine = u.lines\n    }\n    budget.Consume(delta)\n  }\n\n  var compressionRatio float64\n  netUsed := budget.Used() - headerReserve\n  if netUsed \u003e 0 \u0026\u0026 totalRawTokens \u003e 0 {\n    compressionRatio = float64(totalRawTokens) / float64(netUsed)\n  }\n\n  return models.Bundle{\n    Query:     query,\n    Budget:    opts.Budget,\n    Fragments: fragments,\n    Stats: models.BundleStats{\n      FilesConsidered:  len(ranked),\n      FilesIncluded:    len(fragments),\n      TokensUsed:       budget.Used(),\n      TokensBudget:     opts.Budget,\n      CompressionRatio: compressionRatio,\n    },\n  }, nil\n}",
+      "tokens": 866,
+      "score": 35.642,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "path_match",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "exact_filename",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        },
+        {
+          "signal": "long_chunk_penalty",
+          "detail": "internal/packager/packager.go:85-184",
+          "weight": 1
+        }
+      ],
+      "start_line": 85,
+      "end_line": 184,
+      "content_hash": "c3013917e60d69e211f03c1e8a443acad0178f823b69e186b3006d33c276c6bb"
+    },
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 277-294\n// chunk: DB.GetFileByRelPath\n// content_hash: 8887550f9a48d644d38474ef0d5f11fa492a2477c17e20e4c33a265bdf0d8867\n\n// GetFileByRelPath returns a FileRecord by its relative path.\nfunc (s *DB) GetFileByRelPath(relPath string) (models.FileRecord, error) {\n  rows, err := s.db.Query(`\n    SELECT id, path, rel_path, lang, size, lines, symbols, imports, checksum, indexed_at\n    FROM files\n    WHERE rel_path = ?\n  `, relPath)\n  if err != nil {\n    return models.FileRecord{}, err\n  }\n  defer rows.Close()\n\n  if !rows.Next() {\n    return models.FileRecord{}, fmt.Errorf(\"file not found: %s\", relPath)\n  }\n\n  return scanFile(rows)\n}",
+      "tokens": 170,
+      "score": 35.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:277-294",
+          "weight": 1
+        }
+      ],
+      "start_line": 277,
+      "end_line": 294,
+      "content_hash": "8887550f9a48d644d38474ef0d5f11fa492a2477c17e20e4c33a265bdf0d8867"
+    },
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 436-440\n// chunk: DB.DeleteFile\n// content_hash: cfef04e28d44b93ba4da0a9ad10d196b66e6bac3ab3347cacf2d858fe2a2ff94\n\n// DeleteFile deletes a single file record by path.\nfunc (s *DB) DeleteFile(path string) error {\n  _, err := s.db.Exec(`DELETE FROM files WHERE path = ?`, path)\n  return err\n}",
+      "tokens": 85,
+      "score": 35.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:436-440",
+          "weight": 1
+        }
+      ],
+      "start_line": 436,
+      "end_line": 440,
+      "content_hash": "cfef04e28d44b93ba4da0a9ad10d196b66e6bac3ab3347cacf2d858fe2a2ff94"
+    },
+    {
+      "rel_path": "internal/storage/storage.go",
+      "lang": "go",
+      "representation": "excerpt",
+      "content": "// file: internal/storage/storage.go\n// lines: 848-851\n// chunk: DB.GetChunksForFile\n// content_hash: aa3d33e9bd560baa82d75d67b74b7f3fe146a5e758d0c7173a7b2a29dba00cc5\n\n// GetChunksForFile retrieves all chunks for a given file path.\nfunc (s *DB) GetChunksForFile(filePath string) ([]models.Chunk, error) {\n  return s.SearchChunks(ChunkSearchOptions{FilePath: filePath})\n}",
+      "tokens": 93,
+      "score": 35.5,
+      "reasons": [
+        {
+          "signal": "symbol_match",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "content_match",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "chunk_scope",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "structural_symbol",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "structural_import",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "exact_content",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        },
+        {
+          "signal": "graph_dependency",
+          "detail": "internal/storage/storage.go:848-851",
+          "weight": 1
+        }
+      ],
+      "start_line": 848,
+      "end_line": 851,
+      "content_hash": "aa3d33e9bd560baa82d75d67b74b7f3fe146a5e758d0c7173a7b2a29dba00cc5"
+    }
+  ],
+  "stats": {
+    "files_considered": 12,
+    "files_included": 12,
+    "tokens_used": 2911,
+    "tokens_budget": 4000,
+    "compression_ratio": 0.796891557753444
+  },
+  "repo": "/Users/gere/NeuroMFS",
+  "commit_sha": "6c7597d9d67e10e33143cbf7e5554946cb6674c1",
+  "generated_at": "2026-06-12T09:10:53.430641Z",
+  "bundle_hash": "7bfd179fcf59f72de07c47217c271a0fb5b5086042097584ec8e91c8cbe548c3"
+}

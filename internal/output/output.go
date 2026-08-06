@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // Format is an output serialisation format.
@@ -52,8 +52,12 @@ func WriteWithOptions(w io.Writer, bundle models.Bundle, format Format, opts Opt
 // ─── Markdown ────────────────────────────────────────────────────────────────
 
 func writeMarkdown(w io.Writer, b models.Bundle, opts Options) error {
+	var writeErr error
 	p := func(format string, args ...any) {
-		fmt.Fprintf(w, format, args...)
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format, args...)
 	}
 
 	if opts.Machine {
@@ -68,7 +72,7 @@ func writeMarkdown(w io.Writer, b models.Bundle, opts Options) error {
 		if len(b.Fragments) == 0 {
 			p("_No relevant context found._\n")
 		}
-		return nil
+		return writeErr
 	}
 
 	p("# NeuroFS Context Bundle\n\n")
@@ -117,7 +121,7 @@ func writeMarkdown(w io.Writer, b models.Bundle, opts Options) error {
 		p("_No relevant context found for this query within the token budget._\n")
 	}
 
-	return nil
+	return writeErr
 }
 
 // ─── JSON ────────────────────────────────────────────────────────────────────
@@ -131,8 +135,12 @@ func writeJSON(w io.Writer, b models.Bundle, opts Options) error {
 // ─── Plain text ──────────────────────────────────────────────────────────────
 
 func writeText(w io.Writer, b models.Bundle, opts Options) error {
+	var writeErr error
 	p := func(format string, args ...any) {
-		fmt.Fprintf(w, format, args...)
+		if writeErr != nil {
+			return
+		}
+		_, writeErr = fmt.Fprintf(w, format, args...)
 	}
 
 	if opts.Machine {
@@ -143,7 +151,7 @@ func writeText(w io.Writer, b models.Bundle, opts Options) error {
 		if len(b.Fragments) == 0 {
 			p("No relevant context found.\n")
 		}
-		return nil
+		return writeErr
 	}
 
 	p("NEUROFS CONTEXT BUNDLE\n")
@@ -182,7 +190,7 @@ func writeText(w io.Writer, b models.Bundle, opts Options) error {
 		p("No relevant context found.\n")
 	}
 
-	return nil
+	return writeErr
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -210,6 +218,14 @@ func langFence(lang models.Lang) string {
 		return "json"
 	case models.LangYAML:
 		return "yaml"
+	case models.LangRust:
+		return "rust"
+	case models.LangCpp:
+		return "cpp"
+	case models.LangJava:
+		return "java"
+	case models.LangRuby:
+		return "ruby"
 	default:
 		return ""
 	}

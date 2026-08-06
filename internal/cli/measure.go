@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextusage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextusage"
 	"github.com/spf13/cobra"
 )
 
@@ -37,38 +37,42 @@ context path: initial bundle tokens plus any expand calls linked by session.`,
 			if jsonOut {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(summary)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "NeuroFS context usage\n")
+			w := newReportWriter(cmd.OutOrStdout())
+			w.printf("NeuroFS context usage\n")
 			if summary.SessionID != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "  session    : %s\n", summary.SessionID)
+				w.printf("  session    : %s\n", summary.SessionID)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  initial    : %d tokens\n", summary.InitialTokens)
-			fmt.Fprintf(cmd.OutOrStdout(), "  expansions : %d tokens (%d calls)\n", summary.ExpansionTokens, summary.Expansions)
+			w.printf("  initial    : %d tokens\n", summary.InitialTokens)
+			w.printf("  expansions : %d tokens (%d calls)\n", summary.ExpansionTokens, summary.Expansions)
 			if summary.ExpandedFiles > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "  files      : %d expanded", summary.ExpandedFiles)
+				w.printf("  files      : %d expanded", summary.ExpandedFiles)
 				if summary.FullFileExpansions > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), " (%d full-file)", summary.FullFileExpansions)
+					w.printf(" (%d full-file)", summary.FullFileExpansions)
 				}
-				fmt.Fprintln(cmd.OutOrStdout())
+				w.printf("\n")
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  total      : %d tokens\n", summary.TotalTokens)
+			w.printf("  total      : %d tokens\n", summary.TotalTokens)
 			if summary.EstimatedSaved != 0 || summary.SavingsRatio > 0 {
-				fmt.Fprintf(cmd.OutOrStdout(), "  saved      : %d tokens vs eager full-file baseline\n", summary.EstimatedSaved)
-				fmt.Fprintf(cmd.OutOrStdout(), "  ratio      : %.2fx of baseline\n", summary.SavingsRatio)
+				w.printf("  saved      : %d tokens vs eager full-file baseline\n", summary.EstimatedSaved)
+				w.printf("  ratio      : %.2fx of baseline\n", summary.SavingsRatio)
 			}
 			for _, file := range summary.Files {
-				fmt.Fprintf(cmd.OutOrStdout(), "  file       : %s (%d tokens, %d calls", file.Path, file.ExpansionTokens, file.Expansions)
+				w.printf("  file       : %s (%d tokens, %d calls", file.Path, file.ExpansionTokens, file.Expansions)
 				if len(file.Modes) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), ", modes=%v", file.Modes)
+					w.printf(", modes=%v", file.Modes)
 				}
 				if len(file.Ranges) > 0 {
-					fmt.Fprintf(cmd.OutOrStdout(), ", ranges=%v", file.Ranges)
+					w.printf(", ranges=%v", file.Ranges)
 				}
-				fmt.Fprintln(cmd.OutOrStdout(), ")")
+				w.printf(")\n")
 			}
 			for _, rec := range summary.Recommendations {
-				fmt.Fprintf(cmd.OutOrStdout(), "  recommend  : %s\n", rec)
+				w.printf("  recommend  : %s\n", rec)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "  log        : %s\n", contextusage.Path(cfg.RepoRoot))
+			w.printf("  log        : %s\n", contextusage.Path(cfg.RepoRoot))
+			if w.err != nil {
+				return fmt.Errorf("measure: write report: %w", w.err)
+			}
 			return nil
 		},
 	}

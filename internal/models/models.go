@@ -30,16 +30,20 @@ type Symbol struct {
 
 // FileRecord is the persisted representation of an indexed file.
 type FileRecord struct {
-	ID        int64     `json:"id"`
-	Path      string    `json:"path"`     // absolute path
-	RelPath   string    `json:"rel_path"` // relative to repo root
-	Lang      Lang      `json:"lang"`
-	Size      int64     `json:"size"`
-	Lines     int       `json:"lines"`
-	Symbols   []Symbol  `json:"symbols"`
-	Imports   []string  `json:"imports"`
-	Checksum  string    `json:"checksum"`
-	IndexedAt time.Time `json:"indexed_at"`
+	ID      int64  `json:"id"`
+	Path    string `json:"path"`     // absolute path
+	RelPath string `json:"rel_path"` // relative to repo root
+	Lang    Lang   `json:"lang"`
+	Size    int64  `json:"size"`
+	// ModTimeUnixNano is a cheap change signal, not an integrity check.
+	// Indexers still verify Checksum before declaring a file cached because
+	// checkouts and copy tools can preserve mtimes.
+	ModTimeUnixNano int64     `json:"mtime_unix_nano,omitempty"`
+	Lines           int       `json:"lines"`
+	Symbols         []Symbol  `json:"symbols"`
+	Imports         []string  `json:"imports"`
+	Checksum        string    `json:"checksum"`
+	IndexedAt       time.Time `json:"indexed_at"`
 }
 
 // Representation controls how a file appears inside a bundle.
@@ -97,11 +101,10 @@ type BundleStats struct {
 //
 // Repo, CommitSHA, GeneratedAt and BundleHash are populated by
 // taskflow.EnrichBundle at the moment a bundle is about to be persisted.
-// They are the audit identity fields a compliance/governance consumer
-// needs to claim "this bundle is what we sent to the LLM at time T from
-// commit X." BundleHash is the same content hash used by the audit
-// replay path, so a record produced from this bundle and the bundle
-// itself agree on identity.
+// They identify the canonical context at time T from commit X. BundleHash
+// covers audit.BuildPrompt's canonical serialization. When a caller persists
+// a different rendered wrapper, RenderedPromptHash records the exact bytes of
+// that wrapper separately.
 type Bundle struct {
 	Query       string            `json:"query"`
 	Budget      int               `json:"budget"`
@@ -111,6 +114,11 @@ type Bundle struct {
 	CommitSHA   string            `json:"commit_sha,omitempty"`
 	GeneratedAt time.Time         `json:"generated_at,omitempty"`
 	BundleHash  string            `json:"bundle_hash,omitempty"`
+	// HashAlgorithm is persisted with BundleHash so consumers can distinguish
+	// exact-prompt hashes from legacy order-insensitive identities.
+	HashAlgorithm               string `json:"hash_algorithm,omitempty"`
+	RenderedPromptHash          string `json:"rendered_prompt_hash,omitempty"`
+	RenderedPromptHashAlgorithm string `json:"rendered_prompt_hash_algorithm,omitempty"`
 }
 
 // ScoredFile is an intermediate result from the ranking stage.

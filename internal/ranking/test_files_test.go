@@ -3,7 +3,7 @@ package ranking
 import (
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 func TestIsTestLikePath(t *testing.T) {
@@ -21,6 +21,9 @@ func TestIsTestLikePath(t *testing.T) {
 		{"src/auth.spec.tsx", true},
 		{"src/auth.spec.js", true},
 		{"src/auth.spec.jsx", true},
+		{"pkg/test_auth.py", true},
+		{"pkg/auth_test.py", true},
+		{"pkg/conftest.py", true},
 		// directories
 		{"src/__tests__/auth.ts", true},
 		{"tests/integration/auth.go", true},

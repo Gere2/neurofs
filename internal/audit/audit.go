@@ -5,12 +5,21 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/runid"
 )
+
+// BundleHashAlgorithm identifies the canonical prompt serialization used by
+// BundleHash. Persisting it prevents old, order-insensitive hashes from being
+// mistaken for the current exact-prompt identity.
+const BundleHashAlgorithm = "sha256:neurofs-audit-prompt-v2"
+
+// GroundingMetricVersion identifies the citation validation semantics used by
+// new records: visible line ranges and a zero score for absent citations.
+const GroundingMetricVersion = 2
 
 // Options drive a single audit run. ExpectsFacts is optional — when unset,
 // AnswerRecall stays at 0 and is not included in summaries. Mode is an
@@ -32,6 +41,10 @@ type Options struct {
 // Errors only propagate from the model call; parsing never fails, drift
 // never fails — empty results are normal signal.
 func Run(ctx context.Context, m Model, bundle models.Bundle, opts Options) (AuditRecord, error) {
+	attribution, err := runid.Bind(ctx, runid.Availability{})
+	if err != nil {
+		return AuditRecord{}, fmt.Errorf("audit: bind run identity: %w", err)
+	}
 	now := time.Now
 	if opts.Now != nil {
 		now = opts.Now
@@ -55,16 +68,19 @@ func Run(ctx context.Context, m Model, bundle models.Bundle, opts Options) (Audi
 	}
 
 	rec := AuditRecord{
+		Availability:  attribution,
 		Question:      bundle.Query,
 		Model:         m.ID(),
 		Mode:          opts.Mode,
 		Timestamp:     now(),
 		BundleHash:    BundleHash(bundle),
+		HashAlgorithm: BundleHashAlgorithm,
 		Fragments:     freezeFragments(bundle),
 		Response:      resp,
 		Citations:     citations,
 		Drift:         drift,
 		GroundedRatio: GroundedRatio(citations),
+		MetricVersion: GroundingMetricVersion,
 		ExpectsFacts:  opts.ExpectsFacts,
 		FactsHit:      factsHit,
 		AnswerRecall:  recall,
@@ -88,39 +104,23 @@ func BuildPrompt(bundle models.Bundle) string {
 	fmt.Fprintf(&sb, "Question: %s\n\n", bundle.Query)
 	sb.WriteString("You have the following source fragments. Cite them as `path:line` when you rely on them. If something is not in the bundle, say so — do not invent.\n\n")
 	for _, f := range bundle.Fragments {
-		fmt.Fprintf(&sb, "=== %s (%s, %s) ===\n", f.RelPath, f.Lang, f.Representation)
+		location := f.RelPath
+		if f.StartLine > 0 && f.EndLine >= f.StartLine {
+			location = fmt.Sprintf("%s:%d-%d", location, f.StartLine, f.EndLine)
+		}
+		fmt.Fprintf(&sb, "=== %s (%s, %s) ===\n", location, f.Lang, f.Representation)
 		sb.WriteString(f.Content)
 		sb.WriteString("\n\n")
 	}
 	return sb.String()
 }
 
-// BundleHash produces a stable sha256 over the bundle's query and
-// fragments. Used as an identity for replay: two runs with the same hash
-// received the exact same context.
+// BundleHash is the sha256 of the exact prompt bytes sent to the model. Order,
+// duplicate paths, language, representation and visible line ranges all affect
+// BuildPrompt and therefore the identity.
 func BundleHash(bundle models.Bundle) string {
-	h := sha256.New()
-	h.Write([]byte(bundle.Query))
-	h.Write([]byte{0})
-
-	paths := make([]string, 0, len(bundle.Fragments))
-	by := make(map[string]models.ContextFragment, len(bundle.Fragments))
-	for _, f := range bundle.Fragments {
-		paths = append(paths, f.RelPath)
-		by[f.RelPath] = f
-	}
-	sort.Strings(paths)
-
-	for _, p := range paths {
-		f := by[p]
-		h.Write([]byte(f.RelPath))
-		h.Write([]byte{0})
-		h.Write([]byte(f.Representation))
-		h.Write([]byte{0})
-		h.Write([]byte(f.Content))
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	sum := sha256.Sum256([]byte(BuildPrompt(bundle)))
+	return hex.EncodeToString(sum[:])
 }
 
 // freezeFragments copies the minimal fields needed for replay. We drop
@@ -138,6 +138,9 @@ func freezeFragments(bundle models.Bundle) []AuditFragment {
 			Representation: f.Representation,
 			Tokens:         f.Tokens,
 			Content:        f.Content,
+			StartLine:      f.StartLine,
+			EndLine:        f.EndLine,
+			ContentHash:    f.ContentHash,
 		}
 	}
 	return out

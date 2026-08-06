@@ -2,6 +2,9 @@ package taskflow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,9 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // TestEnrichBundle_PopulatesIdentityFields verifies the audit-identity
@@ -36,6 +40,9 @@ func TestEnrichBundle_PopulatesIdentityFields(t *testing.T) {
 	}
 	if len(b.BundleHash) != 64 {
 		t.Errorf("BundleHash must be sha256-hex (64 chars); got %d chars", len(b.BundleHash))
+	}
+	if b.HashAlgorithm != audit.BundleHashAlgorithm {
+		t.Errorf("HashAlgorithm = %q, want %q", b.HashAlgorithm, audit.BundleHashAlgorithm)
 	}
 }
 
@@ -140,8 +147,220 @@ func TestBaseName(t *testing.T) {
 	if a == c {
 		t.Fatalf("different budget must produce different base: both %q", a)
 	}
-	if len(a) < 10 || a[8] != '-' {
+	if len(a) < 18 || a[16] != '-' {
 		t.Fatalf("base name shape wrong: %q", a)
+	}
+}
+
+func TestCacheManifestDetectsTamperingAndRevisionChanges(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "task.prompt.txt")
+	bundlePath := filepath.Join(dir, "task.bundle.json")
+	manifestPath := filepath.Join(dir, "task.manifest.json")
+	bundle := EnrichBundle(models.Bundle{
+		Query: "q",
+		Fragments: []models.ContextFragment{{
+			RelPath: "a.go", Lang: models.LangGo,
+			Representation: models.RepFullCode, Content: "package a",
+		}},
+	}, dir)
+	prompt := []byte("prompt")
+	bundle.RenderedPromptHash = sha256Hex(prompt)
+	bundle.RenderedPromptHashAlgorithm = renderedPromptHashAlgorithm
+	bundleBytes, err := json.Marshal(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := cacheManifest{
+		Version: cacheManifestVersion, Revision: "rev-a",
+		PromptSHA256: sha256Hex(prompt),
+		BundleSHA256: sha256Hex(bundleBytes),
+		BundleHash:   bundle.BundleHash,
+	}
+	manifestBytes, _ := json.Marshal(manifest)
+	for path, data := range map[string][]byte{
+		promptPath: prompt, bundlePath: bundleBytes, manifestPath: manifestBytes,
+	} {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !isCacheFreshWithManifest(promptPath, bundlePath, manifestPath, "rev-a") {
+		t.Fatal("valid manifest should reuse cache")
+	}
+	if isCacheFreshWithManifest(promptPath, bundlePath, manifestPath, "rev-b") {
+		t.Fatal("changed generation inputs must invalidate cache")
+	}
+	if err := os.WriteFile(promptPath, []byte("partial"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if isCacheFreshWithManifest(promptPath, bundlePath, manifestPath, "rev-a") {
+		t.Fatal("partial or tampered prompt must invalidate cache")
+	}
+}
+
+func TestExecutableIdentityIsStableAndHashed(t *testing.T) {
+	first := executableIdentity()
+	second := executableIdentity()
+	if first != second {
+		t.Fatalf("executable identity changed within one process: %q vs %q", first, second)
+	}
+	if len(first) != sha256.Size*2 {
+		t.Fatalf("executable identity = %q, want a SHA-256 hex digest", first)
+	}
+	if _, err := hex.DecodeString(first); err != nil {
+		t.Fatalf("executable identity is not hex: %v", err)
+	}
+}
+
+func TestCacheAndBundleReadsRejectUnsafeArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	outside := filepath.Join(dir, "outside.json")
+	if err := os.WriteFile(outside, []byte(`{"query":"outside"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "linked.bundle.json")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := readBundleJSON(link); err == nil {
+		t.Fatal("readBundleJSON followed a symlink")
+	}
+
+	manifestPath := filepath.Join(dir, "oversized.manifest.json")
+	if err := os.WriteFile(manifestPath, make([]byte, maxCacheMetadataBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if isCacheFreshWithManifest(
+		filepath.Join(dir, "prompt.txt"),
+		filepath.Join(dir, "bundle.json"),
+		manifestPath,
+		"revision",
+	) {
+		t.Fatal("oversized cache manifest was accepted")
+	}
+
+	cfg := &config.Config{
+		RepoRoot: dir,
+		DBPath:   filepath.Join(dir, config.DirName, config.DBName),
+		Budget:   config.DefaultBudget,
+	}
+	if err := os.MkdirAll(cfg.DBDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(cfg.DBDir(), "config.json")
+	if err := os.Symlink(outside, configPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cacheRevision(cfg, true, false); err == nil {
+		t.Fatal("cache revision followed a symlinked mutable input")
+	}
+}
+
+func TestCacheRevisionTracksCompleteUntrackedFileContent(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+
+	path := filepath.Join(repo, "notes.txt")
+	if err := os.WriteFile(path, []byte("alpha"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := cacheRevisionTestConfig(repo)
+	before, err := cacheRevision(cfg, true, false)
+	if err != nil {
+		t.Fatalf("initial cache revision: %v", err)
+	}
+
+	// Keep the path, status and byte length identical. Only a complete content
+	// fingerprint can distinguish these two untracked generations.
+	if err := os.WriteFile(path, []byte("bravo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	after, err := cacheRevision(cfg, true, false)
+	if err != nil {
+		t.Fatalf("updated cache revision: %v", err)
+	}
+	if before == after {
+		t.Fatal("untracked content change did not invalidate the cache revision")
+	}
+}
+
+func TestCacheRevisionTracksChangesBeyondPromptDiffPrefix(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+
+	largePath := filepath.Join(repo, "a-large.txt")
+	tailPath := filepath.Join(repo, "z-tail.txt")
+	if err := os.WriteFile(largePath, []byte(strings.Repeat("before\n", 2000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tailPath, []byte("baseline"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", ".")
+	runGit(t, repo, "commit", "-qm", "baseline")
+
+	if err := os.WriteFile(largePath, []byte(strings.Repeat("after\n", 2000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tailPath, []byte("first__"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statusBefore := GitStatus(repo)
+	diffBefore := GitDiff(repo)
+	cfg := cacheRevisionTestConfig(repo)
+	before, err := cacheRevision(cfg, true, false)
+	if err != nil {
+		t.Fatalf("initial cache revision: %v", err)
+	}
+
+	if err := os.WriteFile(tailPath, []byte("second_"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	statusAfter := GitStatus(repo)
+	diffAfter := GitDiff(repo)
+	if statusBefore != statusAfter {
+		t.Fatalf("test setup changed porcelain status:\nbefore=%q\nafter=%q", statusBefore, statusAfter)
+	}
+	if diffBefore != diffAfter {
+		t.Fatal("test setup did not place the tail edit beyond GitDiff's truncated prefix")
+	}
+	after, err := cacheRevision(cfg, true, false)
+	if err != nil {
+		t.Fatalf("updated cache revision: %v", err)
+	}
+	if before == after {
+		t.Fatal("change beyond the prompt diff prefix did not invalidate cache revision")
+	}
+}
+
+func cacheRevisionTestConfig(repo string) *config.Config {
+	return &config.Config{
+		RepoRoot: repo,
+		DBPath:   filepath.Join(repo, config.DirName, config.DBName),
+		Budget:   config.DefaultBudget,
+	}
+}
+
+func initGitRepo(t *testing.T, repo string) {
+	t.Helper()
+	runGit(t, repo, "init", "-q")
+	runGit(t, repo, "config", "user.email", "t@t")
+	runGit(t, repo, "config", "user.name", "t")
+	runGit(t, repo, "commit", "--allow-empty", "-qm", "initial")
+}
+
+func runGit(t *testing.T, repo string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
 	}
 }
 
@@ -216,6 +435,12 @@ func OtherThing(name string) string {
 	if !strings.Contains(result.Prompt, `rep="excerpt"`) || !strings.Contains(result.Prompt, "// lines:") {
 		t.Fatalf("prompt missing excerpt metadata:\n%s", result.Prompt)
 	}
+	if got, want := result.Bundle.RenderedPromptHash, sha256Hex([]byte(result.Prompt)); got != want {
+		t.Fatalf("RenderedPromptHash = %q, want exact prompt hash %q", got, want)
+	}
+	if got := result.Bundle.RenderedPromptHashAlgorithm; got != renderedPromptHashAlgorithm {
+		t.Fatalf("RenderedPromptHashAlgorithm = %q, want %q", got, renderedPromptHashAlgorithm)
+	}
 	if !strings.Contains(filepath.Base(result.PromptPath), "chunks-") {
 		t.Fatalf("chunk cache should use a distinct filename, got %s", result.PromptPath)
 	}
@@ -231,6 +456,69 @@ func TestGitDiffAndStatus(t *testing.T) {
 	status := GitStatus(tmp)
 	if status != "" {
 		t.Errorf("expected empty status on non-git dir, got: %q", status)
+	}
+}
+
+func TestGitDiffFiltersSensitiveAndIgnoredFiles(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	repo := t.TempDir()
+	files := map[string]string{
+		"main.go":             "package main\nconst visible = \"before\"\n",
+		".env":                "TOKEN=before\n",
+		"config/secrets.yaml": "token: before\n",
+		"ignored.go":          "package ignored\nconst value = \"before\"\n",
+		".neurofsignore":      "ignored.go\n",
+	}
+	for name, content := range files {
+		path := filepath.Join(repo, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "t@t"},
+		{"config", "user.name", "t"},
+		{"add", "."},
+		{"commit", "-qm", "initial"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	updates := map[string]string{
+		"main.go":             "package main\nconst visible = \"after\"\n",
+		".env":                "TOKEN=do-not-leak\n",
+		"config/secrets.yaml": "token: do-not-leak\n",
+		"ignored.go":          "package ignored\nconst value = \"do-not-leak\"\n",
+	}
+	for name, content := range updates {
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	diff := GitDiff(repo)
+	if !strings.Contains(diff, `visible = "after"`) {
+		t.Fatalf("safe source diff missing:\n%s", diff)
+	}
+	status := GitStatus(repo)
+	if !strings.Contains(status, "main.go") {
+		t.Fatalf("safe source status missing:\n%s", status)
+	}
+	for _, secret := range []string{"TOKEN=", "do-not-leak", "secrets.yaml", "ignored.go"} {
+		if strings.Contains(diff, secret) {
+			t.Fatalf("sensitive or ignored content %q leaked into diff:\n%s", secret, diff)
+		}
+		if strings.Contains(status, secret) {
+			t.Fatalf("sensitive or ignored path %q leaked into status:\n%s", secret, status)
+		}
 	}
 }
 
@@ -373,5 +661,201 @@ func TestEnsureFreshIndex(t *testing.T) {
 	}
 	if stat.ModTime().Before(time.Now().Add(-1 * time.Minute)) {
 		t.Errorf("expected DB to be re-scanned, but mtime remains stale: %v", stat.ModTime())
+	}
+}
+
+func TestMissingRepoRootFailsWithoutSideEffects(t *testing.T) {
+	parent := t.TempDir()
+	missing := filepath.Join(parent, "missing-repo")
+	cfg := &config.Config{
+		RepoRoot: missing,
+		DBPath:   filepath.Join(missing, config.DirName, config.DBName),
+		Budget:   config.DefaultBudget,
+	}
+
+	if _, err := Run(Opts{RepoRoot: missing, Query: "where is auth?"}); err == nil {
+		t.Fatal("Run must reject a missing repository root")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("Run created state under missing repository: stat error = %v", err)
+	}
+
+	if err := EnsureFreshIndex(cfg); err == nil {
+		t.Fatal("EnsureFreshIndex must reject a missing repository root")
+	}
+	if _, err := os.Lstat(missing); !os.IsNotExist(err) {
+		t.Fatalf("EnsureFreshIndex created state under missing repository: stat error = %v", err)
+	}
+}
+
+func TestRunDisableIndexRefreshDoesNotCreateMissingIndex(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(repo, "answer.go"),
+		[]byte("package answer\n\nconst Answer = 42\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Run(Opts{
+		RepoRoot:            repo,
+		Query:               "Where is Answer defined?",
+		Budget:              1200,
+		Force:               true,
+		DisableIndexRefresh: true,
+	})
+	if err == nil {
+		t.Fatal("read-only Run succeeded without an existing index")
+	}
+	dbPath := filepath.Join(repo, config.DirName, config.DBName)
+	if _, statErr := os.Lstat(dbPath); !os.IsNotExist(statErr) {
+		t.Fatalf("read-only Run created an index: %v", statErr)
+	}
+}
+
+func TestRunNoChunksRefreshesSourceGeneration(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	sourcePath := filepath.Join(repo, "answer.go")
+	firstSource := []byte("package answer\n\nfunc AlphaThing() string { return \"alpha\" }\n")
+	secondSource := []byte("package answer\n\nfunc BravoThing() string { return \"bravo\" }\n")
+	if len(firstSource) != len(secondSource) {
+		t.Fatal("test sources must have equal length")
+	}
+	if err := os.WriteFile(sourcePath, firstSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := Run(Opts{
+		RepoRoot:      repo,
+		Query:         "Where is AlphaThing?",
+		Budget:        1200,
+		Force:         true,
+		DisableChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("initial no-chunks run: %v", err)
+	}
+	if !strings.Contains(first.Prompt, "AlphaThing") {
+		t.Fatalf("initial prompt does not contain AlphaThing:\n%s", first.Prompt)
+	}
+	cached, err := Run(Opts{
+		RepoRoot:      repo,
+		Query:         "Where is AlphaThing?",
+		Budget:        1200,
+		DisableChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("cached no-chunks run: %v", err)
+	}
+	if !cached.Reused {
+		t.Fatal("freshness preflight invalidated an unchanged no-chunks cache")
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, secondSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(sourcePath, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := Run(Opts{
+		RepoRoot:      repo,
+		Query:         "Where is BravoThing?",
+		Budget:        1200,
+		Force:         true,
+		DisableChunks: true,
+	})
+	if err != nil {
+		t.Fatalf("no-chunks run after source edit: %v", err)
+	}
+	if !second.AutoScanned {
+		t.Fatal("source checksum drift did not report an implicit index refresh")
+	}
+	if !strings.Contains(second.Prompt, "BravoThing") ||
+		strings.Contains(second.Prompt, "AlphaThing") {
+		t.Fatalf("prompt did not use the refreshed source generation:\n%s", second.Prompt)
+	}
+}
+
+func TestRunNoChunksReadOnlyRejectsStaleSourceWithoutWrites(t *testing.T) {
+	repo := t.TempDir()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	sourcePath := filepath.Join(repo, "answer.go")
+	firstSource := []byte("package answer\n\nfunc AlphaThing() string { return \"alpha\" }\n")
+	secondSource := []byte("package answer\n\nfunc BravoThing() string { return \"bravo\" }\n")
+	if err := os.WriteFile(sourcePath, firstSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(Opts{
+		RepoRoot:      repo,
+		Query:         "Where is AlphaThing?",
+		Budget:        1200,
+		Force:         true,
+		DisableChunks: true,
+	}); err != nil {
+		t.Fatalf("initial no-chunks run: %v", err)
+	}
+	cfg, err := config.New(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDB, err := os.ReadFile(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeInfo, err := os.Stat(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeCache, err := os.ReadDir(filepath.Join(cfg.DBDir(), "task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceInfo, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, secondSource, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(sourcePath, sourceInfo.ModTime(), sourceInfo.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Run(Opts{
+		RepoRoot:            repo,
+		Query:               "Where is BravoThing?",
+		Budget:              1200,
+		Force:               true,
+		DisableChunks:       true,
+		DisableIndexRefresh: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "automatic refresh is disabled") {
+		t.Fatalf("read-only stale run error = %v, want explicit refresh-disabled error", err)
+	}
+	afterDB, err := os.ReadFile(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterInfo, err := os.Stat(cfg.DBPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha256.Sum256(afterDB) != sha256.Sum256(beforeDB) ||
+		afterInfo.Size() != beforeInfo.Size() ||
+		!afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
+		t.Fatal("read-only stale run changed the index database")
+	}
+	afterCache, err := os.ReadDir(filepath.Join(cfg.DBDir(), "task"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterCache) != len(beforeCache) {
+		t.Fatalf("read-only stale run changed task cache entries: before=%d after=%d", len(beforeCache), len(afterCache))
 	}
 }

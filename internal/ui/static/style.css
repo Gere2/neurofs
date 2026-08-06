@@ -2175,3 +2175,312 @@ table.records td code { font-size: 0.75rem; }
   opacity: 0.9;
 }
 
+/* ==========================================================================
+   ORCHESTRATE TAB STYLES
+   ========================================================================== */
+.v8-nav-accent {
+  background: linear-gradient(135deg, rgba(234, 179, 8, 0.15), rgba(249, 115, 22, 0.15)) !important;
+  border-color: rgba(234, 179, 8, 0.4) !important;
+  color: #facc15 !important;
+}
+
+.orc-task-card {
+  background: var(--panel-2, #18181b);
+  border: 1px solid var(--border, #27272a);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.orc-task-card.running {
+  border-color: #3b82f6;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.2);
+}
+
+.orc-task-card.done {
+  border-color: #22c55e;
+}
+
+.orc-task-card.failed {
+  border-color: #ef4444;
+}
+
+.orc-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.orc-task-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--fg, #f4f4f5);
+}
+
+.orc-task-badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.orc-badge-pending { background: #3f3f46; color: #a1a1aa; }
+.orc-badge-running { background: #1e3a8a; color: #93c5fd; }
+.orc-badge-done { background: #14532d; color: #86efac; }
+.orc-badge-failed { background: #7f1d1d; color: #fca5a5; }
+
+.orc-task-details {
+  display: flex;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--muted, #a1a1aa);
+  margin-bottom: 0.5rem;
+}
+
+.orc-task-response {
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  padding: 0.75rem;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  color: #e4e4e7;
+}
+
+/* ==========================================================================
+   AGENT COMMANDER — GAMIFICATION & COMMAND CENTER STYLES
+   ========================================================================== */
+
+.cmd-header-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.cmd-commander-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(10, 10, 26, 0.75);
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 8px;
+  padding: 4px 12px;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.08);
+  font-family: var(--mono);
+}
+
+.cmd-player-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-level-badge {
+  background: linear-gradient(135deg, #00d4ff, #aa66ff);
+  color: #000;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+}
+
+.cmd-player-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cmd-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.cmd-xp-bar-wrap {
+  width: 90px;
+  height: 5px;
+  background: #1e1e38;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cmd-xp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff88, #00d4ff);
+  width: 0%;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.cmd-stats-pills {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding-left: 10px;
+}
+
+.cmd-pill {
+  font-size: 0.72rem;
+  color: #a1a1aa;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmd-pill span#cmd-streak-count { color: #ffaa00; font-weight: 600; }
+.cmd-pill span#cmd-grounding-score { color: #00ff88; font-weight: 600; }
+.cmd-pill span#cmd-saved-usd { color: #00d4ff; font-weight: 600; }
+
+/* Agent Cards Grid */
+.cmd-agent-matrix {
+  margin-bottom: 20px;
+  background: rgba(10, 10, 26, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cmd-matrix-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.cmd-matrix-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #00d4ff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmd-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.cmd-agent-card {
+  background: #121222;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 12px;
+  transition: all 0.2s ease;
+}
+
+.cmd-agent-card:hover {
+  border-color: #00d4ff;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+.cmd-agent-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 6px;
+}
+
+.cmd-agent-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #f4f4f5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cmd-agent-wins {
+  font-size: 0.7rem;
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cmd-agent-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #a1a1aa;
+  margin: 3px 0;
+}
+
+.cmd-stat-val {
+  color: #f4f4f5;
+  font-weight: 500;
+}
+
+.cmd-achievements-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cmd-pill-btn {
+  background: rgba(170, 102, 255, 0.15);
+  border: 1px solid rgba(170, 102, 255, 0.4);
+  color: #d8b4fe;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--mono);
+  transition: all 0.2s ease;
+}
+
+.cmd-pill-btn:hover {
+  background: rgba(170, 102, 255, 0.3);
+  box-shadow: 0 0 8px rgba(170, 102, 255, 0.4);
+}
+
+.cmd-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.cmd-modal-card {
+  background: #0d0d1a;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 650px;
+  padding: 20px;
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.2);
+}
+
+.cmd-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 10px;
+}
+
+
+
+

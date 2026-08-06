@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // driftBundle is a fixture that mirrors a small but realistic Go/TS bundle.

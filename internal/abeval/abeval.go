@@ -31,14 +31,15 @@ package abeval
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // DefaultThreshold is the minimum mean iso-recall token reduction for a PASS.
@@ -145,11 +146,11 @@ func (o Options) withDefaults() Options {
 // plus the aggregate summary with a verdict.
 func Run(ctx context.Context, files []models.FileRecord, tasks []Task, search SearchFn, opts Options) ([]TaskResult, Summary, error) {
 	opts = opts.withDefaults()
-	absByRel := relToAbs(files)
+	recordsByRel := recordsByRelPath(files)
 
 	results := make([]TaskResult, 0, len(tasks))
 	for _, t := range tasks {
-		r, err := evalTask(ctx, t, search, absByRel, opts)
+		r, err := evalTask(ctx, t, search, recordsByRel, opts)
 		if err != nil {
 			return nil, Summary{}, fmt.Errorf("task %q: %w", t.Question, err)
 		}
@@ -158,8 +159,15 @@ func Run(ctx context.Context, files []models.FileRecord, tasks []Task, search Se
 	return results, summarise(results, opts), nil
 }
 
+// Summarise recomputes the aggregate economy metrics from retained task rows.
+// It is exported so evidence verifiers can prove that a persisted summary is
+// internally consistent instead of trusting headline numbers copied into it.
+func Summarise(results []TaskResult, opts Options) Summary {
+	return summarise(results, opts.withDefaults())
+}
+
 // evalTask runs both arms for one task.
-func evalTask(ctx context.Context, t Task, search SearchFn, absByRel map[string]string, opts Options) (TaskResult, error) {
+func evalTask(ctx context.Context, t Task, search SearchFn, recordsByRel map[string]models.FileRecord, opts Options) (TaskResult, error) {
 	res := TaskResult{Question: t.Question, Source: t.Source}
 
 	hits, err := search(ctx, t.Question, opts.SearchLimit)
@@ -196,11 +204,11 @@ func evalTask(ctx context.Context, t Task, search SearchFn, absByRel map[string]
 		if rel == "" || seenA[rel] {
 			continue
 		}
-		abs, ok := absByRel[rel]
+		record, ok := recordsByRel[rel]
 		if !ok {
 			continue
 		}
-		data, readErr := os.ReadFile(abs)
+		data, _, readErr := fsutil.ReadIndexedFileBounded(record, config.MaxFileSize)
 		if readErr != nil {
 			continue
 		}
@@ -300,10 +308,10 @@ func summarise(results []TaskResult, opts Options) Summary {
 	return s
 }
 
-func relToAbs(files []models.FileRecord) map[string]string {
-	m := make(map[string]string, len(files))
+func recordsByRelPath(files []models.FileRecord) map[string]models.FileRecord {
+	m := make(map[string]models.FileRecord, len(files))
 	for _, f := range files {
-		m[normPath(f.RelPath)] = f.Path
+		m[normPath(f.RelPath)] = f
 	}
 	return m
 }

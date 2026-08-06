@@ -3,7 +3,7 @@ package taskflow
 import (
 	"context"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // LedgerWriter abstracts session logging within prompt-generation flows.

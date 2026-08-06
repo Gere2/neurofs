@@ -5,12 +5,13 @@ package packager
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/parser"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/parser"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // Thresholds for representation selection (measured in tokens).
@@ -75,15 +76,19 @@ type Options struct {
 // upgradeCandidate holds the per-fragment data we need for the optional
 // second-pass body upgrade. We keep it package-private; callers never see it.
 type upgradeCandidate struct {
-	idx               int    // index into the fragments slice
-	path              string // absolute path on disk
-	rawToks           int    // tokens needed to upgrade to full_code
-	compressedContent string // pre-compressed content
-	lines             int    // indexed file line count for full_code metadata
+	idx             int    // index into the fragments slice
+	path            string // absolute path on disk
+	rawToks         int    // tokens needed to upgrade to full_code
+	content         string // exact or explicitly transformed file content
+	lines           int    // indexed file line count for full_code metadata
+	hasSourceRanges bool   // false when explicit compression changed line positions
 }
 
 // Pack takes a ranked list of scored files and assembles an auditable Bundle.
 func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle, error) {
+	if opts.Budget <= 0 {
+		return models.Bundle{}, fmt.Errorf("packager: budget must be positive")
+	}
 	budget := tokenbudget.NewManager(opts.Budget)
 	budget.Consume(headerReserve)
 
@@ -106,20 +111,29 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 			break
 		}
 
-		contentBytes, err := os.ReadFile(sf.Record.Path)
+		contentBytes, _, err := fsutil.ReadIndexedFileBounded(sf.Record, config.MaxFileSize)
 		if err != nil {
 			rankPos++ // count the slot — a top-3 file that fails to read should not move the gate down
 			continue
 		}
-		content := CompressCode(sf.Record.Lang, string(contentBytes), opts.StripComments, opts.StripBlankLines)
+		sourceContent := string(contentBytes)
+		content := sourceContent
+		// Source bytes are the safest default: they preserve semantics and make
+		// path:line citations exact. Destructive compression is opt-in through
+		// the existing flags; transformed fragments intentionally omit source
+		// ranges because their line numbers no longer map one-to-one.
+		if opts.StripComments || opts.StripBlankLines {
+			content = CompressCode(sf.Record.Lang, sourceContent, opts.StripComments, opts.StripBlankLines)
+		}
+		hasSourceRanges := content == sourceContent
 
-		rawTokens := tokenbudget.EstimateTokens(content)
-		totalRawTokens += rawTokens
+		contentTokens := tokenbudget.EstimateTokens(content)
+		totalRawTokens += tokenbudget.EstimateTokens(sourceContent)
 
 		tryExcerpt := rankPos < excerptTopN && len(opts.QueryTerms) > 0
 		rankPos++
 
-		frag := selectFragment(sf, content, rawTokens, budget, opts, tryExcerpt)
+		frag := selectFragment(sf, sourceContent, content, contentTokens, budget, opts, tryExcerpt, hasSourceRanges)
 		if frag == nil {
 			continue // nothing fits even as a structural note
 		}
@@ -130,11 +144,12 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 		if opts.UpgradeWithSlack &&
 			(frag.Representation == models.RepSignature || frag.Representation == models.RepExcerpt) {
 			upgrades = append(upgrades, upgradeCandidate{
-				idx:               len(fragments) - 1,
-				path:              sf.Record.Path,
-				rawToks:           rawTokens,
-				compressedContent: content,
-				lines:             sf.Record.Lines,
+				idx:             len(fragments) - 1,
+				path:            sf.Record.Path,
+				rawToks:         contentTokens,
+				content:         content,
+				lines:           sf.Record.Lines,
+				hasSourceRanges: hasSourceRanges,
 			})
 		}
 	}
@@ -154,11 +169,14 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 			continue
 		}
 		fragments[u.idx].Representation = models.RepFullCode
-		fragments[u.idx].Content = u.compressedContent
+		fragments[u.idx].Content = u.content
 		fragments[u.idx].Tokens = u.rawToks
-		if u.lines > 0 {
+		if u.hasSourceRanges && u.lines > 0 {
 			fragments[u.idx].StartLine = 1
 			fragments[u.idx].EndLine = u.lines
+		} else {
+			fragments[u.idx].StartLine = 0
+			fragments[u.idx].EndLine = 0
 		}
 		budget.Consume(delta)
 	}
@@ -190,7 +208,16 @@ func Pack(ranked []models.ScoredFile, query string, opts Options) (models.Bundle
 // the caller supplied query terms. The excerpt option slots BETWEEN
 // full_code and signature: we prefer a full body when small, and never
 // substitute an excerpt for a file that would have fit fully anyway.
-func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget *tokenbudget.Manager, opts Options, tryExcerpt bool) *models.ContextFragment {
+func selectFragment(
+	sf models.ScoredFile,
+	sourceContent string,
+	content string,
+	rawTokens int,
+	budget *tokenbudget.Manager,
+	opts Options,
+	tryExcerpt bool,
+	hasSourceRanges bool,
+) *models.ContextFragment {
 	base := &models.ContextFragment{
 		RelPath:     sf.Record.RelPath,
 		Lang:        sf.Record.Lang,
@@ -210,7 +237,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 		f.Representation = models.RepFullCode
 		f.Content = content
 		f.Tokens = rawTokens
-		if sf.Record.Lines > 0 {
+		if hasSourceRanges && sf.Record.Lines > 0 {
 			f.StartLine = 1
 			f.EndLine = sf.Record.Lines
 		}
@@ -221,7 +248,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 	// names symbols that actually exist in the file. This is the
 	// granular middle ground between "full body" and "names only".
 	if tryExcerpt && isExcerptLang(sf.Record.Lang) {
-		if exc, ok := ExtractExcerpt(sf.Record, content, opts.QueryTerms); ok {
+		if exc, ok := ExtractExcerpt(sf.Record, sourceContent, opts.QueryTerms); ok {
 			excTokens := tokenbudget.EstimateTokens(exc)
 			// Skip when (a) the excerpt is too small to be useful, (b) it
 			// blew past the per-fragment cap (better to fall to signature
@@ -238,7 +265,7 @@ func selectFragment(sf models.ScoredFile, content string, rawTokens int, budget 
 	}
 
 	// Option 3: signature — compact interface view.
-	sig := BuildSignature(sf, content)
+	sig := BuildSignature(sf, sourceContent)
 	sig = capSignature(sig, signatureMaxTokens)
 	sigTokens := tokenbudget.EstimateTokens(sig)
 	if sigTokens > 0 && budget.CanFit(sigTokens) {

@@ -6,8 +6,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -128,24 +128,11 @@ func TestEncodeDecodeEmbedding(t *testing.T) {
 }
 
 func TestAutoDetection(t *testing.T) {
-	origProvider := os.Getenv("NEUROFS_EMBEDDING_PROVIDER")
-	origOpenAIKey := os.Getenv("OPENAI_API_KEY")
-	origGeminiKey := os.Getenv("GEMINI_API_KEY")
-	origVoyageKey := os.Getenv("VOYAGE_API_KEY")
-	origOllamaHost := os.Getenv("OLLAMA_HOST")
-	defer func() {
-		os.Setenv("NEUROFS_EMBEDDING_PROVIDER", origProvider)
-		os.Setenv("OPENAI_API_KEY", origOpenAIKey)
-		os.Setenv("GEMINI_API_KEY", origGeminiKey)
-		os.Setenv("VOYAGE_API_KEY", origVoyageKey)
-		os.Setenv("OLLAMA_HOST", origOllamaHost)
-	}()
-
-	os.Unsetenv("NEUROFS_EMBEDDING_PROVIDER")
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Unsetenv("GEMINI_API_KEY")
-	os.Unsetenv("VOYAGE_API_KEY")
-	os.Unsetenv("OLLAMA_HOST")
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("VOYAGE_API_KEY", "")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:1")
 
 	// Case 1: Defaults to mock if no keys are set
 	client := NewClient()
@@ -153,40 +140,31 @@ func TestAutoDetection(t *testing.T) {
 		t.Errorf("expected provider mock, got %s", client.ProviderName())
 	}
 
-	// Case 2: OpenAI Key auto-detects openai
-	os.Setenv("OPENAI_API_KEY", "sk-test-openai")
+	// Case 2: Cloud keys alone do not opt repository contents into cloud use.
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
 	client = NewClient()
-	if client.ProviderName() != "openai" {
-		t.Errorf("expected provider openai, got %s", client.ProviderName())
-	}
-	if client.ModelName() != "text-embedding-3-small" {
-		t.Errorf("expected default OpenAI model, got %s", client.ModelName())
+	if client.ProviderName() != "mock" {
+		t.Errorf("expected provider mock without explicit opt-in, got %s", client.ProviderName())
 	}
 
-	// Case 3: Gemini Key auto-detects gemini
-	os.Unsetenv("OPENAI_API_KEY")
-	os.Setenv("GEMINI_API_KEY", "ai-test-gemini")
+	// Case 3: The same rule applies to Gemini.
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "ai-test-gemini")
 	client = NewClient()
-	if client.ProviderName() != "gemini" {
-		t.Errorf("expected provider gemini, got %s", client.ProviderName())
-	}
-	if client.ModelName() != "text-embedding-004" {
-		t.Errorf("expected default Gemini model, got %s", client.ModelName())
+	if client.ProviderName() != "mock" {
+		t.Errorf("expected provider mock without explicit opt-in, got %s", client.ProviderName())
 	}
 
-	// Case 4: Voyage Key auto-detects voyage
-	os.Unsetenv("GEMINI_API_KEY")
-	os.Setenv("VOYAGE_API_KEY", "v-test-voyage")
+	// Case 4: The same rule applies to Voyage.
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("VOYAGE_API_KEY", "v-test-voyage")
 	client = NewClient()
-	if client.ProviderName() != "voyage" {
-		t.Errorf("expected provider voyage, got %s", client.ProviderName())
-	}
-	if client.ModelName() != "voyage-code-2" {
-		t.Errorf("expected default Voyage model, got %s", client.ModelName())
+	if client.ProviderName() != "mock" {
+		t.Errorf("expected provider mock without explicit opt-in, got %s", client.ProviderName())
 	}
 
 	// Case 5: Ollama responsive auto-detects ollama
-	os.Unsetenv("VOYAGE_API_KEY")
+	t.Setenv("VOYAGE_API_KEY", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/tags" {
 			w.WriteHeader(http.StatusOK)
@@ -196,7 +174,7 @@ func TestAutoDetection(t *testing.T) {
 	}))
 	defer server.Close()
 
-	os.Setenv("OLLAMA_HOST", server.URL)
+	t.Setenv("OLLAMA_HOST", server.URL)
 	client = NewClient()
 	if client.ProviderName() != "ollama" {
 		t.Errorf("expected provider ollama, got %s", client.ProviderName())
@@ -206,8 +184,8 @@ func TestAutoDetection(t *testing.T) {
 	}
 
 	// Case 6: Explicit setting overrides auto-detection
-	os.Setenv("NEUROFS_EMBEDDING_PROVIDER", "openai")
-	os.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "openai")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
 	client = NewClient()
 	if client.ProviderName() != "openai" {
 		t.Errorf("expected explicit provider openai, got %s", client.ProviderName())
@@ -243,7 +221,9 @@ func TestOpenAIEmbeddingAPI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode OpenAI response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -270,7 +250,12 @@ func TestGeminiEmbeddingAPI(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		if r.URL.Query().Get("key") != "ai-test-gemini" {
+		if r.URL.RawQuery != "" {
+			t.Errorf("Gemini credential leaked into query string: %q", r.URL.RawQuery)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("x-goog-api-key") != "ai-test-gemini" {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
@@ -287,7 +272,9 @@ func TestGeminiEmbeddingAPI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode Gemini response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -305,6 +292,73 @@ func TestGeminiEmbeddingAPI(t *testing.T) {
 	expected := []float32{0.4, 0.5, 0.6}
 	if !reflect.DeepEqual(vec, expected) {
 		t.Errorf("expected %v, got %v", expected, vec)
+	}
+}
+
+func TestGeminiErrorsDoNotExposeEndpointOrAPIKey(t *testing.T) {
+	const secret = "gemini-secret-that-must-not-leak"
+	var serverURL string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.RawQuery != "" {
+			t.Errorf("Gemini credential leaked into query string: %q", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != secret {
+			t.Errorf("x-goog-api-key = %q, want configured credential", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"message":"bad key ` + secret + ` at ` + serverURL + `"}}`))
+	}))
+	defer server.Close()
+	serverURL = server.URL
+
+	client := NewClient()
+	client.provider = "gemini"
+	client.apiKey = secret
+	client.endpoint = server.URL
+	client.model = "text-embedding-004"
+
+	_, err := client.GetEmbedding(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected Gemini error")
+	}
+	errText := err.Error()
+	if strings.Contains(errText, secret) {
+		t.Fatalf("error exposed API key: %q", errText)
+	}
+	if strings.Contains(errText, server.URL) {
+		t.Fatalf("error exposed endpoint URL: %q", errText)
+	}
+}
+
+func TestProviderErrorsDoNotExposeResponseBodies(t *testing.T) {
+	const leaked = "repository-text-and-secret-must-not-leak"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"message":"` + leaked + `"}`))
+	}))
+	defer server.Close()
+
+	for _, provider := range []string{"openai", "voyage", "ollama"} {
+		t.Run(provider, func(t *testing.T) {
+			client := &Client{
+				provider: provider,
+				apiKey:   "configured-key",
+				client:   server.Client(),
+				model:    "test-model",
+				endpoint: server.URL,
+			}
+			_, err := client.GetEmbedding(context.Background(), "private repository text")
+			if err == nil {
+				t.Fatal("expected provider error")
+			}
+			if strings.Contains(err.Error(), leaked) {
+				t.Fatalf("provider response body leaked through error: %q", err)
+			}
+			if !strings.Contains(err.Error(), "status 502") {
+				t.Fatalf("error omitted safe HTTP status: %q", err)
+			}
+		})
 	}
 }
 
@@ -341,7 +395,9 @@ func TestVoyageEmbeddingAPI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode Voyage response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -383,7 +439,9 @@ func TestOllamaEmbeddingAPI(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			t.Errorf("encode Ollama response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -404,19 +462,15 @@ func TestOllamaEmbeddingAPI(t *testing.T) {
 }
 
 func TestNewClientHybridMode(t *testing.T) {
-	origOpenAIKey := os.Getenv("OPENAI_API_KEY")
-	origHybridEnv := os.Getenv("NEUROFS_HYBRID_MODE")
-	defer func() {
-		os.Setenv("OPENAI_API_KEY", origOpenAIKey)
-		os.Setenv("NEUROFS_HYBRID_MODE", origHybridEnv)
-	}()
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "")
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai")
+	t.Setenv("NEUROFS_HYBRID_MODE", "")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:1")
 
-	os.Setenv("OPENAI_API_KEY", "sk-test-openai")
-
-	// If hybridMode param is not passed and env is not set, it should pick OpenAI (since API key is set)
+	// A cloud key alone is not an opt-in.
 	clientNormal := NewClient()
-	if clientNormal.ProviderName() != "openai" {
-		t.Errorf("expected provider openai, got %s", clientNormal.ProviderName())
+	if clientNormal.ProviderName() != "mock" {
+		t.Errorf("expected provider mock, got %s", clientNormal.ProviderName())
 	}
 
 	// If hybridMode param is true, it should bypass OpenAI and fall back to mock (since Ollama is not running in test)
@@ -426,14 +480,14 @@ func TestNewClientHybridMode(t *testing.T) {
 	}
 
 	// If NEUROFS_HYBRID_MODE env is true, it should also bypass OpenAI and fall back to mock
-	os.Setenv("NEUROFS_HYBRID_MODE", "true")
+	t.Setenv("NEUROFS_HYBRID_MODE", "true")
 	clientHybridEnv := NewClient()
 	if clientHybridEnv.ProviderName() != "mock" {
 		t.Errorf("expected provider mock with hybrid mode env, got %s", clientHybridEnv.ProviderName())
 	}
 }
 
-func TestCloudEmbeddingFallback(t *testing.T) {
+func TestCloudEmbeddingFailurePreservesProviderProvenance(t *testing.T) {
 	// Start a mock server that returns 500 error for OpenAI embeddings
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -446,19 +500,51 @@ func TestCloudEmbeddingFallback(t *testing.T) {
 	client.endpoint = server.URL
 	client.model = "text-embedding-3-small"
 
-	// When GetEmbedding fails on OpenAI, it should fall back to Mock (since Ollama is not running in test)
-	vec, err := client.GetEmbedding(context.Background(), "hello")
-	if err != nil {
-		t.Fatalf("unexpected error, should have fallen back successfully: %v", err)
+	_, err := client.GetEmbedding(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("expected the configured cloud provider failure to be returned")
 	}
 
-	// Client provider should have switched to mock
+	// A request failure must never mutate provenance or silently mix vector
+	// spaces in one indexing run.
+	if client.ProviderName() != "openai" {
+		t.Errorf("expected provider to remain openai, got %s", client.ProviderName())
+	}
+	if client.ModelName() != "text-embedding-3-small" {
+		t.Errorf("expected model provenance to remain stable, got %s", client.ModelName())
+	}
+}
+
+func TestHybridModeOverridesExplicitCloudProvider(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "openai")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:1")
+
+	client := NewClient(true)
 	if client.ProviderName() != "mock" {
-		t.Errorf("expected provider to fall back to mock, got %s", client.ProviderName())
+		t.Fatalf("hybrid mode provider = %q, want local mock", client.ProviderName())
 	}
+}
 
-	// Verify we got a non-empty mock vector
-	if len(vec) != Dimension {
-		t.Errorf("expected mock dimension %d, got %d", Dimension, len(vec))
+func TestInvalidExplicitProviderIsNotSilentlyMocked(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "opneai")
+	client := NewClient()
+	if client.ProviderName() != "opneai" {
+		t.Fatalf("provider = %q, want explicit invalid value preserved", client.ProviderName())
+	}
+	if _, err := client.GetEmbedding(context.Background(), "hello"); err == nil {
+		t.Fatal("expected unsupported provider error")
+	}
+	if err := client.Validate(); err == nil {
+		t.Fatal("expected unsupported provider validation error")
+	}
+}
+
+func TestValidateRejectsMissingExplicitCloudCredential(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "gemini")
+	t.Setenv("GEMINI_API_KEY", "")
+	client := NewClient()
+	if err := client.Validate(); err == nil {
+		t.Fatal("expected missing Gemini API key validation error")
 	}
 }

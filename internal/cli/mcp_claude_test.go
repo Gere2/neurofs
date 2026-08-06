@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -53,6 +54,11 @@ func TestInstallAndUninstallClaudeMCP(t *testing.T) {
 	if len(installed.Args) != 3 || installed.Args[0] != "mcp" || installed.Args[1] != "--repo" || installed.Args[2] != repo {
 		t.Fatalf("unexpected args: %+v", installed.Args)
 	}
+	if info, err := os.Stat(configPath); err != nil {
+		t.Fatal(err)
+	} else if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("config mode = %o, want 600", got)
+	}
 
 	if _, _, err := installClaudeMCP(mcpClaudeOptions{
 		RepoRoot:   repo,
@@ -77,6 +83,27 @@ func TestInstallAndUninstallClaudeMCP(t *testing.T) {
 	}
 	if _, ok := servers["other"]; !ok {
 		t.Fatalf("uninstall should preserve other MCP servers: %+v", servers)
+	}
+}
+
+func TestClaudeConfigRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	if err := os.WriteFile(target, []byte(`{"theme":"dark"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "claude_desktop_config.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	_, _, err := readClaudeConfig(link)
+	if err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("readClaudeConfig error = %v, want symbolic-link rejection", err)
+	}
+	if err := writeClaudeConfig(link, map[string]json.RawMessage{}); err == nil ||
+		!strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("writeClaudeConfig error = %v, want symbolic-link rejection", err)
 	}
 }
 

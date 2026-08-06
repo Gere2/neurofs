@@ -1,34 +1,75 @@
 # G5 — Cross-shape sanity
 
 The pivot gate's G5 asks whether the engine holds across repository shapes, not
-just on this Go service. This records `economy`, `bench`, and `gate` on three
-shapes — and, just as importantly, **corrects an earlier over-optimistic result**
-once the measurement was made honest and reproducible.
+just on this Go service. The final mechanical run uses one binary, one weights
+file, deterministic mock embeddings, pinned commits, hashed fixture sets, and
+fresh indexes. Its immutable record is
+[`audit/g5/2026-07-29T153550Z-mechanical-v2-target-bound.json`](../audit/g5/2026-07-29T153550Z-mechanical-v2-target-bound.json);
+the nine retained command reports are under
+[`audit/g5/reports/2026-07-29T153550Z-mechanical-v2-target-bound/`](../audit/g5/reports/2026-07-29T153550Z-mechanical-v2-target-bound/).
 
-| Shape | Repo | files | `economy` (iso-recall) | overall recall / miss | `bench` top-3 | `gate` G2 / G3 |
-|---|---|---:|---|---|---:|---|
-| Go service | NeuroFS (this repo) | 143 | **PASS · 42.1%** | 79% / 0% | 83.3% | PASS / PASS (93%) |
-| Python lib | [pallets/click](https://github.com/pallets/click) | 113 | **PASS · 82.3%** | 67% / 0% | 66.7% | PASS / **FAIL (67%)** |
-| TS/JS toy | testdata/sample-repo | 10 | **FAIL · inversion** | 100% / 0% | 100% | PASS / PASS |
-| TS frontend | [vuejs/core](https://github.com/vuejs/core) | 599 | **PASS · 77.0%** | 61% / 17% miss | — | see below |
+| Shape | Pinned commit | indexed files | `economy` reduction | overall recall / miss | `bench` top-3 | G2 | G3 |
+|---|---|---:|---|---|---:|---|---|
+| Go service — NeuroFS | `2d347b01b1508a6766164e603b2591f92a2ef816` + source-tree hash | 221 | **PASS · 63.7%** | 76.9% / 7.7% | 66.7% | PASS · 13 bundles | **PASS · 87.8%** |
+| Python lib — [pallets/click](https://github.com/pallets/click) | `00e592cea702e0b2caa0dee42489fdb1c22cd845` | 128 | **PASS · 71.5%** | 66.7% / 0% | 100% | PASS · 5 bundles | **PASS · 80.0%** |
+| TS frontend — [vuejs/core](https://github.com/vuejs/core) | `b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5` | 600 | **PASS · 72.8%** | 72.2% / 0% | 100% | PASS · 6 bundles | **PASS · 83.3%** |
 
-> The Python row started at **FAIL · −21.9% / 60% miss / G3 13%** and improved
-> in three measured steps: method-level chunking (→ WARN · 82.9%, miss 40%,
-> G3 20%), the `symbol_exact` retrieval signal (→ PASS · 88.6%, **0 misses**,
-> recall 20% → 53%, G3 53%), and same-symbol dedupe plus a wider bundle
-> candidate surface (→ recall **67%** on both surfaces, G3 **67%**). Each step
-> costs the Go shape a few points (economy 58.9% → 42.1%, recall 86% → 79%,
-> G3 96% → 93% — all still PASS); cross-shape recall was chosen over the
-> prettier single-repo number. Every trade-off is documented below.
+G5 therefore evaluates to **PASS**. Click sits exactly on the 80% G3 boundary;
+the evaluator compares ratios with a `1e-12` tolerance so the mathematically
+exact mean is not rejected as `0.7999999999999999`. G1 remains `SKIP`: these
+are agent-run mechanical measurements, not human usefulness ratings.
 
-Go uses the committed `audit/facts/*.json`; Python uses the committed
-[`g5_fixtures/click/`](g5_fixtures/click) (15 grep-verified identifiers across 5
-questions) so the run is reproducible. Reproduce Python with:
+The immutable JSON is the source of truth for the exact binary, weights,
+engine-source and target-source SHA-256 identities. Keeping those values in one
+place avoids a documentation-only copy drifting from the evidence it describes.
 
+Schema v2 does not trust summary numbers in isolation. It verifies the retained
+per-task economy rows, every G3 fact result, G2's exact one-bundle-per-fixture
+attestations, the raw report hashes, target commits/remotes, weights and fixture
+sets. `make build` also stamps the effective engine source-tree hash into the
+binary; `--g5-attest` rejects an unstamped binary or a binary built from a
+different checkout.
+
+To reproduce a shape, check out the recorded target commit, copy the recorded
+weights to `<target>/.neurofs/weights.json`, and run:
+
+```bash
+ENGINE=/path/to/NeuroFS
+TARGET=/path/to/pinned/target
+FIXTURES="$ENGINE/docs/g5_fixtures/click" # use audit/facts for NeuroFS
+REPORT_DIR=/path/to/retained/reports
+
+cd "$ENGINE" && make build
+export NEUROFS_EMBEDDING_PROVIDER=mock
+unset NEUROFS_MOCK_SEMANTIC
+"$ENGINE/bin/neurofs" scan "$TARGET"
+"$ENGINE/bin/neurofs" economy --repo "$TARGET" --fixtures-dir "$FIXTURES" \
+  --g5-attest --g5-engine-root "$ENGINE" --out "$REPORT_DIR/economy.json"
+"$ENGINE/bin/neurofs" gate --repo "$TARGET" --fixtures-dir "$FIXTURES" \
+  --g5-attest --g5-engine-root "$ENGINE" --out "$REPORT_DIR/gate.json"
 ```
-git clone --depth 1 https://github.com/pallets/click /tmp/click && neurofs scan /tmp/click
-neurofs economy --repo /tmp/click --fixtures-dir docs/g5_fixtures/click
-```
+
+**Measure the Go shape from a clean checkout, not your working tree.** G5
+binds `target_source_tree_sha256` to the *indexed* tree, and `audit/` is
+indexed while `audit/bundles/` and `audit/records/` are gitignored. A working
+tree that has run the tool accumulates local-only bundles and records there,
+so its indexed tree — and therefore the attested hash — cannot be reproduced
+by CI or by anyone else. The evidence still verifies on the machine that
+produced it, which is exactly what makes the mistake easy to miss. Note that
+the dirty-checkout allowance for `go_service` does not rescue this: it permits
+uncommitted *tracked* edits, while the hash covers everything indexed.
+
+The attested gate is a single pass: G2 is derived from the fresh bundles
+produced for G3 and therefore rejects `--bundles-dir`. External canonical
+checkouts must be clean, including ignored files other than `.neurofs`.
+Run `bench --out` with the matching `docs/g5_bench/<shape>.json` for the
+supplementary file-ranker report.
+
+## Historical development (superseded measurements)
+
+The sections below preserve the path to the final result, including failed
+experiments and corrections. Their older numbers are historical, not the
+current G5 verdict above.
 
 ## Correction (integrity note)
 
@@ -220,12 +261,10 @@ are compat-path awareness or real embeddings, both measurable.
 
 ## Note on G1 (real-use signal)
 
-G1 measures sustained *human* usefulness via `neurofs task --rate`
-(`.neurofs/quality.jsonl`, gitignored). During this work I seeded it with **10
-honest self-assessments** of real questions about this codebase → **7/10 (70%)**,
-below the 0.8 bar. Two caveats keep this honest: (1) it is an *agent*
-self-assessment over a small, deep question set — not the independent human
-signal G1 is designed for; (2) because `quality.jsonl` is gitignored, a fresh
-checkout's `gate` shows **G1 SKIP, Overall PASS**. The 70% is consistent with the
-click finding: the engine's recall on harder/larger inputs has real room to
-improve. The honest G1 verdict remains pending genuine human use.
+G1 measures *human* usefulness via `neurofs task --rate`
+(`.neurofs/quality.jsonl`, gitignored). Agent or synthetic assessments do not
+qualify for this criterion. On a fresh checkout, G1 is therefore `SKIP`; because
+the overall gate is conjunctive, that also keeps the overall verdict at `SKIP`
+unless another criterion yields `WARN` or `FAIL`. The mechanical G5 result can
+pass independently, but the honest pivot-readiness verdict remains pending
+genuine human use.

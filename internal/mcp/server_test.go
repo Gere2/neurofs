@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextladder"
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/contextusage"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextladder"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/contextusage"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 func TestServerHandshakeAndDispatch(t *testing.T) {
@@ -33,12 +33,12 @@ func TestServerHandshakeAndDispatch(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Run(ctx)
-		outW.Close()
+		closePipeWriter(t, outW)
 		done <- err
 	}()
 
 	go func() {
-		defer inW.Close()
+		defer closePipeWriter(t, inW)
 		msgs := []string{
 			`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
 			`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
@@ -168,12 +168,12 @@ func TestNotificationsGetNoResponse(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Run(ctx)
-		outW.Close()
+		closePipeWriter(t, outW)
 		done <- err
 	}()
 
 	go func() {
-		defer inW.Close()
+		defer closePipeWriter(t, inW)
 		// Notification (no id) — must be silently swallowed.
 		_, _ = inW.Write([]byte(`{"jsonrpc":"2.0","method":"tools/list"}` + "\n"))
 		// Notification of initialize — same.
@@ -204,6 +204,115 @@ func TestNotificationsGetNoResponse(t *testing.T) {
 	}
 }
 
+func TestInvalidRequestValuesReturnInvalidRequest(t *testing.T) {
+	srv := NewServer(strings.NewReader(""), io.Discard, io.Discard, "test")
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{name: "null", input: `null`},
+		{name: "empty object", input: `{}`},
+		{name: "scalar", input: `42`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, drop := srv.handle(context.Background(), []byte(tc.input))
+			if drop {
+				t.Fatal("invalid request was incorrectly treated as a notification")
+			}
+			resp, ok := got.(Response)
+			if !ok {
+				t.Fatalf("response type = %T, want mcp.Response", got)
+			}
+			if resp.Error == nil || resp.Error.Code != codeInvalidRequest {
+				t.Fatalf("response = %+v, want -32600 invalid request", resp)
+			}
+			if string(resp.ID) != "null" {
+				t.Fatalf("response id = %s, want null", resp.ID)
+			}
+		})
+	}
+}
+
+func TestExplicitNullIDIsARequest(t *testing.T) {
+	srv := NewServer(strings.NewReader(""), io.Discard, io.Discard, "test")
+	got, drop := srv.handle(
+		context.Background(),
+		[]byte(`{"jsonrpc":"2.0","id":null,"method":"tools/list"}`),
+	)
+	if drop {
+		t.Fatal("a present null id is a request, not a notification")
+	}
+	resp, ok := got.(Response)
+	if !ok {
+		t.Fatalf("response type = %T, want mcp.Response", got)
+	}
+	if resp.Error != nil || string(resp.ID) != "null" {
+		t.Fatalf("response = %+v, want successful response with null id", resp)
+	}
+}
+
+func TestMixedBatchReturnsErrorsForInvalidValues(t *testing.T) {
+	srv := NewServer(strings.NewReader(""), io.Discard, io.Discard, "test")
+	got, drop := srv.handle(context.Background(), []byte(
+		`[null,{},42,{"jsonrpc":"2.0","method":"tools/list"},{"jsonrpc":"2.0","id":7,"method":"tools/list"}]`,
+	))
+	if drop {
+		t.Fatal("mixed batch with requests must produce a response")
+	}
+	batch, ok := got.([]Response)
+	if !ok {
+		t.Fatalf("response type = %T, want []mcp.Response", got)
+	}
+	if len(batch) != 4 {
+		t.Fatalf("response count = %d, want three invalid-request errors and one request result", len(batch))
+	}
+	for i := 0; i < 3; i++ {
+		if batch[i].Error == nil || batch[i].Error.Code != codeInvalidRequest ||
+			string(batch[i].ID) != "null" {
+			t.Fatalf("batch response %d = %+v, want -32600 with null id", i, batch[i])
+		}
+	}
+	if batch[3].Error != nil || string(batch[3].ID) != "7" {
+		t.Fatalf("final batch response = %+v, want successful id=7 response", batch[3])
+	}
+}
+
+func TestServerAcceptsRequestBatch(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
+		`[{"jsonrpc":"2.0","id":2,"method":"tools/list"},{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","id":3,"method":"does/not/exist"}]`,
+	}, "\n") + "\n"
+	var output strings.Builder
+	srv := NewServer(strings.NewReader(input), &output, io.Discard, "test")
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	dec := json.NewDecoder(strings.NewReader(output.String()))
+	var initResp Response
+	if err := dec.Decode(&initResp); err != nil {
+		t.Fatalf("decode initialize response: %v", err)
+	}
+	if string(initResp.ID) != "1" || initResp.Error != nil {
+		t.Fatalf("initialize response = %+v", initResp)
+	}
+
+	var batch []Response
+	if err := dec.Decode(&batch); err != nil {
+		t.Fatalf("decode batch response: %v\nwire: %s", err, output.String())
+	}
+	if len(batch) != 2 {
+		t.Fatalf("batch response count = %d, want 2", len(batch))
+	}
+	if string(batch[0].ID) != "2" || batch[0].Error != nil {
+		t.Fatalf("first batch response = %+v", batch[0])
+	}
+	if string(batch[1].ID) != "3" || batch[1].Error == nil ||
+		batch[1].Error.Code != codeMethodNotFound {
+		t.Fatalf("second batch response = %+v", batch[1])
+	}
+}
+
 // Regression: the MCP traffic agent surfaced that a single stdin line
 // larger than the bufio.Scanner buffer cap (was 4 MiB) killed the
 // server permanently. Multi-megabyte messages (a long search response,
@@ -220,7 +329,7 @@ func TestServerSurvivesLargeMessage(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		err := srv.Run(ctx)
-		outW.Close()
+		closePipeWriter(t, outW)
 		done <- err
 	}()
 
@@ -231,7 +340,7 @@ func TestServerSurvivesLargeMessage(t *testing.T) {
 	bigMsg := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"neurofs_unknown","arguments":{"query":"` + filler + `"}}}`
 
 	go func() {
-		defer inW.Close()
+		defer closePipeWriter(t, inW)
 		if _, err := inW.Write([]byte(bigMsg + "\n")); err != nil {
 			return
 		}
@@ -344,8 +453,19 @@ func BetaWorker() string {
 	if !strings.Contains(autoPayload.Text, "AlphaWorker") {
 		t.Fatalf("expected excerpt text to contain AlphaWorker, got:\n%s", autoPayload.Text)
 	}
-	if got := inferContextIntent("BuildChunks location"); got != "search" {
-		t.Fatalf("symbol-like query should not be treated as build intent, got %q", got)
+	intentCases := map[string]string{
+		"BuildChunks location":                                  "search",
+		"How does the economy comparison build its baseline?":   "search",
+		"How are markdown files chunked into heading sections?": "search",
+		"Build a native baseline":                               "build",
+		"Please review the current edits":                       "review",
+		"Can you fix the cache invalidation?":                   "build",
+		"Show me a repository outline":                          "outline",
+	}
+	for query, want := range intentCases {
+		if got := inferContextIntent(query); got != want {
+			t.Fatalf("inferContextIntent(%q) = %q, want %q", query, got, want)
+		}
 	}
 
 	researchArgsRaw, _ := json.Marshal(map[string]any{
@@ -460,6 +580,63 @@ func BetaWorker() string {
 	}
 	if !strings.Contains(excRes.Content[0].Text, "AlphaWorker") || strings.Contains(excRes.Content[0].Text, "BetaWorker") {
 		t.Fatalf("expected excerpt to include AlphaWorker only, got:\n%s", excRes.Content[0].Text)
+	}
+}
+
+func TestSearchStructuralExpansionIsExplicit(t *testing.T) {
+	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	pythonCode := `class CliRunner:
+    def invoke(self, command):
+        return command()
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "testing.py"), []byte(pythonCode), 0o644); err != nil {
+		t.Fatalf("write python file: %v", err)
+	}
+
+	scanArgsRaw, _ := json.Marshal(map[string]any{"repo": tmpDir})
+	if scanRes := runScanTool(ctx, scanArgsRaw); scanRes.IsError {
+		t.Fatalf("scan tool failed: %s", scanRes.Content[0].Text)
+	}
+
+	brokerSearch, err := Context(ctx, ContextOptions{
+		Query:  "CliRunner invoke",
+		Repo:   tmpDir,
+		Intent: "search",
+		Limit:  1,
+	})
+	if err != nil {
+		t.Fatalf("broker search: %v", err)
+	}
+	if brokerSearch.Route != "search" || len(brokerSearch.Results) != 1 {
+		t.Fatalf("broker search returned %d results, want strict limit 1", len(brokerSearch.Results))
+	}
+
+	searchArgsRaw, _ := json.Marshal(map[string]any{
+		"query": "CliRunner invoke",
+		"repo":  tmpDir,
+		"limit": 1,
+	})
+	directResult := runSearchTool(ctx, searchArgsRaw)
+	if directResult.IsError {
+		t.Fatalf("direct search tool failed: %s", directResult.Content[0].Text)
+	}
+	var directSearch searchResponse
+	if err := json.Unmarshal([]byte(directResult.Content[0].Text), &directSearch); err != nil {
+		t.Fatalf("decode direct search payload: %v", err)
+	}
+	if len(directSearch.Results) <= 1 {
+		t.Fatalf("direct search should append structural context beyond the primary hit: %+v", directSearch.Results)
+	}
+	var foundClass, foundMethod bool
+	for _, result := range directSearch.Results {
+		foundClass = foundClass || result.Symbol == "CliRunner"
+		foundMethod = foundMethod || result.Symbol == "CliRunner.invoke"
+	}
+	if !foundClass || !foundMethod {
+		t.Fatalf("direct search should include class and named method: %+v", directSearch.Results)
 	}
 }
 
@@ -686,7 +863,7 @@ func AlphaWorker() string {
 	}
 }
 
-func TestSearchToolAddsExactContentBoostFromRG(t *testing.T) {
+func TestSearchToolAddsExactContentBoost(t *testing.T) {
 	t.Setenv("NEUROFS_EMBEDDING_PROVIDER", "mock")
 	ctx := context.Background()
 	tmpDir := t.TempDir()
@@ -1310,5 +1487,17 @@ func TestPruneMemoryTool(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Query != "new query" {
 		t.Errorf("expected 1 entry left ('new query'), got %d entries: %+v", len(entries), entries)
+	}
+}
+
+func TestPruneMemoryToolRejectsOutOfRangeDays(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{"days": maxPruneDays + 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := runPruneMemoryTool(context.Background(), raw)
+	if !res.IsError || len(res.Content) == 0 ||
+		!strings.Contains(res.Content[0].Text, "days must be between") {
+		t.Fatalf("expected range error, got %+v", res)
 	}
 }

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 )
 
 // ChunkHit is the packager-facing projection of a ranked code chunk.
@@ -50,7 +50,12 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 			continue
 		}
 
-		content := CompressCode(hit.Lang, hit.Snippet, opts.StripComments, opts.StripBlankLines)
+		content := hit.Snippet
+		hasSourceRange := true
+		if opts.StripComments || opts.StripBlankLines {
+			content = CompressCode(hit.Lang, hit.Snippet, opts.StripComments, opts.StripBlankLines)
+			hasSourceRange = false
+		}
 		if strings.TrimSpace(content) == "" {
 			continue
 		}
@@ -60,7 +65,7 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 		}
 		totalRawTokens += rawTokens
 
-		excerpt := formatChunkExcerpt(hit, content)
+		excerpt := formatChunkExcerpt(hit, content, hasSourceRange)
 		tokens := tokenbudget.EstimateTokens(excerpt)
 		if tokens <= 0 || !budget.CanFit(tokens) {
 			continue
@@ -68,7 +73,7 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 
 		budget.Consume(tokens)
 		seenFiles[hit.RelPath] = true
-		fragments = append(fragments, models.ContextFragment{
+		fragment := models.ContextFragment{
 			RelPath:        hit.RelPath,
 			Lang:           hit.Lang,
 			Representation: models.RepExcerpt,
@@ -76,10 +81,13 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 			Tokens:         tokens,
 			Score:          hit.Score,
 			Reasons:        chunkReasons(hit),
-			StartLine:      hit.StartLine,
-			EndLine:        hit.EndLine,
 			ContentHash:    hit.ContentHash,
-		})
+		}
+		if hasSourceRange {
+			fragment.StartLine = hit.StartLine
+			fragment.EndLine = hit.EndLine
+		}
+		fragments = append(fragments, fragment)
 	}
 
 	var compressionRatio float64
@@ -102,7 +110,7 @@ func PackChunks(hits []ChunkHit, query string, opts Options) (models.Bundle, err
 	}, nil
 }
 
-func formatChunkExcerpt(hit ChunkHit, content string) string {
+func formatChunkExcerpt(hit ChunkHit, content string, hasSourceRange bool) string {
 	label := strings.TrimSpace(hit.Symbol)
 	if label == "" {
 		label = strings.TrimSpace(hit.Kind)
@@ -112,7 +120,11 @@ func formatChunkExcerpt(hit ChunkHit, content string) string {
 	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "// file: %s\n", hit.RelPath)
-	fmt.Fprintf(&sb, "// lines: %d-%d\n", hit.StartLine, hit.EndLine)
+	if hasSourceRange {
+		fmt.Fprintf(&sb, "// lines: %d-%d\n", hit.StartLine, hit.EndLine)
+	} else {
+		fmt.Fprintln(&sb, "// source lines: unavailable after explicit compression")
+	}
 	fmt.Fprintf(&sb, "// chunk: %s\n", label)
 	if hit.ContentHash != "" {
 		fmt.Fprintf(&sb, "// content_hash: %s\n", hit.ContentHash)

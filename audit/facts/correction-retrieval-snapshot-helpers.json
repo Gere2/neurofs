@@ -1,0 +1,11 @@
+{
+  "question": "How do exactSearchSignals, ReadIndexedFileBounded, and contentCache keep exact-content scoring on one indexed session snapshot?",
+  "expects_facts": [
+    "exactSearchSignals",
+    "ReadIndexedFileBounded",
+    "contentCache"
+  ],
+  "source": "correction",
+  "supersedes": "correction-retrieval-exact-snapshot.json",
+  "created_at": "2026-07-29T17:08:00Z"
+}

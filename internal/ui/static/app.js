@@ -2,6 +2,17 @@
 // No framework. Tabs are show/hide; state is kept in module-level vars plus
 // localStorage for the repo path. Every network call goes through j().
 
+let neuroFSRemoteToken = sessionStorage.getItem("neurofs.remoteToken") || "";
+if (window.location.hash.startsWith("#")) {
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  const token = fragment.get("token");
+  if (token) {
+    neuroFSRemoteToken = token;
+    sessionStorage.setItem("neurofs.remoteToken", token);
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
+
 const state = {
   repo: localStorage.getItem("neurofs.repo") || "",
   lastBundlePath: null, // snapshot path from the last pack, if any
@@ -236,6 +247,7 @@ function updateRunPreview() {
 
 async function j(method, url, body) {
   const opts = { method, headers: { "Content-Type": "application/json" } };
+  if (neuroFSRemoteToken) opts.headers["X-NeuroFS-Token"] = neuroFSRemoteToken;
   if (body !== undefined) opts.body = JSON.stringify(body);
   const r = await fetch(url, opts);
   const text = await r.text();
@@ -287,6 +299,7 @@ function switchTab(name) {
   if (name === "records") loadRecords();
   if (name === "journal") loadJournal();
   if (name === "proxy") loadProxyStats();
+  if (name === "worldmap") renderWorldMap();
 
   if (name === "proxy") {
     if (!state.proxyPollInterval) {
@@ -2207,6 +2220,7 @@ async function sendPlaygroundMessage(text) {
   };
   if (antKey) headers["X-Anthropic-Api-Key"] = antKey;
   if (oaKey) headers["X-Openai-Api-Key"] = oaKey;
+  if (neuroFSRemoteToken) headers["X-NeuroFS-Token"] = neuroFSRemoteToken;
 
   try {
     const res = await fetch("/api/chat", {
@@ -4037,3 +4051,672 @@ switchTab("home");
 
   rerank();
 })();
+
+/* ==========================================================================
+   ORCHESTRATE CONTROLLER (Sprint 3)
+   ========================================================================== */
+(function initOrchestrate() {
+  const form = document.getElementById("orc-form");
+  if (!form) return;
+
+  const questionInput = document.getElementById("orc-question");
+  const submitBtn = document.getElementById("orc-submit-btn");
+  const dashboard = document.getElementById("orc-dashboard");
+  const tasksContainer = document.getElementById("orc-tasks-container");
+  const statusPill = document.getElementById("orc-status-pill");
+  const metricTasks = document.getElementById("orc-metric-tasks");
+  const metricCost = document.getElementById("orc-metric-cost");
+  const metricGrounding = document.getElementById("orc-metric-grounding");
+  const metricDuration = document.getElementById("orc-metric-duration");
+  const configBtn = document.getElementById("orc-config-btn");
+
+  let currentRunID = null;
+  let currentPlan = null;
+  let selectedTaskID = null;
+
+  const inspector = document.getElementById("orc-inspector");
+  const inspTitle = document.getElementById("orc-insp-title");
+  const inspPrompt = document.getElementById("orc-insp-prompt");
+  const inspResp = document.getElementById("orc-insp-resp");
+  const inspClose = document.getElementById("orc-insp-close");
+  const actOpus = document.getElementById("orc-act-opus");
+  const actSkip = document.getElementById("orc-act-skip");
+  const dagSvg = document.getElementById("orc-dag-svg");
+
+  if (inspClose) {
+    inspClose.addEventListener("click", () => {
+      inspector.style.display = "none";
+    });
+  }
+
+  if (actOpus) {
+    actOpus.addEventListener("click", async () => {
+      if (!currentRunID || !selectedTaskID) return;
+      await j("/api/orchestrate/node/control", {
+        method: "POST",
+        body: JSON.stringify({ run_id: currentRunID, task_id: selectedTaskID, action: "override_model", model: "claude-opus" })
+      });
+      alert(`Model for ${selectedTaskID} overridden to claude-opus`);
+    });
+  }
+
+  if (actSkip) {
+    actSkip.addEventListener("click", async () => {
+      if (!currentRunID || !selectedTaskID) return;
+      await j("/api/orchestrate/node/control", {
+        method: "POST",
+        body: JSON.stringify({ run_id: currentRunID, task_id: selectedTaskID, action: "skip" })
+      });
+      alert(`Node ${selectedTaskID} skipped`);
+    });
+  }
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = questionInput.value.trim();
+    if (!question) return;
+
+    if (currentEventSource) {
+      currentEventSource.close();
+      currentEventSource = null;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "⏳ Decomposing...";
+    dashboard.style.display = "block";
+    tasksContainer.innerHTML = "";
+    taskCardsMap.clear();
+    statusPill.textContent = "Planning...";
+    metricTasks.textContent = "0";
+    metricCost.textContent = "0.0000";
+    metricGrounding.textContent = "0%";
+    metricDuration.textContent = "0ms";
+
+    try {
+      const repo = state.repo || "";
+      const res = await j("/api/orchestrate/run", {
+        method: "POST",
+        body: JSON.stringify({ question, repo }),
+      });
+
+      submitBtn.disabled = false;
+      submitBtn.textContent = "▶ Orchestrate Plan";
+
+      if (res.error) {
+        alert("Orchestration error: " + res.error);
+        return;
+      }
+
+      currentRunID = res.run_id;
+      currentPlan = res.plan;
+      metricTasks.textContent = currentPlan.tasks.length;
+
+      // Render DAG SVG Graph
+      renderDAG(currentPlan.tasks);
+
+      // Render initial pending cards
+      currentPlan.tasks.forEach((t, i) => {
+        const card = createCard(t, i + 1);
+        tasksContainer.appendChild(card.el);
+        taskCardsMap.set(t.id, card);
+      });
+
+      // Connect SSE for streaming execution
+      connectSSE(res.run_id);
+    } catch (err) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = "▶ Orchestrate Plan";
+      alert("Network error: " + err.message);
+    }
+  });
+
+  function renderDAG(tasks) {
+    if (!dagSvg) return;
+    dagSvg.innerHTML = "";
+    const width = dagSvg.clientWidth || 800;
+    const height = 260;
+
+    const nodeWidth = 140;
+    const nodeHeight = 45;
+
+    // Layout nodes horizontally or vertically
+    const n = tasks.length;
+    const spacing = Math.min(180, (width - 100) / (n || 1));
+
+    const nodesMap = new Map();
+
+    tasks.forEach((t, i) => {
+      const x = 50 + i * spacing;
+      const y = 130 + (i % 2 === 0 ? -30 : 30);
+      nodesMap.set(t.id, { x, y, task: t });
+    });
+
+    // Draw dependency lines
+    tasks.forEach((t) => {
+      const target = nodesMap.get(t.id);
+      if (t.depends_on) {
+        t.depends_on.forEach((depID) => {
+          const source = nodesMap.get(depID);
+          if (source && target) {
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            const d = `M ${source.x + nodeWidth} ${source.y + nodeHeight / 2} C ${source.x + nodeWidth + 30} ${source.y}, ${target.x - 30} ${target.y}, ${target.x} ${target.y + nodeHeight / 2}`;
+            line.setAttribute("d", d);
+            line.setAttribute("stroke", "#3f3f46");
+            line.setAttribute("stroke-width", "2");
+            line.setAttribute("fill", "none");
+            line.setAttribute("marker-end", "url(#arrow)");
+            dagSvg.appendChild(line);
+          }
+        });
+      }
+    });
+
+    // Draw node cards
+    tasks.forEach((t, i) => {
+      const pos = nodesMap.get(t.id);
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("cursor", "pointer");
+      g.setAttribute("id", `svg-node-${t.id}`);
+
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", pos.x);
+      rect.setAttribute("y", pos.y);
+      rect.setAttribute("width", nodeWidth);
+      rect.setAttribute("height", nodeHeight);
+      rect.setAttribute("rx", "6");
+      rect.setAttribute("fill", "#18181b");
+      rect.setAttribute("stroke", "#3f3f46");
+      rect.setAttribute("stroke-width", "1.5");
+
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", pos.x + 10);
+      text.setAttribute("y", pos.y + 20);
+      text.setAttribute("fill", "#f4f4f5");
+      text.setAttribute("font-size", "11");
+      text.setAttribute("font-weight", "600");
+      text.textContent = `#${i + 1} ${truncateText(t.description, 14)}`;
+
+      const subText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      subText.setAttribute("x", pos.x + 10);
+      subText.setAttribute("y", pos.y + 36);
+      subText.setAttribute("fill", "#a1a1aa");
+      subText.setAttribute("font-size", "9");
+      subText.textContent = `${t.kind || "general"} · ${t.model || "auto"}`;
+
+      g.appendChild(rect);
+      g.appendChild(text);
+      g.appendChild(subText);
+
+      g.addEventListener("click", () => inspectTask(t));
+      dagSvg.appendChild(g);
+    });
+  }
+
+  function updateDAGNode(t) {
+    const group = document.getElementById(`svg-node-${t.id}`);
+    if (!group) return;
+    const rect = group.querySelector("rect");
+    if (!rect) return;
+
+    if (t.status === "running") {
+      rect.setAttribute("stroke", "#3b82f6");
+      rect.setAttribute("fill", "#1e3a8a");
+    } else if (t.status === "done") {
+      rect.setAttribute("stroke", "#22c55e");
+      rect.setAttribute("fill", "#14532d");
+    } else if (t.status === "failed") {
+      rect.setAttribute("stroke", "#ef4444");
+      rect.setAttribute("fill", "#7f1d1d");
+    }
+  }
+
+  function truncateText(str, max) {
+    if (!str) return "";
+    return str.length > max ? str.substring(0, max) + "…" : str;
+  }
+
+  function inspectTask(t) {
+    selectedTaskID = t.id;
+    if (inspector) {
+      inspector.style.display = "block";
+      inspTitle.textContent = `🔍 Node #${t.id}: ${t.description}`;
+      inspPrompt.textContent = t.context || t.prompt || "No context attached yet.";
+      inspResp.textContent = t.response || t.error || "Awaiting execution output...";
+    }
+  }
+
+  function createCard(t, index) {
+    const el = document.createElement("div");
+    el.className = "orc-task-card";
+    el.id = `orc-card-${t.id}`;
+    el.innerHTML = `
+      <div class="orc-task-header">
+        <div class="orc-task-title">#${index} · ${t.description}</div>
+        <span class="orc-task-badge orc-badge-pending" id="badge-${t.id}">PENDING</span>
+      </div>
+      <div class="orc-task-details">
+        <span>Kind: <strong>${t.kind || "general"}</strong></span>
+        <span>Model: <strong id="model-${t.id}">${t.model || "assigning..."}</strong></span>
+        <span id="cost-${t.id}">Cost: $0.000</span>
+        <span id="grounding-${t.id}"></span>
+      </div>
+      <div class="orc-task-response" id="resp-${t.id}" style="display: none;"></div>
+    `;
+    el.addEventListener("click", () => inspectTask(t));
+    return {
+      el,
+      badge: el.querySelector(`#badge-${t.id}`),
+      model: el.querySelector(`#model-${t.id}`),
+      cost: el.querySelector(`#cost-${t.id}`),
+      grounding: el.querySelector(`#grounding-${t.id}`),
+      response: el.querySelector(`#resp-${t.id}`),
+    };
+  }
+
+  function connectSSE(runID) {
+    statusPill.textContent = "Executing agents...";
+    currentEventSource = new EventSource(`/api/orchestrate/stream?id=${runID}`);
+
+    let totalCost = 0;
+    let groundings = [];
+    let completedCount = 0;
+    let startTime = Date.now();
+
+    currentEventSource.onmessage = (e) => {
+      try {
+        const ev = JSON.parse(e.data);
+        const card = taskCardsMap.get(ev.task_id);
+        if (!card) return;
+
+        updateDAGNode(ev);
+
+        if (ev.model) {
+          card.model.textContent = `${ev.model} (${ev.provider || ""})`;
+        }
+
+        if (ev.status === "running") {
+          card.el.className = "orc-task-card running";
+          card.badge.className = "orc-task-badge orc-badge-running";
+          card.badge.textContent = "RUNNING";
+        } else if (ev.status === "done") {
+          card.el.className = "orc-task-card done";
+          card.badge.className = "orc-task-badge orc-badge-done";
+          card.badge.textContent = "DONE";
+          completedCount++;
+          if (ev.cost_usd) {
+            totalCost += ev.cost_usd;
+            card.cost.textContent = `Cost: $${ev.cost_usd.toFixed(4)}`;
+          }
+          if (ev.grounding) {
+            groundings.push(ev.grounding);
+            card.grounding.textContent = `Grounding: ${(ev.grounding * 100).toFixed(0)}%`;
+          }
+          if (ev.response) {
+            card.response.style.display = "block";
+            card.response.textContent = ev.response;
+          }
+        } else if (ev.status === "failed") {
+          card.el.className = "orc-task-card failed";
+          card.badge.className = "orc-task-badge orc-badge-failed";
+          card.badge.textContent = "FAILED";
+          if (ev.error) {
+            card.response.style.display = "block";
+            card.response.textContent = "Error: " + ev.error;
+          }
+        }
+
+        metricCost.textContent = totalCost.toFixed(4);
+        metricDuration.textContent = `${Date.now() - startTime}ms`;
+        if (groundings.length > 0) {
+          const avg = groundings.reduce((a, b) => a + b, 0) / groundings.length;
+          metricGrounding.textContent = `${(avg * 100).toFixed(0)}%`;
+        }
+
+        if (completedCount >= taskCardsMap.size) {
+          statusPill.textContent = "Completed";
+          currentEventSource.close();
+          loadPlayerData();
+        }
+      } catch (err) {
+        console.error("SSE parse error", err);
+      }
+    };
+
+    currentEventSource.onerror = () => {
+      statusPill.textContent = "Execution Finished";
+      if (currentEventSource) currentEventSource.close();
+      loadPlayerData();
+    };
+  }
+
+  if (configBtn) {
+    configBtn.addEventListener("click", async () => {
+      try {
+        const cfg = await j(`/api/orchestrate/models?repo=${encodeURIComponent(state.repo || "")}`);
+        alert("Current Router & Models Config:\n\n" + JSON.stringify(cfg, null, 2));
+      } catch (err) {
+        alert("Failed to load models config: " + err.message);
+      }
+    });
+  }
+
+  const tournamentBtn = document.getElementById("orc-tournament-btn");
+  const tournamentDrawer = document.getElementById("orc-tournament-drawer");
+  const tournamentClose = document.getElementById("orc-tournament-close");
+  const tournamentContent = document.getElementById("orc-tournament-content");
+
+  if (tournamentClose) {
+    tournamentClose.addEventListener("click", () => {
+      if (tournamentDrawer) tournamentDrawer.style.display = "none";
+    });
+  }
+
+  if (tournamentBtn) {
+    tournamentBtn.addEventListener("click", async () => {
+      if (tournamentDrawer) tournamentDrawer.style.display = "block";
+      if (tournamentContent) tournamentContent.textContent = "Loading tournament analysis...";
+      try {
+        const analysis = await j("/api/orchestrate/tournament");
+        renderTournament(analysis);
+      } catch (err) {
+        if (tournamentContent) tournamentContent.textContent = "Failed to load tournament data: " + err.message;
+      }
+    });
+  }
+
+  const tuneBtn = document.getElementById("orc-tune-btn");
+  if (tuneBtn) {
+    tuneBtn.addEventListener("click", async () => {
+      try {
+        tuneBtn.disabled = true;
+        tuneBtn.textContent = "⏳ Auto-Tuning...";
+        const repo = state.repo || "";
+        const qs = encodeURIComponent(repo);
+        // Preview first: the server only rewrites models.json when apply=true.
+        const res = await j(`/api/orchestrate/tune?repo=${qs}`, { method: "POST" });
+        tuneBtn.disabled = false;
+        tuneBtn.textContent = "⚡ Auto-Tune Routing";
+
+        if (res.error) {
+          alert("Auto-tune error: " + res.error);
+          return;
+        }
+
+        if (!res.changed) {
+          alert("⚡ HyperAgent Auto-Tune: Current routing rules are already optimal for your execution history.");
+          return;
+        }
+
+        const insights = (res.insights_generated || []).join("\n• ");
+        const ok = confirm(
+          "⚡ HyperAgent proposes these routing changes:\n\n• " + insights +
+          "\n\nThis rewrites models.json from THIS repo's history only, which can " +
+          "overfit. Verify with `neurofs gate` and `neurofs bench --search` after " +
+          "applying.\n\nApply now?"
+        );
+        if (!ok) return;
+
+        const applied = await j(`/api/orchestrate/tune?repo=${qs}&apply=true`, { method: "POST" });
+        if (applied.error) {
+          alert("Auto-tune error: " + applied.error);
+          return;
+        }
+        alert(applied.applied
+          ? "⚡ Auto-Tune applied to models.json.\n\nNow run: neurofs gate && neurofs bench --search"
+          : "⚡ Auto-Tune made no changes.");
+      } catch (err) {
+        tuneBtn.disabled = false;
+        tuneBtn.textContent = "⚡ Auto-Tune Routing";
+        alert("Auto-tune failed: " + err.message);
+      }
+    });
+  }
+
+  function renderTournament(analysis) {
+    if (!tournamentContent) return;
+    if (!analysis || !analysis.by_kind || Object.keys(analysis.by_kind).length === 0) {
+      tournamentContent.innerHTML = `<p>No tournament records in <code>routing_history.jsonl</code> yet. Run orchestration tasks to populate empirical data.</p>`;
+      return;
+    }
+
+    let html = `<p style="margin-bottom: 12px;">Analyzed <strong>${analysis.total_records || 0}</strong> task executions across model squad.</p>`;
+
+    html += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">`;
+
+    for (const [kind, perfList] of Object.entries(analysis.by_kind)) {
+      const rec = (analysis.recommendations || {})[kind] || "none";
+      html += `
+        <div style="background: #121222; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <strong style="color: #00d4ff; text-transform: uppercase;">${kind}</strong>
+            <span style="font-size: 0.75rem; color: #00ff88;">Rec: <strong>${rec}</strong></span>
+          </div>
+      `;
+
+      perfList.forEach(p => {
+        html += `
+          <div style="font-size: 0.78rem; border-top: 1px solid rgba(255,255,255,0.05); padding: 4px 0; display: flex; justify-content: space-between;">
+            <span>${p.model}</span>
+            <span>Win: <strong>${(p.win_rate * 100).toFixed(0)}%</strong> | Ground: ${(p.mean_grounding * 100).toFixed(0)}% | $${p.mean_cost_usd.toFixed(4)}</span>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+    tournamentContent.innerHTML = html;
+  }
+
+  async function loadPlayerData() {
+    try {
+      const ps = await j("/api/player");
+      if (!ps || ps.error) return;
+      renderCommanderHeader(ps);
+      renderCommanderMatrix(ps);
+      renderCommanderHistoryModal(ps);
+    } catch (e) {
+      console.warn("Failed to load player data", e);
+    }
+  }
+
+  const historyBtn = document.getElementById("cmd-history-btn");
+  const historyModal = document.getElementById("cmd-history-modal");
+  const historyClose = document.getElementById("cmd-history-close");
+
+  if (historyClose) {
+    historyClose.addEventListener("click", () => {
+      if (historyModal) historyModal.style.display = "none";
+    });
+  }
+
+  if (historyBtn) {
+    historyBtn.addEventListener("click", () => {
+      if (historyModal) historyModal.style.display = "flex";
+    });
+  }
+
+  function renderCommanderHistoryModal(ps) {
+    const achContainer = document.getElementById("cmd-history-achievements");
+    const xpContainer = document.getElementById("cmd-history-xpfeed");
+
+    if (achContainer) {
+      achContainer.innerHTML = "";
+      const achievements = ps.achievements || [];
+      if (achievements.length === 0) {
+        achContainer.innerHTML = `<span style="color: #71717a; font-size: 0.75rem;">No achievements unlocked yet. Execute orchestration plans to earn badges!</span>`;
+      } else {
+        achievements.forEach(a => {
+          const el = document.createElement("div");
+          el.style.cssText = "background: #121222; border: 1px solid rgba(170,102,255,0.2); border-radius: 4px; padding: 6px 10px; font-size: 0.78rem; display: flex; justify-content: space-between; align-items: center;";
+          el.innerHTML = `
+            <div><strong>${a.emoji || "🎖️"} ${a.name}</strong><br><span style="font-size: 0.7rem; color: #a1a1aa;">${a.description}</span></div>
+          `;
+          achContainer.appendChild(el);
+        });
+      }
+    }
+
+    if (xpContainer) {
+      xpContainer.innerHTML = "";
+      const recent = ps.recent_xp || [];
+      if (recent.length === 0) {
+        xpContainer.innerHTML = `<span style="color: #71717a; font-size: 0.75rem;">No recent XP log entries.</span>`;
+      } else {
+        recent.slice().reverse().forEach(ev => {
+          const el = document.createElement("div");
+          el.style.cssText = "background: rgba(0,255,136,0.05); border: 1px solid rgba(0,255,136,0.15); border-radius: 4px; padding: 5px 8px; color: #86efac;";
+          el.innerHTML = `<strong>+${ev.amount} XP</strong> — ${ev.reason}`;
+          xpContainer.appendChild(el);
+        });
+      }
+    }
+  }
+
+  function renderCommanderHeader(ps) {
+    const lvlNum = document.getElementById("cmd-level-num");
+    const title = document.getElementById("cmd-player-title");
+    const xpFill = document.getElementById("cmd-xp-bar-fill");
+    const streak = document.getElementById("cmd-streak-count");
+    const grounding = document.getElementById("cmd-grounding-score");
+    const saved = document.getElementById("cmd-saved-usd");
+
+    if (lvlNum) lvlNum.textContent = ps.level || 1;
+    if (title) title.textContent = ps.title || "Aprendiz";
+    if (xpFill && ps.xp_to_next > 0) {
+      const pct = Math.min(100, Math.max(0, (ps.xp / ps.xp_to_next) * 100));
+      xpFill.style.width = `${pct}%`;
+    }
+    if (streak) streak.textContent = ps.streak || 0;
+    if (grounding) grounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
+    if (saved) saved.textContent = (ps.total_saved_usd || 0).toFixed(2);
+  }
+
+  function renderCommanderMatrix(ps) {
+    const grid = document.getElementById("cmd-cards-grid");
+    const achRow = document.getElementById("cmd-achievements-row");
+    if (!grid) return;
+
+    grid.innerHTML = "";
+
+    const agents = ps.agents || {};
+    const defaultAgents = [
+      { name: "gemini-flash", display_name: "Flash", emoji: "⚡", specialties: ["planning", "sql", "docs"] },
+      { name: "claude-sonnet", display_name: "Sonnet", emoji: "🗡️", specialties: ["coding", "tests", "frontend", "backend"] },
+      { name: "claude-opus", display_name: "Opus", emoji: "👑", specialties: ["complex_reasoning", "architecture"] },
+      { name: "gpt-4o-mini", display_name: "Mini", emoji: "🔮", specialties: ["formatting", "simple_coding"] }
+    ];
+
+    defaultAgents.forEach(def => {
+      const a = agents[def.name] || { ...def, wins: 0, losses: 0, reliability: 0, total_cost_usd: 0, cascades_avoided: 0 };
+      const card = document.createElement("div");
+      card.className = "cmd-agent-card";
+      card.innerHTML = `
+        <div class="cmd-agent-card-head">
+          <div class="cmd-agent-name">${a.emoji || def.emoji} ${a.display_name || def.display_name}</div>
+          <div class="cmd-agent-wins">${a.wins || 0} Wins</div>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Reliability:</span>
+          <span class="cmd-stat-val">${((a.reliability || 0) * 100).toFixed(0)}%</span>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Cost USD:</span>
+          <span class="cmd-stat-val">$${(a.total_cost_usd || 0).toFixed(4)}</span>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Cascade Avoided:</span>
+          <span class="cmd-stat-val">${a.cascades_avoided || 0}</span>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+
+    if (achRow) {
+      achRow.innerHTML = "";
+      (ps.achievements || []).forEach(ach => {
+        const badge = document.createElement("div");
+        badge.className = "cmd-ach-badge";
+        badge.title = ach.description;
+        badge.innerHTML = `<span>${ach.emoji || "🎖️"}</span> <span>${ach.name}</span>`;
+        achRow.appendChild(badge);
+      });
+    }
+  }
+
+  async function renderWorldMap() {
+    const repoName = document.getElementById("wm-repo-name");
+    const repoPath = document.getElementById("wm-repo-path");
+    const statFiles = document.getElementById("wm-stat-files");
+    const statGrounding = document.getElementById("wm-stat-grounding");
+    const skillsList = document.getElementById("wm-skills-list");
+
+    if (repoName) repoName.textContent = state.project ? state.project.name || "Current Repo" : "Current Repo";
+    if (repoPath) repoPath.textContent = state.repo || "local repository";
+    if (statFiles) statFiles.textContent = state.summary ? state.summary.total_files || "--" : "--";
+
+    try {
+      const ps = await j("/api/player");
+      if (ps && statGrounding) {
+        statGrounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
+      }
+    } catch (e) {}
+
+    try {
+      const res = await j("/api/skills");
+      if (!skillsList) return;
+      skillsList.innerHTML = "";
+      const skills = res.skills || [];
+      if (skills.length === 0) {
+        skillsList.innerHTML = `<p style="color: #71717a; font-size: 0.8rem;">No cross-project skills saved in <code>~/.neurofs/global_skills.jsonl</code> yet. Add one above or let HyperAgent learn from executions.</p>`;
+        return;
+      }
+      skills.forEach(s => {
+        const item = document.createElement("div");
+        item.style.cssText = "background: #0d0d1a; border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 6px; padding: 12px; font-size: 0.82rem;";
+        item.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <strong style="color: #00d4ff;">🌐 Domain: ${s.domain || "general"}</strong>
+            <span class="badge" style="background: rgba(170,102,255,0.2); color: #d8b4fe; font-size: 0.72rem;">Model: ${s.recommended_model || "auto"}</span>
+          </div>
+          <p style="font-family: var(--mono); color: #e4e4e7; margin: 0 0 6px 0;">${s.insight}</p>
+          <div style="font-size: 0.72rem; color: #71717a;">Confidence: ${((s.confidence || 0.9) * 100).toFixed(0)}% · Learned: ${s.learned_at ? new Date(s.learned_at).toLocaleDateString() : "Recent"}</div>
+        `;
+        skillsList.appendChild(item);
+      });
+    } catch (err) {
+      if (skillsList) skillsList.innerHTML = `<p style="color: #ff4466; font-size: 0.8rem;">Failed to load skills: ${err.message}</p>`;
+    }
+  }
+
+  const addSkillForm = document.getElementById("wm-add-skill-form");
+  if (addSkillForm) {
+    addSkillForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const domain = document.getElementById("wm-skill-domain").value;
+      const model = document.getElementById("wm-skill-model").value;
+      const insight = document.getElementById("wm-skill-insight").value;
+
+      try {
+        const res = await j("/api/skills", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain, recommended_model: model, insight, confidence: 0.95 })
+        });
+        if (res.error) {
+          alert("Error saving skill: " + res.error);
+          return;
+        }
+        document.getElementById("wm-skill-domain").value = "";
+        document.getElementById("wm-skill-insight").value = "";
+        renderWorldMap();
+      } catch (err) {
+        alert("Failed to save skill: " + err.message);
+      }
+    });
+  }
+
+  loadPlayerData();
+})();
+

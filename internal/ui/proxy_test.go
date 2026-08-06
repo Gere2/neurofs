@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 func TestExtractUserText(t *testing.T) {
@@ -103,6 +103,72 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestProxyPayloadUpdatesPreserveClientFields(t *testing.T) {
+	t.Run("anthropic", func(t *testing.T) {
+		body := []byte(`{
+			"model":"claude-test",
+			"messages":[{"role":"user","content":"hello"}],
+			"tools":[{"name":"lookup","input_schema":{"type":"object"}}],
+			"tool_choice":{"type":"auto"},
+			"metadata":{"request_id":"abc"}
+		}`)
+		system := json.RawMessage(`[{"type":"text","text":"context"}]`)
+		got, err := replaceJSONRawField(body, "system", system)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(got, &root); err != nil {
+			t.Fatal(err)
+		}
+		for _, field := range []string{"tools", "tool_choice", "metadata", "messages", "system"} {
+			if _, ok := root[field]; !ok {
+				t.Fatalf("field %q was not preserved: %s", field, got)
+			}
+		}
+	})
+
+	t.Run("openai", func(t *testing.T) {
+		body := []byte(`{
+			"model":"gpt-test",
+			"messages":[
+				{"role":"user","name":"operator","content":"hello"},
+				{"role":"assistant","content":null,"tool_calls":[{"id":"call-1","type":"function"}]}
+			],
+			"tools":[{"type":"function","function":{"name":"lookup"}}],
+			"response_format":{"type":"json_object"},
+			"stream_options":{"include_usage":true}
+		}`)
+		system := openAIMessage{Role: "system", Content: json.RawMessage(`"context"`)}
+		got, err := prependOpenAIMessage(body, system)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal(got, &root); err != nil {
+			t.Fatal(err)
+		}
+		for _, field := range []string{"tools", "response_format", "stream_options"} {
+			if _, ok := root[field]; !ok {
+				t.Fatalf("field %q was not preserved: %s", field, got)
+			}
+		}
+		var messages []map[string]json.RawMessage
+		if err := json.Unmarshal(root["messages"], &messages); err != nil {
+			t.Fatal(err)
+		}
+		if len(messages) != 3 {
+			t.Fatalf("messages = %d, want 3", len(messages))
+		}
+		if _, ok := messages[1]["name"]; !ok {
+			t.Fatalf("user message extension was not preserved: %s", root["messages"])
+		}
+		if _, ok := messages[2]["tool_calls"]; !ok {
+			t.Fatalf("assistant tool calls were not preserved: %s", root["messages"])
+		}
+	})
+}
+
 func TestProxyLoggingAndStats(t *testing.T) {
 	// Reset variables
 	proxyLogMu.Lock()
@@ -183,10 +249,10 @@ func TestHandleProxyStatsWithDB(t *testing.T) {
 	now := time.Now()
 	err = db.InsertProxyLog(now, "claude-db-test", "query db", 8000, 2000, 6000, 0.018)
 	if err != nil {
-		db.Close()
+		closeProxyTestDB(t, db)
 		t.Fatalf("failed to insert proxy log: %v", err)
 	}
-	db.Close()
+	closeProxyTestDB(t, db)
 
 	req := httptest.NewRequest("GET", "/api/proxy/stats?repo="+tempDir, nil)
 	rr := httptest.NewRecorder()
@@ -264,8 +330,8 @@ func TestProxyLoggingGPT(t *testing.T) {
 }
 
 func TestHandleChatAuthError(t *testing.T) {
-	os.Setenv("ANTHROPIC_API_KEY", "")
-	os.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
 
 	tempDir := t.TempDir()
 	dbDir := filepath.Join(tempDir, ".neurofs")
@@ -286,10 +352,10 @@ func TestHandleChatAuthError(t *testing.T) {
 		IndexedAt: time.Now(),
 	})
 	if err != nil {
-		db.Close()
+		closeProxyTestDB(t, db)
 		t.Fatalf("failed to save dummy file: %v", err)
 	}
-	db.Close()
+	closeProxyTestDB(t, db)
 
 	reqBody := `{"repo":"` + tempDir + `","provider":"anthropic","model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(reqBody))
@@ -314,11 +380,8 @@ func TestHandleChatStreamSimulation(t *testing.T) {
 	}))
 	defer mockUpstream.Close()
 
-	os.Setenv("NEUROFS_TEST_ANTHROPIC_URL", mockUpstream.URL)
-	defer os.Setenv("NEUROFS_TEST_ANTHROPIC_URL", "")
-
-	os.Setenv("ANTHROPIC_API_KEY", "test-key")
-	defer os.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("NEUROFS_TEST_ANTHROPIC_URL", mockUpstream.URL)
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
 
 	tempDir := t.TempDir()
 	dbDir := filepath.Join(tempDir, ".neurofs")
@@ -339,10 +402,10 @@ func TestHandleChatStreamSimulation(t *testing.T) {
 		IndexedAt: time.Now(),
 	})
 	if err != nil {
-		db.Close()
+		closeProxyTestDB(t, db)
 		t.Fatalf("failed to save dummy file: %v", err)
 	}
-	db.Close()
+	closeProxyTestDB(t, db)
 
 	reqBody := `{"repo":"` + tempDir + `","provider":"anthropic","model":"claude-3-5-sonnet-latest","messages":[{"role":"user","content":"hello"}]}`
 	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(reqBody))
@@ -360,5 +423,26 @@ func TestHandleChatStreamSimulation(t *testing.T) {
 	}
 	if !strings.Contains(body, "Mock response") {
 		t.Errorf("expected body to contain Mock response, got: %s", body)
+	}
+}
+
+func TestReadUpstreamErrorBodyIsBounded(t *testing.T) {
+	body := strings.NewReader(strings.Repeat("x", int(maxUpstreamErrorBodyBytes)+128))
+	got, truncated, err := readUpstreamErrorBody(body)
+	if err != nil {
+		t.Fatalf("readUpstreamErrorBody: %v", err)
+	}
+	if !truncated {
+		t.Fatal("expected oversized upstream error body to be marked truncated")
+	}
+	if int64(len(got)) != maxUpstreamErrorBodyBytes {
+		t.Fatalf("body length = %d, want %d", len(got), maxUpstreamErrorBodyBytes)
+	}
+}
+
+func closeProxyTestDB(t *testing.T, db *storage.DB) {
+	t.Helper()
+	if err := db.Close(); err != nil {
+		t.Errorf("close test database: %v", err)
 	}
 }

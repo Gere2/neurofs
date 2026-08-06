@@ -3,7 +3,7 @@ package cli
 import (
 	"os"
 
-	"github.com/neuromfs/neuromfs/internal/ui"
+	"github.com/Gere2/neurofs/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +13,8 @@ func newProxyCmd() *cobra.Command {
 		addr     string
 		repoPath string
 		sandbox  bool
+		remote   bool
+		auth     string
 	)
 	cmd := &cobra.Command{
 		Use:   "proxy",
@@ -35,15 +37,22 @@ To use it:
 					repoPath = cwd
 				}
 			}
+			if auth == "" {
+				auth = os.Getenv("NEUROFS_UI_TOKEN")
+			}
 			return ui.RunProxy(ui.Options{
-				Addr:     addr,
-				RepoRoot: repoPath,
-				Sandbox:  sandbox,
+				Addr:        addr,
+				RepoRoot:    repoPath,
+				Sandbox:     sandbox,
+				AllowRemote: remote,
+				AuthToken:   auth,
 			})
 		},
 	}
 	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:7777", "Address to bind the proxy server")
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository root to pin/sandbox the proxy server to (defaults to current directory)")
 	cmd.Flags().BoolVar(&sandbox, "sandbox", true, "Sandbox/pin the proxy server to the repository root to prevent path traversal")
+	cmd.Flags().BoolVar(&remote, "allow-remote", false, "Explicitly allow binding to a non-loopback address")
+	cmd.Flags().StringVar(&auth, "auth-token", "", "Token required in X-NeuroFS-Token for remote proxy requests (or NEUROFS_UI_TOKEN)")
 	return cmd
 }

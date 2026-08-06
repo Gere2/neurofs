@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/fsutil"
 )
 
 // canonicalRoot canonicalises an existing repo root through symlinks
@@ -108,6 +109,76 @@ func TestConfineToRepo_EmptyRejected(t *testing.T) {
 	_, err := fsutil.ConfineToRepo(root, "  ")
 	if err == nil {
 		t.Fatalf("expected error for empty path")
+	}
+}
+
+func TestLoadBundleJSONRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.json")
+	if err := os.WriteFile(target, []byte(`{"fragments":[{"rel_path":"x.go"}]}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	link := filepath.Join(dir, "bundle.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := loadBundleJSON(link); !errors.Is(err, fsutil.ErrNotRegular) {
+		t.Fatalf("loadBundleJSON error = %v, want ErrNotRegular", err)
+	}
+}
+
+func TestLoadBundleJSONRejectsOversizedFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bundle.json")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := f.Truncate(maxPersistedBundleBytes + 1); err != nil {
+		_ = f.Close()
+		t.Fatalf("Truncate: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if _, err := loadBundleJSON(path); !errors.Is(err, fsutil.ErrFileTooLarge) {
+		t.Fatalf("loadBundleJSON error = %v, want ErrFileTooLarge", err)
+	}
+}
+
+func TestResolveRecordFileRejectsSymlinkLeaf(t *testing.T) {
+	repo := t.TempDir()
+	recordsDir := filepath.Join(repo, "audit", "records")
+	if err := os.MkdirAll(recordsDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(target, []byte(`{}`), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	link := filepath.Join(recordsDir, "linked.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := resolveRecordFile(repo, link); err == nil {
+		t.Fatal("resolveRecordFile accepted a symlink record")
+	}
+}
+
+func TestSecureRecordsDirRejectsSymlinkComponent(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(repo, "audit")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if _, err := secureRecordsDir(repo, false); err == nil {
+		t.Fatal("secureRecordsDir accepted a symlinked audit directory")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "records")); !os.IsNotExist(err) {
+		t.Fatalf("secureRecordsDir created data outside repo: %v", err)
 	}
 }
 

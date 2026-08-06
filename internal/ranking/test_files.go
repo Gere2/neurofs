@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // testDownrankFactor scales the score of test-like files when the query has
@@ -33,6 +33,7 @@ var testLikeDirs = map[string]bool{
 // trivial to extend.
 var testLikeSuffixes = []string{
 	"_test.go",
+	"_test.py",
 	".test.ts", ".test.tsx", ".test.js", ".test.jsx",
 	".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx",
 }
@@ -85,6 +86,13 @@ func IsTestLikePath(relPath string) bool {
 		if strings.HasSuffix(base, suf) {
 			return true
 		}
+	}
+	// Pytest's default discovery also treats test_*.py and conftest.py as test
+	// modules even when they live beside production modules rather than under a
+	// dedicated tests directory.
+	if strings.HasSuffix(base, ".py") &&
+		(strings.HasPrefix(base, "test_") || base == "conftest.py") {
+		return true
 	}
 	for _, part := range strings.Split(rel, "/") {
 		if testLikeDirs[part] {

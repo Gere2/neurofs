@@ -8,12 +8,14 @@ package audit
 import (
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/runid"
 )
 
 // Citation is a single path (optionally with a line number) the model
 // referenced in its response. Valid is true when the cited file appears in
-// the bundle — otherwise Reason explains why we rejected it.
+// the bundle and any supplied line is visible in a source range — otherwise
+// Reason explains why we rejected it.
 type Citation struct {
 	Raw     string `json:"raw"`      // the literal span we extracted (e.g. "src/auth.ts:42")
 	RelPath string `json:"rel_path"` // normalised path portion
@@ -52,7 +54,10 @@ type AuditFragment struct {
 	Tokens         int                   `json:"tokens"`
 	// Content is intentionally kept — governance replay needs to re-verify
 	// citations against the exact text the model saw.
-	Content string `json:"content"`
+	Content     string `json:"content"`
+	StartLine   int    `json:"start_line,omitempty"`
+	EndLine     int    `json:"end_line,omitempty"`
+	ContentHash string `json:"content_hash,omitempty"`
 }
 
 // AuditRecord is one full governance observation. It is the persistence unit
@@ -63,17 +68,25 @@ type AuditFragment struct {
 // open-ended tomorrow. Records generated before the field existed unmarshal
 // cleanly with Mode == "" — no migration needed.
 type AuditRecord struct {
-	Question   string          `json:"question"`
-	Model      string          `json:"model"`          // free-form id, e.g. "stub", "claude-sonnet-4-6"
-	Mode       string          `json:"mode,omitempty"` // strategy | build | review | ""
-	Timestamp  time.Time       `json:"timestamp"`
-	BundleHash string          `json:"bundle_hash"`
-	Fragments  []AuditFragment `json:"fragments"`
-	Response   string          `json:"response"`
+	runid.Availability
+	Question   string    `json:"question"`
+	Model      string    `json:"model"`          // free-form id, e.g. "stub", "claude-sonnet-4-6"
+	Mode       string    `json:"mode,omitempty"` // strategy | build | review | ""
+	Timestamp  time.Time `json:"timestamp"`
+	BundlePath string    `json:"bundle_path,omitempty"`
+	BundleHash string    `json:"bundle_hash"`
+	// HashAlgorithm is empty on legacy records whose BundleHash used the old
+	// order-insensitive serialization.
+	HashAlgorithm string          `json:"hash_algorithm,omitempty"`
+	Fragments     []AuditFragment `json:"fragments"`
+	Response      string          `json:"response"`
 
 	Citations     []Citation  `json:"citations"`
 	Drift         DriftReport `json:"drift"`
 	GroundedRatio float64     `json:"grounded_ratio"`
+	// MetricVersion is 0 on legacy records. Version 2 validates cited source
+	// lines and never treats missing citations as perfectly grounded.
+	MetricVersion int `json:"grounding_metric_version,omitempty"`
 
 	// Optional fact-recall scoring. Populated only when ExpectsFacts is
 	// non-empty on the benchmark question.

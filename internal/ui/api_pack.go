@@ -3,19 +3,20 @@ package ui
 import (
 	"bytes"
 	"context"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/output"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/output"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 // --------------------- /api/pack ---------------------
@@ -76,7 +77,11 @@ func handlePack(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "open index (did you run scan?): "+err.Error())
 		return
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Printf("neurofs ui: close pack database: %v", err)
+		}
+	}()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -198,7 +203,10 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := contextFor(r)
+	defer cancel()
 	res, err := taskflow.Run(taskflow.Opts{
+		Context:       ctx,
 		RepoRoot:      req.Repo,
 		Query:         req.Query,
 		Budget:        req.Budget,

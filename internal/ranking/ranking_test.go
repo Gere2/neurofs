@@ -3,9 +3,9 @@ package ranking_test
 import (
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/project"
-	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/project"
+	"github.com/Gere2/neurofs/internal/ranking"
 )
 
 func TestRankByFilename(t *testing.T) {
@@ -27,6 +27,22 @@ func TestRankByFilename(t *testing.T) {
 	if ranked[0].Score <= ranked[1].Score {
 		t.Errorf("auth.ts score %.2f should be > %s score %.2f",
 			ranked[0].Score, ranked[1].Record.RelPath, ranked[1].Score)
+	}
+}
+
+func TestRankExactFilenameOutranksPartialFilename(t *testing.T) {
+	files := []models.FileRecord{
+		{RelPath: "internal/mcp/client_tools.go", Lang: models.LangGo},
+		{RelPath: "internal/mcp/tools.go", Lang: models.LangGo},
+	}
+
+	ranked := ranking.Rank(files, "tools")
+
+	if ranked[0].Record.RelPath != "internal/mcp/tools.go" {
+		t.Fatalf("expected exact filename first, got %s", ranked[0].Record.RelPath)
+	}
+	if !hasSignal(ranked[0].Reasons, "filename_exact") {
+		t.Errorf("expected filename_exact reason, got %+v", ranked[0].Reasons)
 	}
 }
 
@@ -175,6 +191,7 @@ func TestRankPathAliasExpansion(t *testing.T) {
 	}
 	if userFile == nil {
 		t.Fatal("user.ts missing from ranked output")
+		return
 	}
 	if !hasSignal(userFile.Reasons, "import_expansion") {
 		t.Errorf("expected import_expansion on src/user.ts via @app alias, got %+v", userFile.Reasons)
@@ -373,6 +390,7 @@ func TestRankGraphRelations(t *testing.T) {
 	}
 	if helper == nil {
 		t.Fatal("helper.ts not found in ranked output")
+		return
 	}
 	if !hasSignal(helper.Reasons, "dependency_relation") {
 		t.Errorf("expected dependency_relation signal on helper.ts, got %+v", helper.Reasons)
@@ -386,6 +404,7 @@ func TestRankGraphRelations(t *testing.T) {
 	}
 	if other == nil {
 		t.Fatal("other.ts not found in ranked output")
+		return
 	}
 	if !hasSignal(other.Reasons, "consumer_relation") {
 		t.Errorf("expected consumer_relation signal on other.ts, got %+v", other.Reasons)

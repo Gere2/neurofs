@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // TimelineExporter generates a developer activity summary timeline (formerly CLAUDE.md format).

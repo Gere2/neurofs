@@ -4,12 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"os"
 	"os/exec"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // Two staleness diagnostics, both born from a real hour of confusion
@@ -40,7 +40,8 @@ func factExistsInRepo(repoRoot, fact string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "rg", "--fixed-strings", "--ignore-case", "--quiet",
-		"--glob", "!.git/**", "--glob", "!.neurofs/**", "--glob", "!audit/facts/**", fact, repoRoot)
+		"--glob", "!.git/**", "--glob", "!.neurofs/**", "--glob", "!audit/facts/**",
+		"-e", fact, "--", repoRoot)
 	return cmd.Run() == nil
 }
 
@@ -57,7 +58,7 @@ func CountStaleIndexFiles(repoRoot string, files []models.FileRecord) int {
 			stale++
 			continue
 		}
-		content, err := os.ReadFile(abs)
+		content, _, err := fsutil.ReadRegularFileBounded(abs, config.MaxFileSize)
 		if err != nil {
 			stale++
 			continue

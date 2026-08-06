@@ -1,15 +1,17 @@
 package agentcontext
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 func TestBuildPatchPromptIncludesLadderLogicAndMeasurement(t *testing.T) {
@@ -101,13 +103,17 @@ func testRepoAndResult(t *testing.T) (string, taskflow.Result) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	}()
 	rec := models.FileRecord{
 		Path:     filePath,
 		RelPath:  "src/auth.go",
 		Lang:     models.LangGo,
 		Lines:    5,
-		Checksum: "filehash",
+		Checksum: fmt.Sprintf("%x", sha256.Sum256([]byte(content))),
 	}
 	testRec := models.FileRecord{
 		Path:    testPath,

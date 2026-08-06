@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/config"
+	"github.com/Gere2/neurofs/internal/a2a"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/mcp"
 )
 
 // registerAPI wires every endpoint onto mux. The routes are flat and match
@@ -21,7 +23,12 @@ import (
 // tab at evil.com cannot drive scan/pack/chat against the user's loopback
 // server, spend their API key, or write snapshot files into the repo.
 // allowedOrigins comes from the listen addr (see originsForAddr).
-func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
+//
+// repoRoot pins the stateless MCP endpoint's path-taking tools. It must be
+// the same root the rest of the server is sandboxed to; passing "" would let
+// the MCP handler fall back to the process cwd, which is not necessarily the
+// repo the user pointed --repo at.
+func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool, repoRoot string) {
 	mux.HandleFunc("/api/scan", safePost(allowedOrigins, handleScan))
 	mux.HandleFunc("/api/pack", safePost(allowedOrigins, handlePack))
 	mux.HandleFunc("/api/replay", safePost(allowedOrigins, handleReplay))
@@ -39,6 +46,33 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/v1/messages", safePost(allowedOrigins, handleProxyMessages))
 	mux.HandleFunc("/proxy/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
 	mux.HandleFunc("/v1/chat/completions", safePost(allowedOrigins, handleProxyOpenAIMessages))
+	mux.HandleFunc("/api/orchestrate/run", safePost(allowedOrigins, handleOrchestrateRun))
+	mux.HandleFunc("/api/orchestrate/stream", safeOrigin(allowedOrigins, getOnly(handleOrchestrateStream)))
+	// models is GET-or-POST in one handler; the POST branch writes models.json,
+	// so the whole endpoint needs the Origin check, not just a method gate.
+	mux.HandleFunc("/api/orchestrate/models", safeOrigin(allowedOrigins, handleOrchestrateModels))
+	mux.HandleFunc("/api/orchestrate/node/control", safePost(allowedOrigins, handleOrchestrateNodeControl))
+	mux.HandleFunc("/api/orchestrate/tournament", getOnly(handleOrchestrateTournament))
+	mux.HandleFunc("/api/orchestrate/tune", safePost(allowedOrigins, handleOrchestrateTune))
+	mux.HandleFunc("/api/player", getOnly(handlePlayer))
+	mux.HandleFunc("/.well-known/agent.json", getOnly(a2a.Handler("")))
+	mux.HandleFunc("/api/a2a/agent-card", getOnly(a2a.Handler("")))
+	// The MCP endpoint executes tool calls against the repo, so it carries the
+	// same Origin check as any other state-changing endpoint. Without it a page
+	// at evil.com could drive tools/call and read the response.
+	mcpHandler := mcp.StatelessHandler(repoRoot, "")
+	mux.HandleFunc("/api/mcp", safePost(allowedOrigins, mcpHandler))
+	mux.HandleFunc("/api/mcp/discover", safeOrigin(allowedOrigins, getOnly(mcpHandler)))
+	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			handleSkillsGet(w, r)
+		case http.MethodPost:
+			safePost(allowedOrigins, handleSkillsPost)(w, r)
+		default:
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
 }
 
 // --------------------- method gates ---------------------
@@ -72,7 +106,10 @@ func getOnly(fn http.HandlerFunc) http.HandlerFunc {
 // caught by either Origin or Sec-Fetch-Site.
 func safeOrigin(allowedOrigins map[string]bool, fn http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if origin := r.Header.Get("Origin"); origin != "" && !allowedOrigins[origin] {
+		if origin := r.Header.Get("Origin"); origin != "" &&
+			!allowedOrigins[origin] &&
+			origin != "http://"+r.Host &&
+			origin != "https://"+r.Host {
 			writeErr(w, http.StatusForbidden, "cross-origin request rejected")
 			return
 		}
@@ -176,7 +213,7 @@ func mustRepo(w http.ResponseWriter, repo string) (*config.Config, bool) {
 // client that smuggles a second object (or junk) after the payload cannot
 // slip past a handler that only reads the first.
 func decode(r *http.Request, v any) error {
-	r.Body = http.MaxBytesReader(nil, r.Body, 8<<20) // 8 MB
+	r.Body = http.MaxBytesReader(nil, r.Body, maxRequestBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
@@ -186,4 +223,23 @@ func decode(r *http.Request, v any) error {
 		return fmt.Errorf("body must contain a single JSON object")
 	}
 	return nil
+}
+
+func readLimitedBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	if r.ContentLength > maxRequestBodyBytes {
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return nil, false
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+	body, err := io.ReadAll(r.Body)
+	if err == nil {
+		return body, true
+	}
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		writeErr(w, http.StatusRequestEntityTooLarge, "request body too large")
+	} else {
+		writeErr(w, http.StatusBadRequest, "failed to read body: "+err.Error())
+	}
+	return nil, false
 }

@@ -33,8 +33,8 @@ import (
 	"go/token"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/ranking"
 )
 
 // extractGoExcerpt is the Go-specific extractor used when extractExcerpt

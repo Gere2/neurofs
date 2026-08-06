@@ -31,11 +31,12 @@ func TestDiff_VerdictDowngradeIsRegression(t *testing.T) {
 	}
 }
 
-func TestDiff_PassToSkipIsNotRegression(t *testing.T) {
+func TestDiff_PassToSkipIsRegression(t *testing.T) {
 	base := Report{Criteria: []Criterion{{ID: "G3", Verdict: Pass}}}
 	curr := Report{Criteria: []Criterion{{ID: "G3", Verdict: Skip}}}
-	if got := Diff(curr, base); len(got) != 0 {
-		t.Fatalf("PASS→SKIP must NOT be a regression (too noisy as PR-blocker); got %+v", got)
+	got := Diff(curr, base)
+	if len(got) != 1 || got[0].Kind != "verdict_downgrade" {
+		t.Fatalf("PASS→SKIP must be a verdict regression; got %+v", got)
 	}
 }
 
@@ -75,6 +76,19 @@ func TestDiff_NewFixtureIsNotRegression(t *testing.T) {
 	}}
 	if got := Diff(curr, base); len(got) != 0 {
 		t.Fatalf("adding a fixture cannot regress; got %+v", got)
+	}
+}
+
+func TestDiff_RemovedFixtureIsRegression(t *testing.T) {
+	base := Report{G3Details: []FactResult{
+		{Fixture: Fixture{Question: "where is jwt verified", SourcePath: "audit/facts/jwt.json"}, Recall: 0.75},
+	}}
+	got := Diff(Report{}, base)
+	if len(got) != 1 || got[0].Kind != "fixture_removed" {
+		t.Fatalf("expected fixture_removed; got %+v", got)
+	}
+	if got[0].Where != "audit/facts/jwt.json" || got[0].Before != "recall=0.75" || got[0].After != "removed" {
+		t.Fatalf("removed fixture regression lost context: %+v", got[0])
 	}
 }
 

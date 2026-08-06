@@ -3,14 +3,16 @@ package gate
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/audit"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/quality"
+	"github.com/Gere2/neurofs/internal/audit"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/quality"
 )
 
 func TestEvaluateG1(t *testing.T) {
@@ -24,7 +26,16 @@ func TestEvaluateG1(t *testing.T) {
 			name:       "no entries → SKIP",
 			entries:    nil,
 			want:       Skip,
-			wantDetail: "no rated entries",
+			wantDetail: "no human-rated entries",
+		},
+		{
+			name: "agent self-assessments do not count",
+			entries: []quality.Entry{
+				{Rating: quality.RatingYes, Source: quality.SourceAgent},
+				{Rating: quality.RatingNo, Comment: "agent self-assessment during pivot work (not a human rating)"},
+			},
+			want:       Skip,
+			wantDetail: "2 non-human ignored",
 		},
 		{
 			name: "below sample minimum → SKIP",
@@ -166,13 +177,31 @@ func TestEvaluateG3_FactRecallAggregation(t *testing.T) {
 			{Recall: 1.0, Fixture: Fixture{Question: "q1"}},
 			{Recall: 0.9, Fixture: Fixture{Question: "q2"}},
 			{Recall: 0.8, Fixture: Fixture{Question: "q3"}},
+			{Recall: 1.0, Fixture: Fixture{Question: "q4"}},
+			{Recall: 0.9, Fixture: Fixture{Question: "q5"}},
 		}
 		got := EvaluateG3(results, DefaultG3Thresholds())
 		if got.Verdict != Pass {
-			t.Errorf("mean 0.9 should PASS at threshold 0.8; got %s (%s)", got.Verdict, got.Detail)
+			t.Errorf("mean 0.92 should PASS at threshold 0.8; got %s (%s)", got.Verdict, got.Detail)
 		}
-		if got.Numbers["perfect"] != 1 {
-			t.Errorf("expected perfect=1, got %.0f", got.Numbers["perfect"])
+		if got.Numbers["perfect"] != 2 {
+			t.Errorf("expected perfect=2, got %.0f", got.Numbers["perfect"])
+		}
+	})
+
+	t.Run("fewer than five fixtures → SKIP", func(t *testing.T) {
+		results := []FactResult{
+			{Recall: 1.0, Fixture: Fixture{Question: "q1"}},
+			{Recall: 1.0, Fixture: Fixture{Question: "q2"}},
+			{Recall: 1.0, Fixture: Fixture{Question: "q3"}},
+			{Recall: 1.0, Fixture: Fixture{Question: "q4"}},
+		}
+		got := EvaluateG3(results, DefaultG3Thresholds())
+		if got.Verdict != Skip {
+			t.Fatalf("four fixtures must be insufficient evidence; got %s (%s)", got.Verdict, got.Detail)
+		}
+		if got.Numbers["fixtures"] != 4 || got.Numbers["min_fixtures"] != 5 {
+			t.Fatalf("minimum fixture evidence missing from numbers: %+v", got.Numbers)
 		}
 	})
 
@@ -181,13 +210,46 @@ func TestEvaluateG3_FactRecallAggregation(t *testing.T) {
 			{Recall: 0.5, Fixture: Fixture{Question: "good question 1"}},
 			{Recall: 0.0, Fixture: Fixture{Question: "the worst one of all"}},
 			{Recall: 0.3, Fixture: Fixture{Question: "middling"}},
+			{Recall: 0.4, Fixture: Fixture{Question: "middling 2"}},
+			{Recall: 0.2, Fixture: Fixture{Question: "middling 3"}},
 		}
 		got := EvaluateG3(results, DefaultG3Thresholds())
 		if got.Verdict != Fail {
-			t.Fatalf("mean ~0.27 must FAIL at 0.8; got %s", got.Verdict)
+			t.Fatalf("mean 0.28 must FAIL at 0.8; got %s", got.Verdict)
 		}
 		if !strings.Contains(got.Detail, "worst one of all") {
 			t.Errorf("FAIL detail should name the worst fixture; got: %s", got.Detail)
+		}
+	})
+
+	t.Run("mathematically exact threshold survives floating point rounding", func(t *testing.T) {
+		results := []FactResult{
+			{Recall: 1, Fixture: Fixture{Question: "q1"}},
+			{Recall: 2.0 / 3.0, Fixture: Fixture{Question: "q2"}},
+			{Recall: 1, Fixture: Fixture{Question: "q3"}},
+			{Recall: 2.0 / 3.0, Fixture: Fixture{Question: "q4"}},
+			{Recall: 2.0 / 3.0, Fixture: Fixture{Question: "q5"}},
+		}
+		got := EvaluateG3(results, DefaultG3Thresholds())
+		if got.Numbers["mean_recall"] >= 0.8 {
+			t.Fatalf("test setup no longer reproduces the rounding edge: %.17g", got.Numbers["mean_recall"])
+		}
+		if got.Verdict != Pass {
+			t.Fatalf("mathematical mean 0.8 should PASS; got %s (%s)", got.Verdict, got.Detail)
+		}
+	})
+
+	t.Run("execution error fails even at the recall threshold", func(t *testing.T) {
+		results := []FactResult{
+			{Recall: 1, Fixture: Fixture{Question: "q1"}},
+			{Recall: 1, Fixture: Fixture{Question: "q2"}},
+			{Recall: 1, Fixture: Fixture{Question: "q3"}},
+			{Recall: 1, Fixture: Fixture{Question: "q4"}},
+			{Recall: 0, Error: "pack failed", Fixture: Fixture{Question: "q5"}},
+		}
+		got := EvaluateG3(results, DefaultG3Thresholds())
+		if got.Verdict != Fail || !strings.Contains(got.Detail, "execution error") {
+			t.Fatalf("errored fixture must fail closed; got %s (%s)", got.Verdict, got.Detail)
 		}
 	})
 }
@@ -211,21 +273,30 @@ func TestScoreBundleAgainstFacts_FindsHitsInFragmentContent(t *testing.T) {
 	}
 }
 
-// Regression: the DevX agent found that renaming an identifier in
-// production code did NOT fail the gate because the old name still
-// appeared in `*_test.go` fragments. Test-file fragments must be excluded
-// from the gate's scoring pool — only production coverage counts.
-func TestScoreBundleAgainstFacts_IgnoresTestFileFragments(t *testing.T) {
+// Regression: renaming an identifier in production code must fail the gate
+// even when the old name remains in tests. Use the shared ranking path policy
+// so this remains true across every supported language.
+func TestScoreBundleAgainstFacts_IgnoresTestLikeFragmentsAcrossLanguages(t *testing.T) {
 	b := models.Bundle{Fragments: []models.ContextFragment{
-		{RelPath: "internal/ranking/ranking.go", Content: "weightFilenameRenamed = 3.0"},
-		{RelPath: "internal/ranking/ranking_test.go", Content: "want weightFilename"},
+		{RelPath: "internal/ranking/ranking.go", Content: "productionIdentifier"},
+		{RelPath: "internal/ranking/ranking_test.go", Content: "goOnlyFact"},
+		{RelPath: "pkg/test_cli.py", Content: "pythonOnlyFact"},
+		{RelPath: "src/router.spec.ts", Content: "typescriptOnlyFact"},
 	}}
-	got := ScoreBundleAgainstFacts(b, []string{"weightFilename"})
-	if len(got.Hits) != 0 {
-		t.Errorf("fact only present in _test.go must NOT hit; got hits=%v", got.Hits)
+	got := ScoreBundleAgainstFacts(b, []string{
+		"productionIdentifier",
+		"goOnlyFact",
+		"pythonOnlyFact",
+		"typescriptOnlyFact",
+	})
+	if got.Recall != 0.25 {
+		t.Errorf("recall = %v, want 0.25 from production content only", got.Recall)
 	}
-	if got.Recall != 0 {
-		t.Errorf("recall must be 0 when only test code mentions the old name; got %v", got.Recall)
+	if len(got.Hits) != 1 || got.Hits[0] != "productionIdentifier" {
+		t.Errorf("hits = %v, want only the production fact", got.Hits)
+	}
+	if len(got.Misses) != 3 {
+		t.Errorf("misses = %v, want all three test-only facts", got.Misses)
 	}
 }
 
@@ -239,7 +310,7 @@ func TestAggregate_VerdictPriority(t *testing.T) {
 		{"any fail wins", []Criterion{{Verdict: Pass}, {Verdict: Warn}, {Verdict: Fail}}, Fail},
 		{"warn over pass", []Criterion{{Verdict: Pass}, {Verdict: Warn}}, Warn},
 		{"all skip", []Criterion{{Verdict: Skip}, {Verdict: Skip}}, Skip},
-		{"pass + skip → pass", []Criterion{{Verdict: Pass}, {Verdict: Skip}}, Pass},
+		{"pass + skip → skip", []Criterion{{Verdict: Pass}, {Verdict: Skip}}, Skip},
 		{"empty", nil, Skip},
 	}
 	for _, c := range cases {
@@ -266,7 +337,7 @@ func TestPercentile_NearestRank(t *testing.T) {
 
 // ─── Loader tests ─────────────────────────────────────────────────────
 
-func TestLoadQualityEntries_ToleratesMissingFileAndCorruptLines(t *testing.T) {
+func TestLoadQualityEntries_MissingIsEmptyAndCorruptionFails(t *testing.T) {
 	t.Run("missing file → no error, empty result", func(t *testing.T) {
 		entries, err := LoadQualityEntries(filepath.Join(t.TempDir(), "nope.jsonl"))
 		if err != nil {
@@ -277,7 +348,7 @@ func TestLoadQualityEntries_ToleratesMissingFileAndCorruptLines(t *testing.T) {
 		}
 	})
 
-	t.Run("mixed valid + corrupt lines", func(t *testing.T) {
+	t.Run("mixed valid + corrupt lines fail closed", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "quality.jsonl")
 		good1, _ := json.Marshal(quality.Entry{Rating: quality.RatingYes, Query: "ok"})
@@ -290,12 +361,8 @@ func TestLoadQualityEntries_ToleratesMissingFileAndCorruptLines(t *testing.T) {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		entries, err := LoadQualityEntries(path)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if len(entries) != 2 {
-			t.Errorf("expected 2 valid entries despite corruption, got %d", len(entries))
+		if _, err := LoadQualityEntries(path); err == nil {
+			t.Fatal("corrupt governance evidence must return an error")
 		}
 	})
 }
@@ -331,7 +398,55 @@ func TestLoadFixtures_MissingDirIsSkip(t *testing.T) {
 	}
 }
 
-func TestLoadBundleSnapshots_ParsesStatsAndIgnoresJunk(t *testing.T) {
+func TestLoadFixturesHonorsAppendOnlySupersession(t *testing.T) {
+	dir := t.TempDir()
+	old := Fixture{Question: "old question", ExpectsFacts: []string{"obsolete"}}
+	correction := Fixture{
+		Question:     "corrected question",
+		ExpectsFacts: []string{"current"},
+		Source:       "correction",
+		Supersedes:   "old.json",
+	}
+	for name, fixture := range map[string]Fixture{
+		"old.json": old, "correction.json": correction,
+	} {
+		data, err := json.Marshal(fixture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := LoadFixtures(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Question != correction.Question {
+		t.Fatalf("active fixtures = %+v", got)
+	}
+}
+
+func TestLoadFixturesRejectsInvalidSupersession(t *testing.T) {
+	dir := t.TempDir()
+	fixture := Fixture{
+		Question:     "correction",
+		ExpectsFacts: []string{"current"},
+		Supersedes:   "missing.json",
+	}
+	data, err := json.Marshal(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "correction.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadFixtures(dir); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("invalid history error = %v", err)
+	}
+}
+
+func TestLoadBundleSnapshots_ParsesStatsAndRejectsMalformedEvidence(t *testing.T) {
 	dir := t.TempDir()
 	good := models.Bundle{
 		Stats: models.BundleStats{TokensUsed: 800, TokensBudget: 4000},
@@ -346,15 +461,38 @@ func TestLoadBundleSnapshots_ParsesStatsAndIgnoresJunk(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "skip.txt"), []byte("ignored"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := LoadBundleSnapshots(dir)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if _, err := LoadBundleSnapshots(dir); err == nil {
+		t.Fatal("malformed JSON evidence must fail closed")
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 snapshot (junk ignored, .txt skipped), got %d", len(got))
+	if err := os.Remove(filepath.Join(dir, "junk.json")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadBundleSnapshots(dir)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("valid snapshots = %+v, err = %v", got, err)
 	}
 	if got[0].Used != 800 || got[0].Budget != 4000 {
 		t.Errorf("snapshot fields wrong: %+v", got[0])
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "empty.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadBundleSnapshots(dir); err == nil ||
+		!strings.Contains(err.Error(), "tokens_budget must be positive") {
+		t.Fatalf("zero-budget snapshot error = %v, want fail-closed validation", err)
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) {
+	return 0, errors.New("write failed")
+}
+
+func TestRenderPropagatesWriterErrors(t *testing.T) {
+	if err := Render(failingWriter{}, Report{Overall: Pass}); err == nil {
+		t.Fatal("writer failure was ignored")
 	}
 }
 
@@ -382,7 +520,9 @@ func TestRender_PerFixtureDetailShownForImperfect(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	Render(&buf, r)
+	if err := Render(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 	out := buf.String()
 
 	// Imperfect fixture must appear with recall and missing facts.
@@ -415,7 +555,9 @@ func TestRender_PerFixtureDetailCapsMissingAtThree(t *testing.T) {
 		}},
 	}
 	var buf bytes.Buffer
-	Render(&buf, r)
+	if err := Render(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 	out := buf.String()
 
 	if !strings.Contains(out, "missing: a, b, c") {
@@ -442,7 +584,9 @@ func TestRender_PerFixtureDetailShowsErrors(t *testing.T) {
 		}},
 	}
 	var buf bytes.Buffer
-	Render(&buf, r)
+	if err := Render(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 	out := buf.String()
 
 	if !strings.Contains(out, "[error]") {
@@ -466,7 +610,9 @@ func TestRender_NoG3DetailSectionWhenAllPerfect(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	Render(&buf, r)
+	if err := Render(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 	out := buf.String()
 
 	if strings.Contains(out, "G3 imperfect fixtures:") {
@@ -482,7 +628,9 @@ func TestRender_NoG3DetailSectionWhenSkipped(t *testing.T) {
 		Overall:  Skip,
 	}
 	var buf bytes.Buffer
-	Render(&buf, r)
+	if err := Render(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(buf.String(), "G3 imperfect fixtures:") {
 		t.Errorf("skipped G3 must not print the imperfect section")
 	}
@@ -519,7 +667,7 @@ func TestEvaluateG4(t *testing.T) {
 			{Drift: audit.DriftReport{Rate: 0.10}},
 			{Drift: audit.DriftReport{Rate: 0.05}},
 		}
-		got := EvaluateG4(records, DefaultG4Thresholds())
+		got := EvaluateG4(records, G4Thresholds{MaxMedianDrift: 0.15, MinSamples: 1})
 		if got.Verdict != Pass {
 			t.Errorf("expected PASS when mean drift is 7.5%%, got %s", got.Verdict)
 		}
@@ -530,7 +678,7 @@ func TestEvaluateG4(t *testing.T) {
 			{Drift: audit.DriftReport{Rate: 0.20}},
 			{Drift: audit.DriftReport{Rate: 0.30}},
 		}
-		got := EvaluateG4(records, DefaultG4Thresholds())
+		got := EvaluateG4(records, G4Thresholds{MaxMedianDrift: 0.15, MinSamples: 1})
 		if got.Verdict != Fail {
 			t.Errorf("expected FAIL when mean drift is 25%%, got %s", got.Verdict)
 		}
@@ -547,13 +695,47 @@ func TestEvaluateG4SamplesPoolsOrigins(t *testing.T) {
 		}
 	})
 
+	t.Run("insufficient samples → SKIP", func(t *testing.T) {
+		got := EvaluateG4Samples([]DriftSample{{Origin: "pair", Label: "one", Rate: 0.9}}, DefaultG4Thresholds())
+		if got.Verdict != Skip || got.Numbers["min_samples"] != 3 {
+			t.Fatalf("expected minimum-sample SKIP, got %+v", got)
+		}
+	})
+
+	t.Run("invalid rates → FAIL", func(t *testing.T) {
+		cases := []struct {
+			name string
+			rate float64
+		}{
+			{name: "NaN", rate: math.NaN()},
+			{name: "positive infinity", rate: math.Inf(1)},
+			{name: "negative infinity", rate: math.Inf(-1)},
+			{name: "below zero", rate: -0.01},
+			{name: "above one", rate: 1.01},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				got := EvaluateG4Samples([]DriftSample{{Origin: "record", Label: "bad-rate", Rate: tc.rate}}, DefaultG4Thresholds())
+				if got.Verdict != Fail {
+					t.Fatalf("invalid rate %v must FAIL even below the sample minimum; got %s", tc.rate, got.Verdict)
+				}
+				if !strings.Contains(got.Detail, "expected a finite value in [0,1]") {
+					t.Fatalf("invalid-rate detail is not actionable: %s", got.Detail)
+				}
+				if got.Numbers["invalid_samples"] != 1 {
+					t.Fatalf("invalid sample count missing: %+v", got.Numbers)
+				}
+			})
+		}
+	})
+
 	t.Run("pooled mean and per-origin counts", func(t *testing.T) {
 		samples := []DriftSample{
 			{Origin: "record", Label: "q1", Rate: 0.10},
 			{Origin: "pair", Label: "stem-a", Rate: 0.05},
 			{Origin: "grounding", Label: "sess1", Rate: 0.15},
 		}
-		got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+		got := EvaluateG4Samples(samples, G4Thresholds{MaxMedianDrift: 0.15, MinSamples: 1})
 		if got.Verdict != Pass {
 			t.Fatalf("expected PASS at mean 10%%, got %s (%s)", got.Verdict, got.Detail)
 		}
@@ -570,7 +752,7 @@ func TestEvaluateG4SamplesPoolsOrigins(t *testing.T) {
 			{Origin: "pair", Label: "good", Rate: 0.05},
 			{Origin: "grounding", Label: "hallucinated-session", Rate: 0.60},
 		}
-		got := EvaluateG4Samples(samples, DefaultG4Thresholds())
+		got := EvaluateG4Samples(samples, G4Thresholds{MaxMedianDrift: 0.15, MinSamples: 1})
 		if got.Verdict != Fail {
 			t.Fatalf("expected FAIL at mean 32.5%%, got %s", got.Verdict)
 		}
@@ -612,17 +794,23 @@ func TestCollectPairDrift(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(responsesDir, "auth-run.md"), []byte(grounded), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Orphan response with no matching bundle must be skipped, not scored.
+	// Orphan response with no matching bundle must fail closed.
 	if err := os.WriteFile(filepath.Join(responsesDir, "orphan.md"), []byte("references phantomScorer everywhere"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	if _, err := CollectPairDrift(bundlesDir, responsesDir); err == nil {
+		t.Fatal("orphan response must be reported as incomplete evidence")
+	}
+	if err := os.Remove(filepath.Join(responsesDir, "orphan.md")); err != nil {
+		t.Fatal(err)
+	}
 	samples, err := CollectPairDrift(bundlesDir, responsesDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(samples) != 1 {
-		t.Fatalf("samples = %d, want 1 (orphan must be skipped): %+v", len(samples), samples)
+		t.Fatalf("samples = %d, want 1: %+v", len(samples), samples)
 	}
 	if samples[0].Origin != "pair" || samples[0].Label != "auth-run" {
 		t.Fatalf("sample identity wrong: %+v", samples[0])

@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/agentcontext"
-	"github.com/neuromfs/neuromfs/internal/grounding"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/agentcontext"
+	"github.com/Gere2/neurofs/internal/grounding"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 const sess = "sess-test"

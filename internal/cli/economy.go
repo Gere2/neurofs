@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 
-	"github.com/neuromfs/neuromfs/internal/abeval"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/gate"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/abeval"
+	"github.com/Gere2/neurofs/internal/atomicfile"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/gate"
+	"github.com/Gere2/neurofs/internal/retrieval"
 	"github.com/spf13/cobra"
 )
 
@@ -19,21 +18,24 @@ import (
 // pairs the aggregate summary with every per-task row so a docs run is
 // reproducible from the JSON alone.
 type economyReport struct {
-	Repo        string              `json:"repo"`
-	SearchLimit int                 `json:"search_limit"`
-	Summary     abeval.Summary      `json:"summary"`
-	Tasks       []abeval.TaskResult `json:"tasks"`
+	Repo        string                         `json:"repo"`
+	SearchLimit int                            `json:"search_limit"`
+	Summary     abeval.Summary                 `json:"summary"`
+	Tasks       []abeval.TaskResult            `json:"tasks"`
+	G5Metadata  *gate.CrossShapeReportMetadata `json:"g5_metadata,omitempty"`
 }
 
 func newEconomyCmd() *cobra.Command {
 	var (
-		repoPath    string
-		fixturesDir string
-		searchLimit int
-		threshold   float64
-		jsonOut     bool
-		outPath     string
-		gateMode    bool
+		repoPath     string
+		fixturesDir  string
+		searchLimit  int
+		threshold    float64
+		jsonOut      bool
+		outPath      string
+		gateMode     bool
+		g5Attest     bool
+		g5EngineRoot string
 	)
 
 	cmd := &cobra.Command{
@@ -67,6 +69,20 @@ Tasks default to the G3 fact fixtures in <repo>/audit/facts.`,
 			if fixturesDir == "" {
 				fixturesDir = filepath.Join(cfg.RepoRoot, "audit", "facts")
 			}
+			if g5Attest {
+				switch {
+				case searchLimit != abeval.DefaultSearchLimit ||
+					threshold != abeval.DefaultThreshold:
+					return fmt.Errorf(
+						"economy: --g5-attest requires --search-limit %d and --threshold %.2f",
+						abeval.DefaultSearchLimit, abeval.DefaultThreshold,
+					)
+				case !jsonOut && outPath == "":
+					return fmt.Errorf("economy: --g5-attest requires retained JSON via --json or --out")
+				case g5EngineRoot == "":
+					return fmt.Errorf("economy: --g5-attest requires --g5-engine-root")
+				}
+			}
 
 			fixtures, err := gate.LoadFixtures(fixturesDir)
 			if err != nil {
@@ -84,30 +100,29 @@ Tasks default to the G3 fact fixtures in <repo>/audit/facts.`,
 				})
 			}
 
-			db, err := storage.Open(cfg.DBPath)
+			// Refresh once before capturing any records, then keep every arm
+			// on the returned immutable in-memory generation. Previously the
+			// first search could reindex after AllFiles had already supplied
+			// the native baseline, mixing new snippets with stale checksums.
+			session, err := retrieval.NewSession(cmd.Context(), cfg.RepoRoot)
 			if err != nil {
 				return fmt.Errorf("economy: open index (did you run 'neurofs scan'?): %w", err)
 			}
-			defer db.Close()
-
-			count, err := db.FileCount()
-			if err != nil {
-				return fmt.Errorf("economy: %w", err)
-			}
-			if count == 0 {
+			files := session.SnapshotFiles()
+			if len(files) == 0 {
 				return fmt.Errorf("economy: index is empty — run 'neurofs scan' first")
 			}
-			files, err := db.AllFiles()
-			if err != nil {
-				return fmt.Errorf("economy: %w", err)
-			}
 
-			// Arm B: neurofs_search against the live index.
+			// Arm B searches the exact session generation that supplied the
+			// native file records above. DisableIndexRefresh documents and
+			// preserves the measurement boundary for this call path.
 			search := func(ctx context.Context, query string, limit int) ([]abeval.SearchHit, error) {
-				resp, err := retrieval.Search(ctx, retrieval.Options{
-					Query: query,
-					Repo:  cfg.RepoRoot,
-					Limit: limit,
+				resp, err := session.Search(ctx, retrieval.Options{
+					Query:                   query,
+					Repo:                    cfg.RepoRoot,
+					Limit:                   limit,
+					DisableIndexRefresh:     true,
+					ExpandStructuralContext: true,
 				})
 				if err != nil {
 					return nil, err
@@ -131,19 +146,37 @@ Tasks default to the G3 fact fixtures in <repo>/audit/facts.`,
 				return fmt.Errorf("economy: %w", err)
 			}
 
+			var metadata *gate.CrossShapeReportMetadata
+			if g5Attest {
+				metadata, err = gate.BuildCrossShapeReportMetadata(
+					cfg.RepoRoot,
+					fixturesDir,
+					g5EngineRoot,
+					cfg.HybridMode,
+				)
+				if err != nil {
+					return fmt.Errorf("economy: G5 attestation: %w", err)
+				}
+			}
 			report := economyReport{
 				Repo:        cfg.RepoRoot,
 				SearchLimit: searchLimit,
 				Summary:     summary,
 				Tasks:       results,
+				G5Metadata:  metadata,
 			}
 
 			if outPath != "" {
-				data, _ := json.MarshalIndent(report, "", "  ")
-				if err := os.WriteFile(outPath, append(data, '\n'), 0o644); err != nil {
+				data, err := json.MarshalIndent(report, "", "  ")
+				if err != nil {
+					return fmt.Errorf("economy: encode report: %w", err)
+				}
+				if err := atomicfile.WriteFile(outPath, append(data, '\n'), 0o644); err != nil {
 					return fmt.Errorf("economy: write %s: %w", outPath, err)
 				}
-				fmt.Fprintf(cmd.ErrOrStderr(), "economy: wrote report to %s\n", outPath)
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "economy: wrote report to %s\n", outPath); err != nil {
+					return fmt.Errorf("economy: write report path: %w", err)
+				}
 			}
 
 			if jsonOut {
@@ -151,7 +184,9 @@ Tasks default to the G3 fact fixtures in <repo>/audit/facts.`,
 					return err
 				}
 			} else {
-				printEconomyReport(cmd.OutOrStdout(), report)
+				if err := printEconomyReport(cmd.OutOrStdout(), report); err != nil {
+					return fmt.Errorf("economy: write report: %w", err)
+				}
 			}
 
 			if gateMode && summary.Verdict == "FAIL" {
@@ -168,11 +203,14 @@ Tasks default to the G3 fact fixtures in <repo>/audit/facts.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Print machine-readable JSON")
 	cmd.Flags().StringVar(&outPath, "out", "", "Also write the full JSON report to this path")
 	cmd.Flags().BoolVar(&gateMode, "gate", false, "Exit non-zero when the verdict is FAIL")
+	cmd.Flags().BoolVar(&g5Attest, "g5-attest", false, "Attach runtime identity for a canonical retained G5 report")
+	cmd.Flags().StringVar(&g5EngineRoot, "g5-engine-root", "", "NeuroFS source checkout used to build the attested binary (required with --g5-attest)")
 	return cmd
 }
 
-func printEconomyReport(w interface{ Write([]byte) (int, error) }, r economyReport) {
-	p := func(format string, a ...interface{}) { fmt.Fprintf(w, format, a...) }
+func printEconomyReport(dst interface{ Write([]byte) (int, error) }, r economyReport) error {
+	w := newReportWriter(dst)
+	p := w.printf
 
 	p("NeuroFS — Phase-0 economy A/B (iso-recall) on %s\n", r.Repo)
 	p("  arm B = neurofs_search (limit %d); arm A = native whole files to match B's recall\n\n", r.SearchLimit)
@@ -210,6 +248,7 @@ func printEconomyReport(w interface{ Write([]byte) (int, error) }, r economyRepo
 	p("    token reduction : mean %.1f%% (median %.1f%%) at iso-recall\n", s.MeanTokenReduction*100, s.MedianTokenReduction*100)
 	p("    threshold       : %.0f%%\n", s.Threshold*100)
 	p("    VERDICT         : %s — %s\n", s.Verdict, s.Detail)
+	return w.err
 }
 
 func plural(n int) string {

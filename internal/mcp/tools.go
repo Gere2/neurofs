@@ -10,21 +10,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/neuromfs/neuromfs/internal/agentcontext"
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/contextladder"
-	"github.com/neuromfs/neuromfs/internal/contextmap"
-	"github.com/neuromfs/neuromfs/internal/contextusage"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/loopstate"
-	"github.com/neuromfs/neuromfs/internal/memory"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/retrieval"
-	"github.com/neuromfs/neuromfs/internal/storage"
-	"github.com/neuromfs/neuromfs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/agentcontext"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/contextladder"
+	"github.com/Gere2/neurofs/internal/contextmap"
+	"github.com/Gere2/neurofs/internal/contextusage"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/loopstate"
+	"github.com/Gere2/neurofs/internal/memory"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/retrieval"
+	"github.com/Gere2/neurofs/internal/runid"
+	"github.com/Gere2/neurofs/internal/storage"
+	"github.com/Gere2/neurofs/internal/taskflow"
 )
 
 const taskInputSchema = `{
@@ -110,7 +111,7 @@ const searchInputSchema = `{
   "properties": {
     "query": { "type": "string", "description": "Search query for relevant code chunks." },
     "repo":  { "type": "string", "description": "Absolute path to repo. Default: cwd." },
-    "limit": { "type": "integer", "description": "Maximum number of chunk hits to return. Default: 8." },
+    "limit": { "type": "integer", "description": "Number of primary ranked hits. Direct search may append a bounded set of structural parent/implementation companions. Default: 8." },
     "mode":  { "type": "string", "description": "Retrieval mode hint: research, build, review, or test." }
   },
   "required": ["query"]
@@ -162,7 +163,7 @@ const exportMemoryInputSchema = `{
 const pruneMemoryInputSchema = `{
   "type": "object",
   "properties": {
-    "days": { "type": "integer", "default": 30, "description": "Prune entries older than this many days." },
+    "days": { "type": "integer", "minimum": 1, "maximum": 36500, "default": 30, "description": "Prune entries older than this many days." },
     "repo": { "type": "string", "description": "Absolute path to repo. Default: cwd." }
   }
 }`
@@ -319,6 +320,7 @@ type taskAgentResponse struct {
 	NextActions    []agentcontext.NextAction `json:"next_actions"`
 	PromptPath     string                    `json:"prompt_path"`
 	BundlePath     string                    `json:"bundle_path"`
+	JoinKey        *runid.JoinKey            `json:"join_key,omitempty"`
 	Stats          models.BundleStats        `json:"stats"`
 	TopPicks       []taskflow.TopPick        `json:"top_picks"`
 	Reused         bool                      `json:"reused"`
@@ -368,6 +370,7 @@ type ContextResponse struct {
 	Prompt          string                  `json:"prompt,omitempty"`
 	PromptPath      string                  `json:"prompt_path,omitempty"`
 	BundlePath      string                  `json:"bundle_path,omitempty"`
+	JoinKey         *runid.JoinKey          `json:"join_key,omitempty"`
 	Stats           *models.BundleStats     `json:"stats,omitempty"`
 }
 
@@ -387,7 +390,7 @@ func runContextTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		if response.Stats != nil {
 			bundleTokens = response.Stats.TokensUsed
 		}
-		logSearchUsage(repo, "neurofs_context", response.Query, response.Route, response.Results, bundleTokens)
+		logSearchUsage(ctx, repo, "neurofs_context", response.Query, response.Route, response.Results, bundleTokens)
 	}
 	return jsonTextResult(response)
 }
@@ -512,6 +515,7 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 			return ContextResponse{}, fmt.Errorf("query must not be empty for bundle intent")
 		}
 		result, err := taskflow.Run(taskflow.Opts{
+			Context:       ctx,
 			RepoRoot:      repo,
 			Query:         args.Query,
 			Budget:        args.Budget,
@@ -528,6 +532,7 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 		response.Prompt = result.Prompt
 		response.PromptPath = result.PromptPath
 		response.BundlePath = result.BundlePath
+		response.JoinKey = result.JoinKey
 		response.Stats = &result.Stats
 	case "search", "research", "review", "test":
 		if args.Query == "" {
@@ -573,7 +578,7 @@ func contextStructuralHints(repo, query string, limit int) ([]ContextStructuralH
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -712,18 +717,35 @@ func inferContextIntent(query string) string {
 		return "outline"
 	}
 	words := contextQueryWords(q)
-	outlineHints := []string{"outline", "overview", "map", "structure", "files", "estructura", "resumen", "mapa"}
+	outlineHints := []string{"outline", "overview", "map", "structure", "estructura", "resumen", "mapa"}
 	for _, hint := range outlineHints {
 		if words[hint] {
 			return "outline"
 		}
 	}
-	bundleHints := []string{"implement", "build", "fix", "refactor", "review", "add", "arregla", "implementa", "revisa"}
-	for _, hint := range bundleHints {
-		if words[hint] {
-			if hint == "review" || hint == "revisa" {
-				return "review"
-			}
+
+	// A verb mentioned inside an explanatory question describes the code,
+	// not an instruction to change it ("How does ... build its baseline?").
+	// Infer mutating intents only from an imperative position; callers can
+	// always supply an explicit intent when wording is ambiguous.
+	tokens := contextQueryTokens(q)
+	actionAt := 0
+	if len(tokens) >= 2 && (tokens[0] == "please" || tokens[0] == "favor") {
+		actionAt = 1
+	} else if len(tokens) >= 3 &&
+		(tokens[0] == "can" || tokens[0] == "could" || tokens[0] == "would") &&
+		tokens[1] == "you" {
+		actionAt = 2
+	} else if len(tokens) >= 2 &&
+		(tokens[0] == "puedes" || tokens[0] == "podrias") {
+		actionAt = 1
+	}
+	if actionAt < len(tokens) {
+		switch tokens[actionAt] {
+		case "review", "revisa", "revisar":
+			return "review"
+		case "implement", "implementa", "implementar",
+			"build", "fix", "arregla", "arreglar", "refactor", "add", "anade":
 			return "build"
 		}
 	}
@@ -774,15 +796,16 @@ func contextSearchReason(intent string, limit int) string {
 
 func contextQueryWords(query string) map[string]bool {
 	words := make(map[string]bool)
-	for _, word := range strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_')
-	}) {
-		word = strings.TrimSpace(word)
-		if word != "" {
-			words[word] = true
-		}
+	for _, word := range contextQueryTokens(query) {
+		words[word] = true
 	}
 	return words
+}
+
+func contextQueryTokens(query string) []string {
+	return strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_'
+	})
 }
 
 func jsonTextResult(v any) ToolCallResult {
@@ -820,6 +843,7 @@ func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	}
 
 	result, err := taskflow.Run(taskflow.Opts{
+		Context:       ctx,
 		RepoRoot:      repo,
 		Query:         args.Query,
 		Budget:        args.Budget,
@@ -843,14 +867,19 @@ func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		if err != nil {
 			return errResult(fmt.Sprintf("agent context: %v", err))
 		}
-		_ = contextusage.Append(result.RepoRoot, contextusage.Entry{
+		contextEntry := contextusage.Entry{
 			SessionID:      sessionID,
 			Phase:          "initial_bundle",
 			Command:        "mcp.neurofs_task --agent",
 			Query:          args.Query,
 			Tokens:         agentPrompt.InitialTokens,
 			BaselineTokens: agentPrompt.BaselineTokens,
-		})
+		}
+		if result.JoinKey != nil {
+			contextEntry.BundlePath = result.JoinKey.BundlePath
+			contextEntry.BundleHash = result.JoinKey.BundleHash
+		}
+		_ = contextusage.AppendContext(ctx, result.RepoRoot, contextEntry)
 		// Persist the next actions so a restarting loop can consume them via
 		// `neurofs recall` / neurofs_recall_state.
 		_ = loopstate.RecordNextActions(result.RepoRoot, sessionID, args.Query, agentPrompt.NextActions)
@@ -863,6 +892,7 @@ func runTaskTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 			NextActions:    agentPrompt.NextActions,
 			PromptPath:     result.PromptPath,
 			BundlePath:     result.BundlePath,
+			JoinKey:        result.JoinKey,
 			Stats:          result.Stats,
 			TopPicks:       result.TopPicks,
 			Reused:         result.Reused,
@@ -903,7 +933,7 @@ func runScanTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if err != nil {
 		return errResult(err.Error())
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	stats, err := indexer.Run(cfg, db, indexer.Options{Logf: func(string, ...any) {}})
 	if err != nil {
@@ -1065,7 +1095,7 @@ func runViewFileTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		return errResult(err.Error())
 	}
 
-	content, err := os.ReadFile(absPath)
+	content, _, err := fsutil.ReadRegularFileBounded(absPath, config.MaxFileSize)
 	if err != nil {
 		return errResult(fmt.Sprintf("read file: %v", err))
 	}
@@ -1102,7 +1132,7 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 	if err != nil {
 		return errResult(err.Error())
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -1119,7 +1149,7 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 			return errResult(fmt.Sprintf("load chunks: %v", err))
 		}
 		rels, _ := db.AllRelations()
-		contentBytes, err := os.ReadFile(rec.Path)
+		contentBytes, _, err := fsutil.ReadIndexedFileBounded(rec, config.MaxFileSize)
 		if err != nil {
 			return errResult(fmt.Sprintf("read %s: %v", rec.RelPath, err))
 		}
@@ -1178,7 +1208,7 @@ func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if err != nil {
 		return errResult(err.Error())
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -1198,7 +1228,7 @@ func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if err != nil {
 		return errResult(fmt.Sprintf("load chunks: %v", err))
 	}
-	contentBytes, err := os.ReadFile(rec.Path)
+	contentBytes, _, err := fsutil.ReadIndexedFileBounded(rec, config.MaxFileSize)
 	if err != nil {
 		return errResult(fmt.Sprintf("read %s: %v", rec.RelPath, err))
 	}
@@ -1235,7 +1265,7 @@ func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	}
 
 	if strings.TrimSpace(args.SessionID) != "" {
-		_ = contextusage.Append(cfg.RepoRoot, contextusage.Entry{
+		_ = contextusage.AppendContext(ctx, cfg.RepoRoot, contextusage.Entry{
 			SessionID: strings.TrimSpace(args.SessionID),
 			Phase:     "expansion",
 			Command:   "mcp.neurofs_expand",
@@ -1303,7 +1333,7 @@ func runListSignaturesTool(ctx context.Context, raw json.RawMessage) ToolCallRes
 	if err != nil {
 		return errResult(err.Error())
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rec, err := db.GetFileByRelPath(args.Path)
 	if err != nil {
@@ -1315,7 +1345,9 @@ func runListSignaturesTool(ctx context.Context, raw json.RawMessage) ToolCallRes
 		return errResult(err.Error())
 	}
 
-	contentBytes, err := os.ReadFile(absPath)
+	readRec := rec
+	readRec.Path = absPath
+	contentBytes, _, err := fsutil.ReadIndexedFileBounded(readRec, config.MaxFileSize)
 	if err != nil {
 		return errResult(fmt.Sprintf("read file: %v", err))
 	}
@@ -1363,7 +1395,7 @@ func runGetExcerptTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 	if err != nil {
 		return errResult(err.Error())
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	rec, err := db.GetFileByRelPath(args.Path)
 	if err != nil {
@@ -1375,7 +1407,9 @@ func runGetExcerptTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 		return errResult(err.Error())
 	}
 
-	contentBytes, err := os.ReadFile(absPath)
+	readRec := rec
+	readRec.Path = absPath
+	contentBytes, _, err := fsutil.ReadIndexedFileBounded(readRec, config.MaxFileSize)
 	if err != nil {
 		return errResult(fmt.Sprintf("read file: %v", err))
 	}
@@ -1410,6 +1444,10 @@ type SearchOptions struct {
 	Repo  string
 	Limit int
 	Mode  string
+	// ExpandStructuralContext appends bounded parent/implementation context
+	// beyond Limit. Direct search enables it; the context broker leaves it
+	// disabled because it applies its own routing and token budget.
+	ExpandStructuralContext bool
 	// NeutralizeGitState is set by benchmarks so measurements do not
 	// depend on the current working set. Not exposed over MCP.
 	NeutralizeGitState bool
@@ -1463,15 +1501,16 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	}
 
 	response, err := Search(ctx, SearchOptions{
-		Query: args.Query,
-		Repo:  repo,
-		Limit: args.Limit,
-		Mode:  args.Mode,
+		Query:                   args.Query,
+		Repo:                    repo,
+		Limit:                   args.Limit,
+		Mode:                    args.Mode,
+		ExpandStructuralContext: true,
 	})
 	if err != nil {
 		return errResult(err.Error())
 	}
-	logSearchUsage(repo, "neurofs_search", args.Query, args.Mode, response.Results, 0)
+	logSearchUsage(ctx, repo, "neurofs_search", args.Query, args.Mode, response.Results, 0)
 	payload, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return errResult(fmt.Sprintf("marshal search response: %v", err))
@@ -1485,11 +1524,12 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 // index change (instead of once per query) is the whole point.
 func Search(ctx context.Context, opts SearchOptions) (SearchResponse, error) {
 	response, err := retrieval.SearchShared(ctx, retrieval.Options{
-		Query:              opts.Query,
-		Repo:               opts.Repo,
-		Limit:              opts.Limit,
-		Mode:               opts.Mode,
-		NeutralizeGitState: opts.NeutralizeGitState,
+		Query:                   opts.Query,
+		Repo:                    opts.Repo,
+		Limit:                   opts.Limit,
+		Mode:                    opts.Mode,
+		NeutralizeGitState:      opts.NeutralizeGitState,
+		ExpandStructuralContext: opts.ExpandStructuralContext,
 	})
 	if err != nil {
 		return SearchResponse{}, err
@@ -1844,6 +1884,8 @@ type pruneMemoryArgs struct {
 	Repo string `json:"repo"`
 }
 
+const maxPruneDays = 36500
+
 func runPruneMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	var args pruneMemoryArgs
 	if len(raw) > 0 {
@@ -1851,8 +1893,11 @@ func runPruneMemoryTool(ctx context.Context, raw json.RawMessage) ToolCallResult
 			return errResult(fmt.Sprintf("invalid arguments: %v", err))
 		}
 	}
-	if args.Days <= 0 {
+	if args.Days == 0 {
 		args.Days = 30
+	}
+	if args.Days < 0 || args.Days > maxPruneDays {
+		return errResult(fmt.Sprintf("days must be between 1 and %d", maxPruneDays))
 	}
 	repo, err := resolveRepo(ctx, args.Repo)
 	if err != nil {

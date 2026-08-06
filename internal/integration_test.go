@@ -9,15 +9,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/output"
-	"github.com/neuromfs/neuromfs/internal/packager"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/output"
+	"github.com/Gere2/neurofs/internal/packager"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 func TestEndToEnd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping end-to-end repository flow in short mode")
+	}
 	// Locate testdata relative to this file.
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -40,7 +43,11 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
-	defer db.Close()
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("close db: %v", err)
+		}
+	})
 
 	stats, err := indexer.Run(cfg, db, indexer.Options{})
 	if err != nil {
@@ -131,7 +138,11 @@ func TestEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create output file: %v", err)
 	}
-	defer f.Close()
+	t.Cleanup(func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("close output file: %v", err)
+		}
+	})
 
 	if err := output.Write(f, bundle, output.FormatMarkdown); err != nil {
 		t.Fatalf("write to file: %v", err)

@@ -3,25 +3,20 @@
 package retrieval
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/neuromfs/neuromfs/internal/config"
-	"github.com/neuromfs/neuromfs/internal/embeddings"
-	"github.com/neuromfs/neuromfs/internal/fsutil"
-	"github.com/neuromfs/neuromfs/internal/indexer"
-	"github.com/neuromfs/neuromfs/internal/models"
-	"github.com/neuromfs/neuromfs/internal/ranking"
-	"github.com/neuromfs/neuromfs/internal/storage"
+	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/embeddings"
+	"github.com/Gere2/neurofs/internal/fsutil"
+	"github.com/Gere2/neurofs/internal/indexer"
+	"github.com/Gere2/neurofs/internal/models"
+	"github.com/Gere2/neurofs/internal/ranking"
+	"github.com/Gere2/neurofs/internal/storage"
 )
 
 // Options configures a reusable NeuroFS chunk search.
@@ -30,6 +25,16 @@ type Options struct {
 	Repo  string
 	Limit int
 	Mode  string
+	// DisableIndexRefresh makes one-shot search consume the existing index
+	// exactly as stored. It disables version, embedding, source-generation,
+	// and empty-index rebuilds. The index is opened read-only and must already
+	// exist. Measurement callers use this to avoid changing what they measure.
+	DisableIndexRefresh bool
+	// ExpandStructuralContext appends a bounded number of matching class
+	// headers and explicitly named members after the ranked limit. Task
+	// bundles enable it so unused token budget can carry cheap structural
+	// context without displacing primary search hits.
+	ExpandStructuralContext bool
 	// Weights overrides the scoring weights for this search. When nil the
 	// repo's tuned weights (.neurofs/weights.json) or defaults are used.
 	// The learn tuner injects candidates here to evaluate them.
@@ -63,6 +68,8 @@ type Hit struct {
 	TokenEstimate int      `json:"token_estimate"`
 	ContentHash   string   `json:"content_hash"`
 	Snippet       string   `json:"snippet"`
+	ChunkID       string   `json:"-"`
+	ParentID      string   `json:"-"`
 }
 
 type candidate struct {
@@ -96,16 +103,28 @@ type Session struct {
 	fileByPath      map[string]models.FileRecord
 	contentCache    map[string]string
 	changedPaths    map[string]bool
-	// exactCache memoizes rg-backed exact signals per term set: the tuner
-	// replays the same fixture questions hundreds of times per run, and
-	// the ripgrep subprocess is the dominant per-query cost once the index
-	// is loaded.
+	// exactCache memoizes checksum-validated exact signals per term set: the
+	// tuner replays the same fixture questions hundreds of times per run.
 	exactCache map[string]map[string]exactSignal
 }
 
-// NewSession loads the repo index once for repeated searches, indexing the
-// repo first when the index is empty (same behavior as one-shot Search).
+// NewSession loads the repo index once for repeated searches, refreshing it
+// first when its version or indexed source generations are stale.
 func NewSession(ctx context.Context, repoPath string) (*Session, error) {
+	return newSession(ctx, repoPath, false)
+}
+
+// SnapshotFiles returns the file records captured with this session's index
+// generation. Measurement callers use the copy as their whole-file baseline
+// so snippets and native reads cannot accidentally straddle an auto-reindex.
+func (s *Session) SnapshotFiles() []models.FileRecord {
+	if s == nil {
+		return nil
+	}
+	return append([]models.FileRecord(nil), s.files...)
+}
+
+func newSession(ctx context.Context, repoPath string, disableIndexRefresh bool) (*Session, error) {
 	repo, err := resolveRepo(repoPath)
 	if err != nil {
 		return nil, err
@@ -114,11 +133,50 @@ func NewSession(ctx context.Context, repoPath string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	db, err := storage.Open(cfg.DBPath)
+	var db *storage.DB
+	if disableIndexRefresh {
+		db, err = storage.OpenReadOnly(cfg.DBPath)
+	} else {
+		db, err = storage.Open(cfg.DBPath)
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
+
+	embeddingClient := embeddings.NewClient(cfg.HybridMode)
+	if err := embeddingClient.Validate(); err != nil {
+		return nil, fmt.Errorf("validate embedding configuration: %w", err)
+	}
+
+	requiresReindex := false
+	if !disableIndexRefresh {
+		requiresReindex, err = indexer.RequiresReindex(db)
+		if err != nil {
+			return nil, fmt.Errorf("check indexer version: %w", err)
+		}
+		if !requiresReindex {
+			requiresReindex, err = indexer.RequiresEmbeddingReindex(
+				db,
+				embeddingClient.ProviderName(),
+				embeddingClient.ModelName(),
+			)
+			if err != nil {
+				return nil, fmt.Errorf("check embedding index freshness: %w", err)
+			}
+		}
+		if !requiresReindex {
+			requiresReindex, err = indexer.RequiresSourceReindex(cfg, db)
+			if err != nil {
+				return nil, fmt.Errorf("check source index freshness: %w", err)
+			}
+		}
+		if requiresReindex {
+			if _, err := indexer.Run(cfg, db, indexer.Options{Logf: func(string, ...any) {}}); err != nil {
+				return nil, fmt.Errorf("rebuild stale index: %w", err)
+			}
+		}
+	}
 
 	files, err := db.AllFiles()
 	if err != nil {
@@ -128,7 +186,10 @@ func NewSession(ctx context.Context, repoPath string) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(files) == 0 || len(chunks) == 0 {
+	if disableIndexRefresh && (len(files) == 0 || len(chunks) == 0) {
+		return nil, fmt.Errorf("index is empty; automatic refresh is disabled")
+	}
+	if !disableIndexRefresh && !requiresReindex && (len(files) == 0 || len(chunks) == 0) {
 		if _, err := indexer.Run(cfg, db, indexer.Options{Logf: func(string, ...any) {}}); err != nil {
 			return nil, err
 		}
@@ -152,7 +213,7 @@ func NewSession(ctx context.Context, repoPath string) (*Session, error) {
 	// NEUROFS_MOCK_SEMANTIC=1 keeps the path alive under the mock provider
 	// so tests can exercise the semantic plumbing with planted vectors.
 	var chunkEmbeddings map[string][]float32
-	if embeddings.NewClient(cfg.HybridMode).ProviderName() != "mock" || os.Getenv("NEUROFS_MOCK_SEMANTIC") == "1" {
+	if embeddingClient.ProviderName() != "mock" || os.Getenv("NEUROFS_MOCK_SEMANTIC") == "1" {
 		chunkEmbeddings, err = db.AllChunkEmbeddings()
 		if err != nil {
 			return nil, fmt.Errorf("load chunk embeddings: %w", err)
@@ -188,7 +249,7 @@ func Search(ctx context.Context, opts Options) (Response, error) {
 	if strings.TrimSpace(opts.Query) == "" {
 		return Response{}, fmt.Errorf("query must not be empty")
 	}
-	session, err := NewSession(ctx, opts.Repo)
+	session, err := newSession(ctx, opts.Repo, opts.DisableIndexRefresh)
 	if err != nil {
 		return Response{}, err
 	}
@@ -231,11 +292,6 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 
 	terms := ranking.Tokenise(query)
 	exactKey := strings.Join(terms, "\x00")
-	exactSignals, cached := s.exactCache[exactKey]
-	if !cached {
-		exactSignals = exactSearchSignals(ctx, repo, terms, files)
-		s.exactCache[exactKey] = exactSignals
-	}
 	changedPaths := s.changedPaths
 	if opts.NeutralizeGitState {
 		changedPaths = nil
@@ -264,19 +320,27 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	}
 
 	candidates := make([]candidate, 0, len(chunks))
+	unreadablePaths := make(map[string]struct{})
 	for _, chunk := range chunks {
 		rec, ok := s.fileByPath[chunk.FilePath]
 		if !ok {
+			continue
+		}
+		if _, unreadable := unreadablePaths[rec.Path]; unreadable {
 			continue
 		}
 		content, ok := s.contentCache[rec.Path]
 		if !ok {
 			absPath, err := fsutil.ConfineToRepoStrict(repo, rec.RelPath)
 			if err != nil {
+				unreadablePaths[rec.Path] = struct{}{}
 				continue
 			}
-			b, err := os.ReadFile(absPath)
+			readRecord := rec
+			readRecord.Path = absPath
+			b, _, err := fsutil.ReadIndexedFileBounded(readRecord, config.MaxFileSize)
 			if err != nil {
+				unreadablePaths[rec.Path] = struct{}{}
 				continue
 			}
 			content = string(b)
@@ -295,6 +359,8 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 			TokenEstimate: chunk.TokenEstimate,
 			ContentHash:   chunk.ContentHash,
 			Snippet:       snippet,
+			ChunkID:       chunk.ChunkID,
+			ParentID:      chunk.ParentID,
 		}
 		if matches, ok := structuralMatches[rec.Path]; ok {
 			if len(matches.symbolMatches) > 0 {
@@ -328,6 +394,11 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 		})
 	}
 
+	exactSignals, cached := s.exactCache[exactKey]
+	if !cached {
+		exactSignals = exactSearchSignals(terms, files, s.contentCache)
+		s.cacheExactSignals(exactKey, exactSignals)
+	}
 	applyExactBoost(candidates, exactSignals, weights)
 	applyWorkingSetBoost(candidates, changedPaths, weights)
 	applyGraphBoost(candidates, relations, weights)
@@ -358,6 +429,7 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	})
 
 	hits = dedupeSameSymbol(hits)
+	rankedHits := hits
 
 	// Enforce diversity: allow at most 3 chunks per file in the final search results
 	const maxChunksPerFile = 3
@@ -374,12 +446,22 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	if len(hits) > opts.Limit {
 		hits = hits[:opts.Limit]
 	}
+	if opts.ExpandStructuralContext {
+		hits = appendStructuralContext(hits, rankedHits, terms)
+	}
 
 	return Response{
 		Query:   query,
 		Mode:    strings.TrimSpace(opts.Mode),
 		Results: hits,
 	}, nil
+}
+
+func (s *Session) cacheExactSignals(key string, signals map[string]exactSignal) {
+	if len(s.exactCache) >= maxExactCacheLen {
+		s.exactCache = make(map[string]map[string]exactSignal)
+	}
+	s.exactCache[key] = signals
 }
 
 // dedupeSameSymbol keeps one hit per (path, symbol) for named chunks. Python
@@ -415,6 +497,249 @@ func dedupeSameSymbol(hits []Hit) []Hit {
 		out = append(out, h)
 	}
 	return out
+}
+
+const (
+	maxExpandedClassHeaders        = 2
+	maxExpandedClassMembers        = 2
+	maxExpandedCompanions          = 3
+	maxExpandedFileAnchors         = 1
+	maxExpandedCompoundFileHelpers = 2
+	maxExpandedChunkTokens         = 2000
+)
+
+// appendStructuralContext uses only additive slack: it never reorders or
+// removes primary hits. Large files often need more than the global top-N to
+// explain a result — for example a matched CliRunner.invoke method benefits
+// from its CliRunner header, while a plural query for "arguments" should be
+// able to carry the compact Argument class even when other chunks from the
+// same core file fill the diversity cap.
+func appendStructuralContext(selected, ranked []Hit, terms []string) []Hit {
+	if len(selected) == 0 || len(ranked) == 0 {
+		return selected
+	}
+	out := append([]Hit(nil), selected...)
+	selectedPaths := make(map[string]bool)
+	seen := make(map[string]bool)
+	for _, hit := range out {
+		selectedPaths[hit.Path] = true
+		seen[hitIdentity(hit)] = true
+	}
+
+	// If an exactly named method already survived primary ranking, its own
+	// class is the most useful header. Prefer that parent before generic
+	// class names that merely share a query term (for example _FDCapture
+	// before CliRunner in a query about CliRunner.invoke).
+	wantedParents := make(map[string]bool)
+	for _, hit := range out {
+		if hit.ParentID != "" && symbolExactlyNamed(hit.Symbol, terms) {
+			wantedParents[parentIdentity(hit.Path, hit.ParentID)] = true
+		}
+	}
+
+	matchingParents := make(map[string]bool)
+	for _, hit := range ranked {
+		if !selectedPaths[hit.Path] || !isClassHeaderKind(hit.Kind) ||
+			!classSymbolMatchesQuery(hit.Symbol, terms) {
+			continue
+		}
+		matchingParents[parentIdentity(hit.Path, hit.ChunkID)] = true
+	}
+
+	addedHeaders := 0
+	appendHeaders := func(wantedOnly bool) {
+		for _, hit := range ranked {
+			if addedHeaders >= maxExpandedClassHeaders {
+				return
+			}
+			parentKey := parentIdentity(hit.Path, hit.ChunkID)
+			if !selectedPaths[hit.Path] || !isClassHeaderKind(hit.Kind) ||
+				!matchingParents[parentKey] ||
+				(wantedOnly && !wantedParents[parentKey]) ||
+				(!wantedOnly && wantedParents[parentKey]) ||
+				seen[hitIdentity(hit)] ||
+				hit.TokenEstimate > maxExpandedChunkTokens {
+				continue
+			}
+			out = append(out, hit)
+			seen[hitIdentity(hit)] = true
+			addedHeaders++
+		}
+	}
+	appendHeaders(true)
+	appendHeaders(false)
+
+	addedMembers := 0
+	for _, hit := range ranked {
+		if addedMembers >= maxExpandedClassMembers {
+			break
+		}
+		if !selectedPaths[hit.Path] || hit.ParentID == "" ||
+			!matchingParents[parentIdentity(hit.Path, hit.ParentID)] ||
+			!symbolExactlyNamed(hit.Symbol, terms) ||
+			seen[hitIdentity(hit)] ||
+			hit.TokenEstimate > maxExpandedChunkTokens {
+			continue
+		}
+		out = append(out, hit)
+		seen[hitIdentity(hit)] = true
+		addedMembers++
+	}
+
+	// Compound implementation names encode an action and its subject. When a
+	// selected file has spare result/bundle budget, append these companions
+	// instead of changing primary scores and displacing existing evidence.
+	// This recovers APIs hidden inside large factories (mountComponent,
+	// patchChildren) and explicit factory entry points (createRenderer).
+	addedCompanions := 0
+	for _, hit := range ranked {
+		if addedCompanions >= maxExpandedCompanions {
+			break
+		}
+		if !selectedPaths[hit.Path] ||
+			!isImplementationKind(hit.Kind) ||
+			seen[hitIdentity(hit)] ||
+			hit.TokenEstimate > maxExpandedChunkTokens ||
+			(symbolQueryCoverage(hit.Symbol, terms) < 2 &&
+				!factorySymbolMatchesQuery(hit.Symbol, terms)) {
+			continue
+		}
+		out = append(out, hit)
+		seen[hitIdentity(hit)] = true
+		addedCompanions++
+	}
+
+	// When the query names a compound filename concern ("session pool" →
+	// sessionpool.go), carry one matching helper and one exported entry point
+	// from that already-selected file. This is deliberately narrower than a
+	// generic same-file expansion: compound stems are specific, and the two
+	// extra slots recover the API + implementation bridge without disturbing
+	// the primary ranking or flat names such as ledger.go.
+	addedCompoundHelpers := 0
+	appendCompoundHelper := func(exportedOnly bool) {
+		if addedCompoundHelpers >= maxExpandedCompoundFileHelpers {
+			return
+		}
+		for _, hit := range ranked {
+			if !selectedPaths[hit.Path] ||
+				!fileStemCompoundMatchesQuery(hit.Path, terms) ||
+				!isImplementationKind(hit.Kind) ||
+				seen[hitIdentity(hit)] ||
+				hit.TokenEstimate > maxExpandedChunkTokens {
+				continue
+			}
+			if exportedOnly {
+				if !isExportedImplementation(hit) {
+					continue
+				}
+			} else if !symbolSharesQueryComponent(hit.Symbol, terms) {
+				continue
+			}
+			out = append(out, hit)
+			seen[hitIdentity(hit)] = true
+			addedCompoundHelpers++
+			return
+		}
+	}
+	appendCompoundHelper(false)
+	appendCompoundHelper(true)
+
+	// A query can name a file's concern without naming the declaration that
+	// contains the answer ("what tools does the server expose?" →
+	// tools.go:toolsList, or "cross shape ..." →
+	// phase_g5_cross_shape.md). If primary ranking selected no chunk from
+	// that file, use one final additive slot for a filename anchor. Prefer a
+	// compact implementation whose symbol begins with the filename term;
+	// otherwise the highest-ranked chunk from the file is still enough to
+	// expose its path and local context.
+	if maxExpandedFileAnchors > 0 {
+		var fallback *Hit
+		for i := range ranked {
+			hit := &ranked[i]
+			if selectedPaths[hit.Path] ||
+				seen[hitIdentity(*hit)] ||
+				hit.TokenEstimate > maxExpandedChunkTokens ||
+				!fileStemMatchesQuery(hit.Path, terms) {
+				continue
+			}
+			// A multi-part filename phrase is specific enough to use its
+			// highest-ranked chunk as a fallback. A flat generic filename
+			// such as ledger.go is not: require a matching implementation
+			// name there, otherwise it can add a cheap but irrelevant type
+			// and distort both precision and iso-recall economics.
+			if fallback == nil && fileStemCompoundMatchesQuery(hit.Path, terms) {
+				fallback = hit
+			}
+			if isImplementationKind(hit.Kind) && symbolBeginsWithFileStem(hit.Symbol, hit.Path, terms) {
+				fallback = hit
+				break
+			}
+		}
+		if fallback != nil {
+			out = append(out, *fallback)
+		}
+	}
+	return out
+}
+
+func symbolSharesQueryComponent(symbol string, terms []string) bool {
+	raw := strings.ToLower(strings.TrimSpace(symbol))
+	for _, symbolPart := range ranking.Tokenise(symbol) {
+		if symbolPart == raw || len(symbolPart) < 4 {
+			continue
+		}
+		for _, term := range terms {
+			if morphologicallyEqual(symbolPart, term) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isExportedImplementation(hit Hit) bool {
+	if hit.Kind == "export_func" {
+		return true
+	}
+	symbol := hit.Symbol
+	if dot := strings.LastIndex(symbol, "."); dot >= 0 {
+		symbol = symbol[dot+1:]
+	}
+	if symbol == "" {
+		return false
+	}
+	first := rune(symbol[0])
+	return first >= 'A' && first <= 'Z'
+}
+
+func isClassHeaderKind(kind string) bool {
+	return kind == "class" || kind == "export_class"
+}
+
+func classSymbolMatchesQuery(symbol string, terms []string) bool {
+	if symbolExactlyNamed(symbol, terms) {
+		return true
+	}
+	raw := strings.ToLower(strings.TrimSpace(symbol))
+	for _, part := range ranking.Tokenise(symbol) {
+		if part == raw {
+			continue
+		}
+		for _, term := range terms {
+			if morphologicallyEqual(part, term) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hitIdentity(hit Hit) string {
+	return fmt.Sprintf("%s|%s|%d", hit.Path, hit.ContentHash, hit.StartLine)
+}
+
+func parentIdentity(path, chunkID string) string {
+	return path + "\x00" + chunkID
 }
 
 func resolveRepo(path string) (string, error) {
@@ -453,6 +778,12 @@ func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, te
 	// are identical for every chunk and substring symbol matches tie.
 	if symbolExactlyNamed(chunk.Symbol, terms) {
 		add("symbol_exact", w.SymbolExact)
+	}
+	// Prefer an unqualified declaration when the query names it directly.
+	// A query for "trigger" can match both Dep.trigger and the exported
+	// trigger function; the latter is the exact symbol the user named.
+	if symbolFullyExactlyNamed(chunk.Symbol, terms) {
+		add("symbol_full_exact", w.SymbolExact*0.5)
 	}
 	baseStem := stripExt(filepath.Base(rec.RelPath))
 	if textMatchesTerms(rec.RelPath, terms) || textMatchesTerms(baseStem, terms) {
@@ -527,74 +858,66 @@ func applyExactBoost(candidates []candidate, signals map[string]exactSignal, w *
 	}
 }
 
-func exactSearchSignals(ctx context.Context, repo string, terms []string, files []models.FileRecord) map[string]exactSignal {
+// exactSearchSignals derives content signals from the same checksum-validated
+// bytes used to build result snippets. Reading the live working tree here
+// would let a post-session edit boost an old chunk at the edited line number,
+// mixing two generations inside one result.
+func exactSearchSignals(
+	terms []string,
+	files []models.FileRecord,
+	contentByPath map[string]string,
+) map[string]exactSignal {
 	signals := exactFilenameSignals(terms, files)
 	patterns := exactSearchTerms(terms)
 	if len(patterns) == 0 {
 		return signals
 	}
-	if _, err := exec.LookPath("rg"); err != nil {
-		return signals
-	}
-
-	rgCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-
-	args := []string{
-		"--json",
-		"--ignore-case",
-		"--word-regexp",
-		"--glob", "!.git/**",
-		"--glob", "!.neurofs/**",
-	}
-	for _, pattern := range patterns {
-		args = append(args, "-e", pattern)
-	}
-	args = append(args, repo)
-
-	var out bytes.Buffer
-	cmd := exec.CommandContext(rgCtx, "rg", args...)
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return signals
+	for _, file := range files {
+		content, ok := contentByPath[file.Path]
+		if !ok {
+			continue
 		}
-		return signals
-	}
-
-	dec := json.NewDecoder(bytes.NewReader(out.Bytes()))
-	for {
-		var event struct {
-			Type string `json:"type"`
-			Data struct {
-				Path struct {
-					Text string `json:"text"`
-				} `json:"path"`
-				LineNumber int `json:"line_number"`
-			} `json:"data"`
-		}
-		if err := dec.Decode(&event); err != nil {
-			if err == io.EOF {
-				break
+		for lineIndex, line := range splitLogicalLines(content) {
+			if !lineContainsExactSearchTerm(line, patterns) {
+				continue
 			}
-			return signals
+			signal := signals[file.RelPath]
+			if signal.lines == nil {
+				signal.lines = make(map[int]bool)
+			}
+			signal.lines[lineIndex+1] = true
+			signals[file.RelPath] = signal
 		}
-		if event.Type != "match" || event.Data.LineNumber <= 0 {
-			continue
-		}
-		relPath := normalizeRGPath(repo, event.Data.Path.Text)
-		if relPath == "" {
-			continue
-		}
-		signal := signals[relPath]
-		if signal.lines == nil {
-			signal.lines = make(map[int]bool)
-		}
-		signal.lines[event.Data.LineNumber] = true
-		signals[relPath] = signal
 	}
 	return signals
+}
+
+func lineContainsExactSearchTerm(line string, terms []string) bool {
+	line = strings.ToLower(line)
+	for _, term := range terms {
+		offset := 0
+		for offset <= len(line)-len(term) {
+			match := strings.Index(line[offset:], term)
+			if match < 0 {
+				break
+			}
+			start := offset + match
+			end := start + len(term)
+			leftBoundary := start == 0 || !isExactWordByte(line[start-1])
+			rightBoundary := end == len(line) || !isExactWordByte(line[end])
+			if leftBoundary && rightBoundary {
+				return true
+			}
+			offset = start + 1
+		}
+	}
+	return false
+}
+
+func isExactWordByte(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= '0' && value <= '9' ||
+		value == '_'
 }
 
 func exactFilenameSignals(terms []string, files []models.FileRecord) map[string]exactSignal {
@@ -626,9 +949,7 @@ func filenameMatchesExactTerm(relPath string, termSet map[string]bool) bool {
 		stem = strings.TrimSuffix(base, ext)
 	}
 	candidates := []string{base, stem}
-	for _, part := range splitIdentifierForSearch(stem) {
-		candidates = append(candidates, part)
-	}
+	candidates = append(candidates, splitIdentifierForSearch(stem)...)
 	for _, candidate := range candidates {
 		if termSet[candidate] {
 			return true
@@ -653,22 +974,6 @@ func exactSearchTerms(terms []string) []string {
 		}
 	}
 	return out
-}
-
-func normalizeRGPath(repo, path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	if filepath.IsAbs(path) {
-		rel, err := filepath.Rel(repo, path)
-		if err == nil {
-			path = rel
-		}
-	}
-	path = filepath.ToSlash(path)
-	path = strings.TrimPrefix(path, "./")
-	return path
 }
 
 func applyWorkingSetBoost(candidates []candidate, changedPaths map[string]bool, w *Weights) {
@@ -977,8 +1282,182 @@ func symbolExactlyNamed(symbol string, terms []string) bool {
 		if t == "" {
 			continue
 		}
-		if t == sym || t == last {
+		if morphologicallyEqual(t, sym) || morphologicallyEqual(t, last) {
 			return true
+		}
+	}
+	return false
+}
+
+func symbolFullyExactlyNamed(symbol string, terms []string) bool {
+	sym := strings.ToLower(strings.TrimSpace(symbol))
+	if sym == "" || strings.Contains(sym, ".") {
+		return false
+	}
+	for _, term := range terms {
+		if morphologicallyEqual(term, sym) {
+			return true
+		}
+	}
+	return false
+}
+
+func symbolQueryCoverage(symbol string, terms []string) int {
+	symbol = strings.TrimSpace(symbol)
+	if symbol == "" {
+		return 0
+	}
+	if dot := strings.LastIndex(symbol, "."); dot >= 0 {
+		symbol = symbol[dot+1:]
+	}
+	raw := strings.ToLower(symbol)
+	var parts []string
+	for _, part := range ranking.Tokenise(symbol) {
+		if part == raw {
+			continue
+		}
+		parts = append(parts, part)
+	}
+	if len(parts) < 2 || len(terms) < 2 {
+		return 0
+	}
+
+	// Require the same contiguous phrase in both the identifier and query.
+	// Unordered component coverage made test_other_command_invoke look like
+	// the best answer to "invoke ... commands", and partial coverage made
+	// mountChildren compete with "mount components ... patch children".
+	best := 0
+	for partStart := range parts {
+		for termStart := range terms {
+			n := 0
+			for partStart+n < len(parts) && termStart+n < len(terms) &&
+				morphologicallyEqual(parts[partStart+n], terms[termStart+n]) {
+				n++
+			}
+			if n > best {
+				best = n
+			}
+		}
+	}
+	if best < 2 {
+		return 0
+	}
+	return best
+}
+
+func factorySymbolMatchesQuery(symbol string, terms []string) bool {
+	symbol = strings.TrimSpace(symbol)
+	if dot := strings.LastIndex(symbol, "."); dot >= 0 {
+		symbol = symbol[dot+1:]
+	}
+	raw := strings.ToLower(symbol)
+	var parts []string
+	for _, part := range ranking.Tokenise(symbol) {
+		if part != raw {
+			parts = append(parts, part)
+		}
+	}
+	if len(parts) != 2 {
+		return false
+	}
+	switch parts[0] {
+	case "create", "make", "build", "open", "new":
+	default:
+		return false
+	}
+	for _, term := range terms {
+		if morphologicallyEqual(parts[1], term) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileStemMatchesQuery(path string, terms []string) bool {
+	stem := stripExt(filepath.Base(path))
+	for _, term := range terms {
+		if morphologicallyEqual(stem, term) {
+			return true
+		}
+	}
+	return fileStemCompoundMatchesQuery(path, terms)
+}
+
+func fileStemCompoundMatchesQuery(path string, terms []string) bool {
+	stem := strings.ToLower(stripExt(filepath.Base(path)))
+	if symbolQueryCoverage(stem, terms) >= 2 {
+		return true
+	}
+	// Lowercase compound filenames such as sessionpool.go carry no camel or
+	// separator boundary for Tokenise to split. Match only an exact contiguous
+	// concatenation of two or more query terms.
+	for start := range terms {
+		var joined strings.Builder
+		for end := start; end < len(terms); end++ {
+			joined.WriteString(strings.ToLower(terms[end]))
+			if end > start && joined.String() == stem {
+				return true
+			}
+			if joined.Len() >= len(stem) {
+				break
+			}
+		}
+	}
+	return false
+}
+
+func symbolBeginsWithFileStem(symbol, path string, terms []string) bool {
+	if dot := strings.LastIndex(symbol, "."); dot >= 0 {
+		symbol = symbol[dot+1:]
+	}
+	rawSymbol := strings.ToLower(strings.TrimSpace(symbol))
+	var symbolParts []string
+	for _, part := range ranking.Tokenise(symbol) {
+		if part != rawSymbol {
+			symbolParts = append(symbolParts, part)
+		}
+	}
+	if len(symbolParts) == 0 {
+		symbolParts = []string{rawSymbol}
+	}
+
+	stem := stripExt(filepath.Base(path))
+	rawStem := strings.ToLower(stem)
+	stemParts := []string{rawStem}
+	for _, part := range ranking.Tokenise(stem) {
+		if part != rawStem {
+			stemParts = append(stemParts, part)
+		}
+	}
+	for _, stemPart := range stemParts {
+		matchesQuery := false
+		for _, term := range terms {
+			if morphologicallyEqual(stemPart, term) {
+				matchesQuery = true
+				break
+			}
+		}
+		if matchesQuery && morphologicallyEqual(symbolParts[0], stemPart) {
+			return true
+		}
+	}
+	return false
+}
+
+func morphologicallyEqual(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	if a == "" || b == "" {
+		return false
+	}
+	for _, av := range ranking.TermVariants(a) {
+		if len(av) < 3 {
+			continue
+		}
+		for _, bv := range ranking.TermVariants(b) {
+			if len(bv) >= 3 && av == bv {
+				return true
+			}
 		}
 	}
 	return false
@@ -1027,9 +1506,7 @@ func linesOverlap(lines map[int]bool, startLine, endLine int) bool {
 func splitIdentifierForSearch(s string) []string {
 	var parts []string
 	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
-		return !(('a' <= r && r <= 'z') ||
-			('A' <= r && r <= 'Z') ||
-			('0' <= r && r <= '9'))
+		return !isSearchIdentifierRune(r)
 	}) {
 		part = strings.ToLower(part)
 		if len(part) >= 3 {
@@ -1037,6 +1514,12 @@ func splitIdentifierForSearch(s string) []string {
 		}
 	}
 	return parts
+}
+
+func isSearchIdentifierRune(r rune) bool {
+	return ('a' <= r && r <= 'z') ||
+		('A' <= r && r <= 'Z') ||
+		('0' <= r && r <= '9')
 }
 
 func containsString(items []string, needle string) bool {

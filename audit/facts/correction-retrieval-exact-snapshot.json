@@ -1,0 +1,11 @@
+{
+  "question": "How does exact-content retrieval keep snippets and scoring on the same indexed session snapshot after a file changes?",
+  "expects_facts": [
+    "exactSearchSignals",
+    "ReadIndexedFileBounded",
+    "contentCache"
+  ],
+  "source": "correction",
+  "supersedes": "retrieval-ripgrep-dependency.json",
+  "created_at": "2026-07-29T17:05:00Z"
+}

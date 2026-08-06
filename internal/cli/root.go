@@ -40,6 +40,10 @@ a model actually needs to answer a question about your codebase.`,
 	root.AddCommand(newMcpCmd())
 	root.AddCommand(newProxyCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newG5SourceHashCmd())
+	root.AddCommand(newOrchestrateCmd())
+	root.AddCommand(newPlayerCmd())
+	root.AddCommand(newTournamentCmd())
 
 	return root
 }

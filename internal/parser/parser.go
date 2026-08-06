@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/neuromfs/neuromfs/internal/models"
+	"github.com/Gere2/neurofs/internal/models"
 )
 
 // Result is what the parser extracts from a file.
@@ -165,9 +165,7 @@ func extractClassMethods(content string) []models.Symbol {
 			continue
 		}
 		body := content[bodyStart:bodyEnd]
-		for _, sym := range methodsInBody(body, className, bodyStart, lines, seen) {
-			syms = append(syms, sym)
-		}
+		syms = append(syms, methodsInBody(body, className, bodyStart, lines, seen)...)
 	}
 	return syms
 }
@@ -212,7 +210,7 @@ func FindBraceBody(content string, startIdx int) (int, int) {
 				}
 				if content[i+1] == '*' {
 					i += 2
-					for i+1 < len(content) && !(content[i] == '*' && content[i+1] == '/') {
+					for i+1 < len(content) && (content[i] != '*' || content[i+1] != '/') {
 						i++
 					}
 					i += 2
