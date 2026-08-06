@@ -15,7 +15,7 @@ func TestSemanticCache_PutAndGet(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	ctx := context.Background()
 	query := "Implement auth middleware"
@@ -79,7 +79,7 @@ func TestSemanticCache_MinGroundingFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	ctx := context.Background()
 	query := "Write SQL migration"
@@ -118,7 +118,7 @@ func TestSemanticCache_TTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	ctx := context.Background()
 	query := "Fast query"
@@ -150,7 +150,7 @@ func TestDispatcher_IntegratedCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to init cache: %v", err)
 	}
-	defer cache.Close()
+	defer func() { _ = cache.Close() }()
 
 	cfg := DefaultModelsConfig()
 	router := NewRouter(cfg)

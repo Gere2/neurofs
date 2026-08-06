@@ -124,7 +124,7 @@ func TestServerNeverAttachesStaleAmbientRunID(t *testing.T) {
 	if fb.Reason == "" {
 		t.Fatal("unavailable correlation persisted without a reason")
 	}
-	if err := fb.Availability.Validate(); err != nil {
+	if err := fb.Validate(); err != nil {
 		t.Fatalf("persisted attribution is invalid: %v", err)
 	}
 

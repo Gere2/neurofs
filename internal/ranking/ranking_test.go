@@ -191,6 +191,7 @@ func TestRankPathAliasExpansion(t *testing.T) {
 	}
 	if userFile == nil {
 		t.Fatal("user.ts missing from ranked output")
+		return
 	}
 	if !hasSignal(userFile.Reasons, "import_expansion") {
 		t.Errorf("expected import_expansion on src/user.ts via @app alias, got %+v", userFile.Reasons)
@@ -389,6 +390,7 @@ func TestRankGraphRelations(t *testing.T) {
 	}
 	if helper == nil {
 		t.Fatal("helper.ts not found in ranked output")
+		return
 	}
 	if !hasSignal(helper.Reasons, "dependency_relation") {
 		t.Errorf("expected dependency_relation signal on helper.ts, got %+v", helper.Reasons)
@@ -402,6 +404,7 @@ func TestRankGraphRelations(t *testing.T) {
 	}
 	if other == nil {
 		t.Fatal("other.ts not found in ranked output")
+		return
 	}
 	if !hasSignal(other.Reasons, "consumer_relation") {
 		t.Errorf("expected consumer_relation signal on other.ts, got %+v", other.Reasons)

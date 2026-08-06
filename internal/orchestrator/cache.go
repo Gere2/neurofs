@@ -71,7 +71,7 @@ func NewSemanticCache(dbPath string, ttl time.Duration) (*SemanticCache, error) 
 	}
 	for _, p := range pragmas {
 		if _, err := db.Exec(p); err != nil {
-			db.Close()
+			_ = db.Close()
 			return nil, fmt.Errorf("pragma %s: %w", p, err)
 		}
 	}
@@ -96,7 +96,7 @@ func NewSemanticCache(dbPath string, ttl time.Duration) (*SemanticCache, error) 
 	CREATE INDEX IF NOT EXISTS idx_query_ctx ON response_cache(query_hash, context_hash, model);
 	`
 	if _, err := db.Exec(createTableSQL); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, fmt.Errorf("create cache schema: %w", err)
 	}
 

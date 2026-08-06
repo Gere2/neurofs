@@ -65,7 +65,7 @@ func AppendRecord(repoRoot string, r *Record) error {
 	if err != nil {
 		return fmt.Errorf("receipt: append: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := root.Mkdir("audit", 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("receipt: append: %w", err)
 	}
@@ -73,7 +73,7 @@ func AppendRecord(repoRoot string, r *Record) error {
 	if err != nil {
 		return fmt.Errorf("receipt: append: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := ensureRegular(f); err != nil {
 		return fmt.Errorf("receipt: append: %w", err)
 	}
@@ -119,7 +119,7 @@ func LoadLedger(repoRoot string) ([]Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("receipt: load: %w", err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	f, err := root.OpenFile(LedgerRelPath, os.O_RDONLY, 0)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -127,7 +127,7 @@ func LoadLedger(repoRoot string) ([]Record, error) {
 		}
 		return nil, fmt.Errorf("receipt: load: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := ensureRegular(f); err != nil {
 		return nil, fmt.Errorf("receipt: load: %w", err)
 	}

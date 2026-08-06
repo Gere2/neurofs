@@ -149,16 +149,16 @@ const (
 // A router may switch models mid-session, so resolved model is a collection
 // of observations, never a scalar.
 type ModelObservation struct {
-	Model      string     `json:"model"`                 // model id as observed, verbatim
-	Source     string     `json:"source"`                // where it was seen, e.g. "cli_stats_footer", "api_response"
+	Model      string     `json:"model"`  // model id as observed, verbatim
+	Source     string     `json:"source"` // where it was seen, e.g. "cli_stats_footer", "api_response"
 	ObservedAt *time.Time `json:"observed_at,omitempty"`
 }
 
 // Attempt is one external launch (or escalation) within a run.
 type Attempt struct {
 	AttemptID         string             `json:"attempt_id"`
-	Surface           string             `json:"surface"`        // e.g. "copilot_cli", "claude_cli", "api", "local"
-	SelectionMode     SelectionMode      `json:"selection_mode"` // how the model was chosen; "explicit" requires requested_model
+	Surface           string             `json:"surface"`                   // e.g. "copilot_cli", "claude_cli", "api", "local"
+	SelectionMode     SelectionMode      `json:"selection_mode"`            // how the model was chosen; "explicit" requires requested_model
 	RequestedModel    string             `json:"requested_model,omitempty"` // required iff selection_mode is "explicit"
 	Argv              []string           `json:"argv"`                      // exact argument vector, never a shell string
 	Exit              *int               `json:"exit,omitempty"`            // nil means the process never yielded an exit code

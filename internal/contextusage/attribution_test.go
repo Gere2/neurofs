@@ -47,7 +47,7 @@ func TestEntryCarriesRunAttribution(t *testing.T) {
 	if got.RunID != id {
 		t.Fatalf("run id lost: got %q want %q", got.RunID, id)
 	}
-	if err := got.Availability.Validate(); err != nil {
+	if err := got.Validate(); err != nil {
 		t.Fatalf("persisted attribution invalid: %v", err)
 	}
 	key := runid.JoinKey{RunID: got.RunID, BundlePath: got.BundlePath, BundleHash: got.BundleHash}

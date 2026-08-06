@@ -44,7 +44,7 @@ func TestEventCarriesRunAttribution(t *testing.T) {
 	if got.RunID != id {
 		t.Fatalf("run id lost: got %q want %q", got.RunID, id)
 	}
-	if err := got.Availability.Validate(); err != nil {
+	if err := got.Validate(); err != nil {
 		t.Fatalf("persisted attribution invalid: %v", err)
 	}
 	// Grounding evidence is only useful if it can be joined back to the exact

@@ -225,35 +225,43 @@ func TestInjectEnvDoesNotTouchProcessEnv(t *testing.T) {
 func TestNoProcessEnvMutation(t *testing.T) {
 	banned := map[string]bool{"Setenv": true, "Unsetenv": true, "Clearenv": true}
 
-	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, parser.AllErrors)
+	// Walked by hand rather than with parser.ParseDir, which is deprecated:
+	// this check only needs the non-test .go files in this one directory, so
+	// the package-resolution machinery ParseDir was replaced by is overkill.
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	fset := token.NewFileSet()
 	var files int
-	for _, pkg := range pkgs {
-		for path, file := range pkg.Files {
-			files++
-			ast.Inspect(file, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				ident, ok := sel.X.(*ast.Ident)
-				if !ok || ident.Name != "os" || !banned[sel.Sel.Name] {
-					return true
-				}
-				t.Errorf("%s:%d calls os.%s: the run identity must never be made ambient",
-					path, fset.Position(call.Pos()).Line, sel.Sel.Name)
-				return true
-			})
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
 		}
+		file, err := parser.ParseFile(fset, name, nil, parser.AllErrors)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files++
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok || ident.Name != "os" || !banned[sel.Sel.Name] {
+				return true
+			}
+			t.Errorf("%s:%d calls os.%s: the run identity must never be made ambient",
+				name, fset.Position(call.Pos()).Line, sel.Sel.Name)
+			return true
+		})
 	}
 	if files == 0 {
 		t.Fatal("no source files parsed")

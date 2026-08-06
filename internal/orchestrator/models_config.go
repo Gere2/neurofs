@@ -9,13 +9,13 @@ import (
 
 // ModelEntry describes a single LLM available for dispatch.
 type ModelEntry struct {
-	Provider       string   `json:"provider"`        // "anthropic", "google", "openai"
-	ModelID        string   `json:"model_id"`         // API model identifier
-	APIKeyEnv      string   `json:"api_key_env"`      // env var holding the API key
-	CostInputPer1M  float64 `json:"cost_input_per_1m"`  // USD per 1M input tokens
-	CostOutputPer1M float64 `json:"cost_output_per_1m"` // USD per 1M output tokens
-	Strengths      []string `json:"strengths,omitempty"`
-	MaxContext     int      `json:"max_context,omitempty"`
+	Provider        string   `json:"provider"`           // "anthropic", "google", "openai"
+	ModelID         string   `json:"model_id"`           // API model identifier
+	APIKeyEnv       string   `json:"api_key_env"`        // env var holding the API key
+	CostInputPer1M  float64  `json:"cost_input_per_1m"`  // USD per 1M input tokens
+	CostOutputPer1M float64  `json:"cost_output_per_1m"` // USD per 1M output tokens
+	Strengths       []string `json:"strengths,omitempty"`
+	MaxContext      int      `json:"max_context,omitempty"`
 }
 
 // RoutingRules maps a task kind (or "default"/"planner") to a model name.
@@ -55,40 +55,40 @@ func DefaultModelsConfig() ModelsConfig {
 	return ModelsConfig{
 		Models: map[string]ModelEntry{
 			"claude-opus": {
-				Provider:       "anthropic",
-				ModelID:        "claude-opus-4-0725",
-				APIKeyEnv:      "ANTHROPIC_API_KEY",
+				Provider:        "anthropic",
+				ModelID:         "claude-opus-4-0725",
+				APIKeyEnv:       "ANTHROPIC_API_KEY",
 				CostInputPer1M:  15.0,
 				CostOutputPer1M: 75.0,
-				Strengths:      []string{"complex_reasoning", "architecture", "debugging"},
-				MaxContext:     200000,
+				Strengths:       []string{"complex_reasoning", "architecture", "debugging"},
+				MaxContext:      200000,
 			},
 			"claude-sonnet": {
-				Provider:       "anthropic",
-				ModelID:        "claude-sonnet-4-6",
-				APIKeyEnv:      "ANTHROPIC_API_KEY",
+				Provider:        "anthropic",
+				ModelID:         "claude-sonnet-4-6",
+				APIKeyEnv:       "ANTHROPIC_API_KEY",
 				CostInputPer1M:  3.0,
 				CostOutputPer1M: 15.0,
-				Strengths:      []string{"coding", "tests", "frontend", "backend"},
-				MaxContext:     200000,
+				Strengths:       []string{"coding", "tests", "frontend", "backend"},
+				MaxContext:      200000,
 			},
 			"gemini-flash": {
-				Provider:       "google",
-				ModelID:        "gemini-2.5-flash-preview-05-20",
-				APIKeyEnv:      "GEMINI_API_KEY",
+				Provider:        "google",
+				ModelID:         "gemini-2.5-flash-preview-05-20",
+				APIKeyEnv:       "GEMINI_API_KEY",
 				CostInputPer1M:  0.15,
 				CostOutputPer1M: 0.60,
-				Strengths:      []string{"planning", "simple_tasks", "sql", "design"},
-				MaxContext:     1000000,
+				Strengths:       []string{"planning", "simple_tasks", "sql", "design"},
+				MaxContext:      1000000,
 			},
 			"gpt-4o-mini": {
-				Provider:       "openai",
-				ModelID:        "gpt-4o-mini",
-				APIKeyEnv:      "OPENAI_API_KEY",
+				Provider:        "openai",
+				ModelID:         "gpt-4o-mini",
+				APIKeyEnv:       "OPENAI_API_KEY",
 				CostInputPer1M:  0.15,
 				CostOutputPer1M: 0.60,
-				Strengths:      []string{"formatting", "translations", "simple_coding"},
-				MaxContext:     128000,
+				Strengths:       []string{"formatting", "translations", "simple_coding"},
+				MaxContext:      128000,
 			},
 		},
 		Routing: RoutingRules{

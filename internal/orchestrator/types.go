@@ -13,18 +13,18 @@ import "time"
 // The cascade starts with the cheapest model and escalates if grounding
 // falls below the configured threshold.
 type CascadeAttempt struct {
-	Level        int        `json:"level"`
-	Model        string     `json:"model"`
-	Provider     string     `json:"provider"`
-	Response     string     `json:"response,omitempty"`
-	Grounding    float64    `json:"grounding"`
-	CostUSD      float64    `json:"cost_usd"`
-	InputTokens  int        `json:"input_tokens"`
-	OutputTokens int        `json:"output_tokens"`
-	DurationMs   int64      `json:"duration_ms"`
-	Accepted     bool       `json:"accepted"`
-	Reason       string     `json:"reason,omitempty"` // why escalated or accepted
-	Cached       bool       `json:"cached,omitempty"`
+	Level        int     `json:"level"`
+	Model        string  `json:"model"`
+	Provider     string  `json:"provider"`
+	Response     string  `json:"response,omitempty"`
+	Grounding    float64 `json:"grounding"`
+	CostUSD      float64 `json:"cost_usd"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	DurationMs   int64   `json:"duration_ms"`
+	Accepted     bool    `json:"accepted"`
+	Reason       string  `json:"reason,omitempty"` // why escalated or accepted
+	Cached       bool    `json:"cached,omitempty"`
 }
 
 // TaskKind classifies a sub-task so the router can pick a model.
@@ -56,11 +56,11 @@ const (
 type TaskStatus string
 
 const (
-	StatusPending  TaskStatus = "pending"
-	StatusRunning  TaskStatus = "running"
-	StatusDone     TaskStatus = "done"
-	StatusFailed   TaskStatus = "failed"
-	StatusSkipped  TaskStatus = "skipped"
+	StatusPending TaskStatus = "pending"
+	StatusRunning TaskStatus = "running"
+	StatusDone    TaskStatus = "done"
+	StatusFailed  TaskStatus = "failed"
+	StatusSkipped TaskStatus = "skipped"
 )
 
 // Task is one decomposed sub-task within a Plan.
@@ -72,23 +72,23 @@ type Task struct {
 	DependsOn   []string   `json:"depends_on,omitempty"`
 
 	// Set by the router
-	Model       string     `json:"model,omitempty"`
-	Provider    string     `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Provider string `json:"provider,omitempty"`
 
 	// Set by the dispatcher
-	Status      TaskStatus `json:"status"`
-	Context     string     `json:"context,omitempty"`      // NeuroFS retrieval context
-	Prompt      string     `json:"prompt,omitempty"`       // full prompt sent to the model
-	Response    string     `json:"response,omitempty"`     // raw model response
-	Error       string     `json:"error,omitempty"`
+	Status   TaskStatus `json:"status"`
+	Context  string     `json:"context,omitempty"`  // NeuroFS retrieval context
+	Prompt   string     `json:"prompt,omitempty"`   // full prompt sent to the model
+	Response string     `json:"response,omitempty"` // raw model response
+	Error    string     `json:"error,omitempty"`
 
 	// Metrics
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	InputTokens  int       `json:"input_tokens,omitempty"`
-	OutputTokens int       `json:"output_tokens,omitempty"`
-	CostUSD      float64   `json:"cost_usd,omitempty"`
-	Grounding    float64   `json:"grounding,omitempty"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+	FinishedAt   *time.Time `json:"finished_at,omitempty"`
+	InputTokens  int        `json:"input_tokens,omitempty"`
+	OutputTokens int        `json:"output_tokens,omitempty"`
+	CostUSD      float64    `json:"cost_usd,omitempty"`
+	Grounding    float64    `json:"grounding,omitempty"`
 
 	// Cascade fields
 	CascadeLevel    int              `json:"cascade_level,omitempty"`
@@ -123,7 +123,7 @@ type Plan struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Set after execution
-	Status    TaskStatus `json:"status"`
+	Status TaskStatus `json:"status"`
 }
 
 // TotalCost sums the cost of all tasks.
@@ -170,29 +170,29 @@ func (p Plan) MeanGrounding() float64 {
 
 // Result is the final output of an orchestration run.
 type Result struct {
-	Plan              Plan    `json:"plan"`
-	TotalCostUSD      float64 `json:"total_cost_usd"`
-	MeanGrounding     float64 `json:"mean_grounding"`
-	DurationMs        int64   `json:"duration_ms"`
-	CascadeEscalations int    `json:"cascade_escalations,omitempty"`
+	Plan               Plan    `json:"plan"`
+	TotalCostUSD       float64 `json:"total_cost_usd"`
+	MeanGrounding      float64 `json:"mean_grounding"`
+	DurationMs         int64   `json:"duration_ms"`
+	CascadeEscalations int     `json:"cascade_escalations,omitempty"`
 	CascadeSavedUSD    float64 `json:"cascade_saved_usd,omitempty"`
 	CacheHits          int     `json:"cache_hits,omitempty"`
 }
 
 // StatusEvent is sent over SSE to update the UI in real time.
 type StatusEvent struct {
-	TaskID       string     `json:"task_id"`
-	Status       TaskStatus `json:"status"`
-	Model        string     `json:"model,omitempty"`
-	Provider     string     `json:"provider,omitempty"`
-	InputTokens  int        `json:"input_tokens,omitempty"`
-	OutputTokens int        `json:"output_tokens,omitempty"`
-	CostUSD      float64    `json:"cost_usd,omitempty"`
-	Grounding    float64    `json:"grounding,omitempty"`
-	DurationMs   int64      `json:"duration_ms,omitempty"`
-	Response     string     `json:"response,omitempty"`
-	Error        string     `json:"error,omitempty"`
-	CascadeLevel int        `json:"cascade_level,omitempty"`
-	CascadeReason string   `json:"cascade_reason,omitempty"` // "escalated: grounding 0.62 < 0.85" or "accepted"
-	Cached       bool       `json:"cached,omitempty"`
+	TaskID        string     `json:"task_id"`
+	Status        TaskStatus `json:"status"`
+	Model         string     `json:"model,omitempty"`
+	Provider      string     `json:"provider,omitempty"`
+	InputTokens   int        `json:"input_tokens,omitempty"`
+	OutputTokens  int        `json:"output_tokens,omitempty"`
+	CostUSD       float64    `json:"cost_usd,omitempty"`
+	Grounding     float64    `json:"grounding,omitempty"`
+	DurationMs    int64      `json:"duration_ms,omitempty"`
+	Response      string     `json:"response,omitempty"`
+	Error         string     `json:"error,omitempty"`
+	CascadeLevel  int        `json:"cascade_level,omitempty"`
+	CascadeReason string     `json:"cascade_reason,omitempty"` // "escalated: grounding 0.62 < 0.85" or "accepted"
+	Cached        bool       `json:"cached,omitempty"`
 }

@@ -35,21 +35,21 @@ func newTournamentCmd() *cobra.Command {
 				return enc.Encode(analysis)
 			}
 
-			fmt.Fprintf(os.Stdout, "🏆 War Room Model Tournament Analysis (%d total runs):\n\n", analysis.TotalRecords)
+			_, _ = fmt.Fprintf(os.Stdout, "🏆 War Room Model Tournament Analysis (%d total runs):\n\n", analysis.TotalRecords)
 
 			if len(analysis.ByKind) == 0 {
-				fmt.Fprintf(os.Stdout, "  No execution records logged yet. Run `neurofs orchestrate` to populate empirical data.\n")
+				_, _ = fmt.Fprintf(os.Stdout, "  No execution records logged yet. Run `neurofs orchestrate` to populate empirical data.\n")
 				return nil
 			}
 
 			for kind, perfList := range analysis.ByKind {
 				rec := analysis.Recommendations[kind]
-				fmt.Fprintf(os.Stdout, "  [ %s ]  Recommended: %s\n", kind, rec)
+				_, _ = fmt.Fprintf(os.Stdout, "  [ %s ]  Recommended: %s\n", kind, rec)
 				for _, p := range perfList {
-					fmt.Fprintf(os.Stdout, "    • %-16s  Runs: %-3d | WinRate: %3.0f%% | Grounding: %3.0f%% | Cost: $%.4f\n",
+					_, _ = fmt.Fprintf(os.Stdout, "    • %-16s  Runs: %-3d | WinRate: %3.0f%% | Grounding: %3.0f%% | Cost: $%.4f\n",
 						p.Model, p.TotalRuns, p.WinRate*100, p.MeanGrounding*100, p.MeanCostUSD)
 				}
-				fmt.Fprintln(os.Stdout)
+				_, _ = fmt.Fprintln(os.Stdout)
 			}
 
 			return nil

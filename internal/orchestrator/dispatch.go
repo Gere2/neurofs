@@ -75,7 +75,7 @@ func (c *DefaultLLMClient) completeAnthropic(ctx context.Context, entry ModelEnt
 	if err != nil {
 		return "", 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
@@ -128,7 +128,7 @@ func (c *DefaultLLMClient) completeGemini(ctx context.Context, entry ModelEntry,
 	if err != nil {
 		return "", 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
@@ -179,7 +179,7 @@ func (c *DefaultLLMClient) completeOpenAI(ctx context.Context, entry ModelEntry,
 	if err != nil {
 		return "", 0, 0, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {

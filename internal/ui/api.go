@@ -64,11 +64,12 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool, repoRoot st
 	mux.HandleFunc("/api/mcp", safePost(allowedOrigins, mcpHandler))
 	mux.HandleFunc("/api/mcp/discover", safeOrigin(allowedOrigins, getOnly(mcpHandler)))
 	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
+		switch r.Method {
+		case http.MethodGet:
 			handleSkillsGet(w, r)
-		} else if r.Method == http.MethodPost {
+		case http.MethodPost:
 			safePost(allowedOrigins, handleSkillsPost)(w, r)
-		} else {
+		default:
 			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	})

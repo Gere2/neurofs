@@ -277,7 +277,7 @@ func TestLoadRejectsUnknownFieldLine(t *testing.T) {
 	if _, err := f.WriteString(`{"schema_version":1,"future_field":true}` + "\n"); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	_ = f.Close()
 
 	if _, err := LoadLedger(repo); err == nil || !strings.Contains(err.Error(), "unknown field") {
 		t.Fatalf("want strict-decode failure, got %v", err)

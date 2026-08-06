@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/Gere2/neurofs/internal/config"
 	"github.com/Gere2/neurofs/internal/orchestrator"
@@ -22,12 +23,36 @@ type activeRun struct {
 	Result    *orchestrator.Result
 	Listeners []chan orchestrator.StatusEvent
 	Mu        sync.Mutex
+
+	// FinishedAt is zero while the run is executing. Finished runs are kept
+	// around for orchestrateRunTTL so a client that reconnects to the SSE
+	// stream still finds the id, then swept.
+	FinishedAt time.Time
 }
+
+// A finished run holds its plan, per-task prompts and full model responses, so
+// the map is not cheap to leak; the server is long-lived and every run used to
+// stay in it forever.
+const orchestrateRunTTL = 30 * time.Minute
 
 var (
 	orchestrateRuns   = make(map[string]*activeRun)
 	orchestrateRunsMu sync.RWMutex
 )
+
+// sweepOrchestrateRuns drops finished runs past their TTL. Called on insert so
+// no background goroutine is needed: the map only grows when a run starts.
+// Callers must hold orchestrateRunsMu for writing.
+func sweepOrchestrateRuns(now time.Time) {
+	for id, run := range orchestrateRuns {
+		run.Mu.Lock()
+		expired := !run.FinishedAt.IsZero() && now.Sub(run.FinishedAt) > orchestrateRunTTL
+		run.Mu.Unlock()
+		if expired {
+			delete(orchestrateRuns, id)
+		}
+	}
+}
 
 func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 	var req orchestrateRequest
@@ -49,7 +74,7 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	run := &activeRun{}
-	
+
 	// Create context with background execution
 	ctx := context.Background()
 
@@ -63,6 +88,7 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 
 	runID := plan.ID
 	orchestrateRunsMu.Lock()
+	sweepOrchestrateRuns(time.Now())
 	orchestrateRuns[runID] = run
 	orchestrateRunsMu.Unlock()
 
@@ -82,6 +108,11 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 				}
 			},
 		})
+
+		run.Mu.Lock()
+		run.Result = &res
+		run.FinishedAt = time.Now()
+		run.Mu.Unlock()
 
 		// Update game state & log tournament records
 		if home, err := os.UserHomeDir(); err == nil {
@@ -151,7 +182,7 @@ func handleOrchestrateStream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 		}
 	}
@@ -324,5 +355,3 @@ func handleSkillsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
 }
-
-

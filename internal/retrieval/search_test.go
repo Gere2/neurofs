@@ -698,6 +698,7 @@ func TestNewSessionReindexesChangedContentBeforeSearch(t *testing.T) {
 	}
 	if replacementHit == nil {
 		t.Fatalf("freshly reindexed Replacement chunk not found: %+v", response.Results)
+		return
 	}
 	if !strings.Contains(replacementHit.Snippet, `return "new"`) ||
 		strings.Contains(replacementHit.Snippet, "Original") {

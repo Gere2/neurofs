@@ -49,7 +49,7 @@ func TestEntryAttributionRoundTrip(t *testing.T) {
 	if entries[0].RunID != id {
 		t.Fatalf("run id lost: got %q want %q", entries[0].RunID, id)
 	}
-	if err := entries[0].Availability.Validate(); err != nil {
+	if err := entries[0].Validate(); err != nil {
 		t.Fatalf("persisted attribution invalid: %v", err)
 	}
 }

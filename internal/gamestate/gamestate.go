@@ -26,10 +26,10 @@ type PlayerState struct {
 	mu sync.RWMutex `json:"-"`
 
 	// Core progression
-	Level      int     `json:"level"`
-	XP         int     `json:"xp"`
-	XPToNext   int     `json:"xp_to_next"`
-	Title      string  `json:"title"`
+	Level    int    `json:"level"`
+	XP       int    `json:"xp"`
+	XPToNext int    `json:"xp_to_next"`
+	Title    string `json:"title"`
 
 	// Activity tracking
 	Streak        int       `json:"streak"`          // consecutive days with ≥1 task
@@ -54,17 +54,17 @@ type PlayerState struct {
 
 // AgentStats tracks real performance data for a model/agent.
 type AgentStats struct {
-	Name         string  `json:"name"`
-	DisplayName  string  `json:"display_name"`
-	Emoji        string  `json:"emoji"`
-	Wins         int     `json:"wins"`          // grounding ≥ threshold
-	Losses       int     `json:"losses"`        // grounding < threshold or error
-	Reliability  float64 `json:"reliability"`   // mean grounding (0-1)
-	Economy      float64 `json:"economy"`       // % cost saved vs Opus
-	Speed        float64 `json:"speed"`         // normalized speed (0-1)
-	CascadesAvoided int  `json:"cascades_avoided"` // resolved without escalation
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Specialties  []string `json:"specialties"`
+	Name            string   `json:"name"`
+	DisplayName     string   `json:"display_name"`
+	Emoji           string   `json:"emoji"`
+	Wins            int      `json:"wins"`             // grounding ≥ threshold
+	Losses          int      `json:"losses"`           // grounding < threshold or error
+	Reliability     float64  `json:"reliability"`      // mean grounding (0-1)
+	Economy         float64  `json:"economy"`          // % cost saved vs Opus
+	Speed           float64  `json:"speed"`            // normalized speed (0-1)
+	CascadesAvoided int      `json:"cascades_avoided"` // resolved without escalation
+	TotalCostUSD    float64  `json:"total_cost_usd"`
+	Specialties     []string `json:"specialties"`
 }
 
 // Achievement represents a milestone badge earned from real usage.
@@ -89,7 +89,7 @@ const (
 	XPCascadeEfficient = 15  // resolved by cheap model, saved money
 	XPComplexResolved  = 25  // complex task with grounding ≥ 90%
 	XPProjectComplete  = 100 // all tasks in a plan done
-	XPStreakDaily       = 10  // per day of streak
+	XPStreakDaily      = 10  // per day of streak
 	XPGroundingPerfect = 10  // grounding > 95%
 	XPLearnImproved    = 50  // learn loop improved weights
 

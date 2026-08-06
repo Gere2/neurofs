@@ -93,7 +93,7 @@ func TestAppendLabelsEntryWithRunIdentity(t *testing.T) {
 			if got.Correlation != runid.CorrelationOwnedProcessTree {
 				t.Fatalf("got correlation %q", got.Correlation)
 			}
-			if err := got.Availability.Validate(); err != nil {
+			if err := got.Validate(); err != nil {
 				t.Fatalf("persisted attribution is invalid: %v", err)
 			}
 			// Point 7: the join key must survive persistence intact.
@@ -128,7 +128,7 @@ func TestAppendRecordsUnavailableCorrelation(t *testing.T) {
 			if got.Reason == "" {
 				t.Fatal("unavailable entry persisted without a reason")
 			}
-			if err := got.Availability.Validate(); err != nil {
+			if err := got.Validate(); err != nil {
 				t.Fatalf("persisted attribution is invalid: %v", err)
 			}
 		})

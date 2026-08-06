@@ -90,7 +90,7 @@ func (tl *TournamentLogger) LogRecord(rec TournamentRecord) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	_, err = f.Write(append(data, '\n'))
 	return err
@@ -115,7 +115,7 @@ func AnalyzeTournament(path string, groundingThreshold float64) (TournamentAnaly
 		}
 		return analysis, fmt.Errorf("open routing_history: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	type stats struct {
 		model        string

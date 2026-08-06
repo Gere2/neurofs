@@ -36,24 +36,24 @@ func newPlayerCmd() *cobra.Command {
 				return enc.Encode(ps)
 			}
 
-			fmt.Fprintf(os.Stdout, "🛡️ Agent Commander Status:\n")
-			fmt.Fprintf(os.Stdout, "  Level       : Lv.%d (%s)\n", ps.Level, ps.Title)
-			fmt.Fprintf(os.Stdout, "  XP          : %d / %d\n", ps.XP, ps.XPToNext)
-			fmt.Fprintf(os.Stdout, "  Streak      : 🔥 %d days\n", ps.Streak)
-			fmt.Fprintf(os.Stdout, "  Missions    : %d completed\n", ps.TotalMissions)
-			fmt.Fprintf(os.Stdout, "  Grounding   : 🎯 %.1f%%\n", ps.MeanGrounding*100)
-			fmt.Fprintf(os.Stdout, "  Saved USD   : 💰 $%.4f\n\n", ps.TotalSavedUSD)
+			_, _ = fmt.Fprintf(os.Stdout, "🛡️ Agent Commander Status:\n")
+			_, _ = fmt.Fprintf(os.Stdout, "  Level       : Lv.%d (%s)\n", ps.Level, ps.Title)
+			_, _ = fmt.Fprintf(os.Stdout, "  XP          : %d / %d\n", ps.XP, ps.XPToNext)
+			_, _ = fmt.Fprintf(os.Stdout, "  Streak      : 🔥 %d days\n", ps.Streak)
+			_, _ = fmt.Fprintf(os.Stdout, "  Missions    : %d completed\n", ps.TotalMissions)
+			_, _ = fmt.Fprintf(os.Stdout, "  Grounding   : 🎯 %.1f%%\n", ps.MeanGrounding*100)
+			_, _ = fmt.Fprintf(os.Stdout, "  Saved USD   : 💰 $%.4f\n\n", ps.TotalSavedUSD)
 
-			fmt.Fprintf(os.Stdout, "🤖 Model Squad Roster:\n")
+			_, _ = fmt.Fprintf(os.Stdout, "🤖 Model Squad Roster:\n")
 			for _, a := range ps.Agents {
-				fmt.Fprintf(os.Stdout, "  %-12s %s  Wins: %-4d | Grounding: %3.0f%% | Cost: $%.4f | Cascade Avoided: %d\n",
+				_, _ = fmt.Fprintf(os.Stdout, "  %-12s %s  Wins: %-4d | Grounding: %3.0f%% | Cost: $%.4f | Cascade Avoided: %d\n",
 					a.DisplayName, a.Emoji, a.Wins, a.Reliability*100, a.TotalCostUSD, a.CascadesAvoided)
 			}
 
 			if len(ps.Achievements) > 0 {
-				fmt.Fprintf(os.Stdout, "\n🎖️ Unlocked Achievements (%d):\n", len(ps.Achievements))
+				_, _ = fmt.Fprintf(os.Stdout, "\n🎖️ Unlocked Achievements (%d):\n", len(ps.Achievements))
 				for _, ach := range ps.Achievements {
-					fmt.Fprintf(os.Stdout, "  %s  %-20s — %s\n", ach.Emoji, ach.Name, ach.Description)
+					_, _ = fmt.Fprintf(os.Stdout, "  %s  %-20s — %s\n", ach.Emoji, ach.Name, ach.Description)
 				}
 			}
 

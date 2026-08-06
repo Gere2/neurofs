@@ -12,26 +12,26 @@ import (
 type ClaimKind string
 
 const (
-	ClaimCitation ClaimKind = "citation" // file path or file:line citation
-	ClaimSymbol   ClaimKind = "symbol"   // code function/struct/package name
-	ClaimCodeBlock ClaimKind = "code"    // executable code block
+	ClaimCitation  ClaimKind = "citation" // file path or file:line citation
+	ClaimSymbol    ClaimKind = "symbol"   // code function/struct/package name
+	ClaimCodeBlock ClaimKind = "code"     // executable code block
 )
 
 // Claim represents one verifiable statement in an LLM response.
 type Claim struct {
-	Kind      ClaimKind `json:"kind"`
-	Content   string    `json:"content"`
-	RelPath   string    `json:"rel_path,omitempty"`
-	Line      int       `json:"line,omitempty"`
+	Kind       ClaimKind `json:"kind"`
+	Content    string    `json:"content"`
+	RelPath    string    `json:"rel_path,omitempty"`
+	Line       int       `json:"line,omitempty"`
 	Verifiable bool      `json:"verifiable"`
 }
 
 // ClaimEntailment tracks the verification status of one claim.
 type ClaimEntailment struct {
-	Claim     Claim   `json:"claim"`
-	Entailed  bool    `json:"entailed"`
-	Score     float64 `json:"score"` // 0.0 to 1.0
-	Reason    string  `json:"reason"`
+	Claim    Claim   `json:"claim"`
+	Entailed bool    `json:"entailed"`
+	Score    float64 `json:"score"` // 0.0 to 1.0
+	Reason   string  `json:"reason"`
 }
 
 // ExecutionResult tracks sandbox build/test verification outcomes.
@@ -46,13 +46,13 @@ type ExecutionResult struct {
 
 // VerificationReport is the composite receipt-based verification report.
 type VerificationReport struct {
-	Score              float64           `json:"score"`               // composite 0.0 - 1.0
-	CitationScore      float64           `json:"citation_score"`      // citation ratio
-	ClaimScore         float64           `json:"claim_score"`         // claim entailment ratio
-	ExecutionScore     float64           `json:"execution_score"`     // sandbox score
-	Claims             []ClaimEntailment `json:"claims,omitempty"`
-	Execution          ExecutionResult   `json:"execution"`
-	VerifiedAt         time.Time         `json:"verified_at"`
+	Score          float64           `json:"score"`           // composite 0.0 - 1.0
+	CitationScore  float64           `json:"citation_score"`  // citation ratio
+	ClaimScore     float64           `json:"claim_score"`     // claim entailment ratio
+	ExecutionScore float64           `json:"execution_score"` // sandbox score
+	Claims         []ClaimEntailment `json:"claims,omitempty"`
+	Execution      ExecutionResult   `json:"execution"`
+	VerifiedAt     time.Time         `json:"verified_at"`
 }
 
 var symbolPattern = regexp.MustCompile(`\b([A-Z][A-Za-z0-9_]+)\b|\b(func\s+[A-Za-z0-9_]+)\b`)

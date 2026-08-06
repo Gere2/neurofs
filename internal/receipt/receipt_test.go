@@ -535,7 +535,7 @@ func TestHashTamperDetected(t *testing.T) {
 		t.Fatal("tampered record passed hash verification")
 	}
 
-	var missing Record = r
+	missing := r
 	missing.ContentSHA256 = ""
 	if err := missing.VerifyContentSHA256(); err == nil {
 		t.Fatal("record without hash passed verification")

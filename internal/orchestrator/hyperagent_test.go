@@ -34,6 +34,7 @@ func TestHyperAgent_AutoTune(t *testing.T) {
 
 	if res == nil {
 		t.Fatal("expected non-nil TuningResult")
+		return
 	}
 
 	// Should have updated backend routing rule from claude-sonnet to gemini-flash
