@@ -49,6 +49,16 @@ unset NEUROFS_MOCK_SEMANTIC
   --g5-attest --g5-engine-root "$ENGINE" --out "$REPORT_DIR/gate.json"
 ```
 
+**Measure the Go shape from a clean checkout, not your working tree.** G5
+binds `target_source_tree_sha256` to the *indexed* tree, and `audit/` is
+indexed while `audit/bundles/` and `audit/records/` are gitignored. A working
+tree that has run the tool accumulates local-only bundles and records there,
+so its indexed tree — and therefore the attested hash — cannot be reproduced
+by CI or by anyone else. The evidence still verifies on the machine that
+produced it, which is exactly what makes the mistake easy to miss. Note that
+the dirty-checkout allowance for `go_service` does not rescue this: it permits
+uncommitted *tracked* edits, while the hash covers everything indexed.
+
 The attested gate is a single pass: G2 is derived from the fresh bundles
 produced for G3 and therefore rejects `--bundles-dir`. External canonical
 checkouts must be clean, including ignored files other than `.neurofs`.
