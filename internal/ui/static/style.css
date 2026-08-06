@@ -2431,17 +2431,56 @@ table.records td code { font-size: 0.75rem; }
   margin-top: 10px;
 }
 
-.cmd-ach-badge {
-  font-size: 0.7rem;
-  background: rgba(170, 102, 255, 0.12);
-  border: 1px solid rgba(170, 102, 255, 0.3);
+.cmd-pill-btn {
+  background: rgba(170, 102, 255, 0.15);
+  border: 1px solid rgba(170, 102, 255, 0.4);
   color: #d8b4fe;
-  padding: 2px 7px;
+  font-size: 0.72rem;
+  padding: 2px 8px;
   border-radius: 4px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  cursor: pointer;
+  font-family: var(--mono);
+  transition: all 0.2s ease;
 }
+
+.cmd-pill-btn:hover {
+  background: rgba(170, 102, 255, 0.3);
+  box-shadow: 0 0 8px rgba(170, 102, 255, 0.4);
+}
+
+.cmd-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.cmd-modal-card {
+  background: #0d0d1a;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 650px;
+  padding: 20px;
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.2);
+}
+
+.cmd-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 10px;
+}
+
 
 
 

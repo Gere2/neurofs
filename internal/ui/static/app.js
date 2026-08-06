@@ -4496,8 +4496,62 @@ switchTab("home");
       if (!ps || ps.error) return;
       renderCommanderHeader(ps);
       renderCommanderMatrix(ps);
+      renderCommanderHistoryModal(ps);
     } catch (e) {
       console.warn("Failed to load player data", e);
+    }
+  }
+
+  const historyBtn = document.getElementById("cmd-history-btn");
+  const historyModal = document.getElementById("cmd-history-modal");
+  const historyClose = document.getElementById("cmd-history-close");
+
+  if (historyClose) {
+    historyClose.addEventListener("click", () => {
+      if (historyModal) historyModal.style.display = "none";
+    });
+  }
+
+  if (historyBtn) {
+    historyBtn.addEventListener("click", () => {
+      if (historyModal) historyModal.style.display = "flex";
+    });
+  }
+
+  function renderCommanderHistoryModal(ps) {
+    const achContainer = document.getElementById("cmd-history-achievements");
+    const xpContainer = document.getElementById("cmd-history-xpfeed");
+
+    if (achContainer) {
+      achContainer.innerHTML = "";
+      const achievements = ps.achievements || [];
+      if (achievements.length === 0) {
+        achContainer.innerHTML = `<span style="color: #71717a; font-size: 0.75rem;">No achievements unlocked yet. Execute orchestration plans to earn badges!</span>`;
+      } else {
+        achievements.forEach(a => {
+          const el = document.createElement("div");
+          el.style.cssText = "background: #121222; border: 1px solid rgba(170,102,255,0.2); border-radius: 4px; padding: 6px 10px; font-size: 0.78rem; display: flex; justify-content: space-between; align-items: center;";
+          el.innerHTML = `
+            <div><strong>${a.emoji || "🎖️"} ${a.name}</strong><br><span style="font-size: 0.7rem; color: #a1a1aa;">${a.description}</span></div>
+          `;
+          achContainer.appendChild(el);
+        });
+      }
+    }
+
+    if (xpContainer) {
+      xpContainer.innerHTML = "";
+      const recent = ps.recent_xp || [];
+      if (recent.length === 0) {
+        xpContainer.innerHTML = `<span style="color: #71717a; font-size: 0.75rem;">No recent XP log entries.</span>`;
+      } else {
+        recent.slice().reverse().forEach(ev => {
+          const el = document.createElement("div");
+          el.style.cssText = "background: rgba(0,255,136,0.05); border: 1px solid rgba(0,255,136,0.15); border-radius: 4px; padding: 5px 8px; color: #86efac;";
+          el.innerHTML = `<strong>+${ev.amount} XP</strong> — ${ev.reason}`;
+          xpContainer.appendChild(el);
+        });
+      }
     }
   }
 
