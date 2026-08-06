@@ -88,7 +88,7 @@ func TestTitleForLevel(t *testing.T) {
 func TestRecordTaskResult_AgentStats(t *testing.T) {
 	ps := NewPlayerState()
 
-	ps.RecordTaskResult("gemini-flash", 0.92, 0.001, 0, 0.05, false, 0.85)
+	ps.RecordTaskResult(TaskOutcome{Model: "gemini-flash", Grounding: 0.92, CostUSD: 0.001, CascadeLevel: 0, CascadeSaved: 0.05, IsComplex: false, GroundingThreshold: 0.85})
 
 	if ps.TotalMissions != 1 {
 		t.Errorf("expected 1 mission, got %d", ps.TotalMissions)
@@ -112,7 +112,7 @@ func TestRecordTaskResult_AgentStats(t *testing.T) {
 func TestRecordTaskResult_Loss(t *testing.T) {
 	ps := NewPlayerState()
 
-	ps.RecordTaskResult("gemini-flash", 0.50, 0.001, 1, 0, false, 0.85)
+	ps.RecordTaskResult(TaskOutcome{Model: "gemini-flash", Grounding: 0.50, CostUSD: 0.001, CascadeLevel: 1, CascadeSaved: 0, IsComplex: false, GroundingThreshold: 0.85})
 
 	agent := ps.Agents["gemini-flash"]
 	if agent.Wins != 0 {
@@ -211,7 +211,7 @@ func TestStreakTracking(t *testing.T) {
 	ps := NewPlayerState()
 
 	// Recording task results is not by itself a day of activity.
-	ps.RecordTaskResult("gemini-flash", 0.90, 0.001, 0, 0, false, 0.85)
+	ps.RecordTaskResult(TaskOutcome{Model: "gemini-flash", Grounding: 0.90, CostUSD: 0.001, CascadeLevel: 0, CascadeSaved: 0, IsComplex: false, GroundingThreshold: 0.85})
 	if ps.Streak != 0 {
 		t.Errorf("task recording must not touch the streak, got %d", ps.Streak)
 	}
@@ -223,7 +223,7 @@ func TestStreakTracking(t *testing.T) {
 	}
 
 	// Another run the same day — streak shouldn't change
-	ps.RecordTaskResult("gemini-flash", 0.90, 0.001, 0, 0, false, 0.85)
+	ps.RecordTaskResult(TaskOutcome{Model: "gemini-flash", Grounding: 0.90, CostUSD: 0.001, CascadeLevel: 0, CascadeSaved: 0, IsComplex: false, GroundingThreshold: 0.85})
 	ps.AdvanceDailyStreak()
 	if ps.Streak != 1 {
 		t.Errorf("expected streak still 1, got %d", ps.Streak)
@@ -235,7 +235,7 @@ func TestSaveAndLoad(t *testing.T) {
 
 	ps := NewPlayerState()
 	ps.AddXP(200, "test")
-	ps.RecordTaskResult("gemini-flash", 0.92, 0.001, 0, 0.05, false, 0.85)
+	ps.RecordTaskResult(TaskOutcome{Model: "gemini-flash", Grounding: 0.92, CostUSD: 0.001, CascadeLevel: 0, CascadeSaved: 0.05, IsComplex: false, GroundingThreshold: 0.85})
 
 	err := ps.Save(dir)
 	if err != nil {
@@ -463,5 +463,49 @@ func TestUnlocksAndNextUnlock(t *testing.T) {
 	ps.Level = 999
 	if _, ok := ps.NextUnlock(); ok {
 		t.Error("everything must be unlocked at a very high level")
+	}
+}
+
+// Power is the card's ⚔️ bar and must count only complex tasks — Wins mixes
+// every difficulty and cannot answer "can this model be trusted with the hard
+// ones".
+func TestRecordTaskResult_PowerCountsOnlyComplexTasks(t *testing.T) {
+	ps := NewPlayerState()
+
+	// Two easy wins must leave Power untouched and unmeasured.
+	for i := 0; i < 2; i++ {
+		ps.RecordTaskResult(TaskOutcome{Model: "flash", Grounding: 0.95, IsComplex: false, GroundingThreshold: 0.85})
+	}
+	agent := ps.Agents["flash"]
+	if agent.ComplexAttempted != 0 || agent.Power != 0 {
+		t.Errorf("easy tasks must not populate Power: attempted=%d power=%v", agent.ComplexAttempted, agent.Power)
+	}
+
+	// One complex cleared, one complex failed → 50%.
+	ps.RecordTaskResult(TaskOutcome{Model: "flash", Grounding: 0.95, IsComplex: true, GroundingThreshold: 0.85})
+	ps.RecordTaskResult(TaskOutcome{Model: "flash", Grounding: 0.40, IsComplex: true, GroundingThreshold: 0.85})
+
+	agent = ps.Agents["flash"]
+	if agent.ComplexAttempted != 2 || agent.ComplexResolved != 1 {
+		t.Fatalf("complex counters = %d/%d, want 1/2", agent.ComplexResolved, agent.ComplexAttempted)
+	}
+	if agent.Power != 0.5 {
+		t.Errorf("Power = %v, want 0.5", agent.Power)
+	}
+	if agent.Wins != 3 {
+		t.Errorf("Wins should still count every difficulty, got %d", agent.Wins)
+	}
+}
+
+// Energía is the resource the game spends, so it must be counted from real
+// token usage rather than inferred from cost, which varies per model.
+func TestRecordTaskResult_TotalTokens(t *testing.T) {
+	ps := NewPlayerState()
+
+	ps.RecordTaskResult(TaskOutcome{Model: "flash", Grounding: 0.9, InputTokens: 1200, OutputTokens: 300, GroundingThreshold: 0.85})
+	ps.RecordTaskResult(TaskOutcome{Model: "sonnet", Grounding: 0.9, InputTokens: 500, OutputTokens: 100, GroundingThreshold: 0.85})
+
+	if ps.TotalTokens != 2100 {
+		t.Errorf("TotalTokens = %d, want 2100", ps.TotalTokens)
 	}
 }

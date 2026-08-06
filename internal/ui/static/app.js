@@ -4637,6 +4637,13 @@ switchTab("home");
     if (grounding) grounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
     if (saved) saved.textContent = (ps.total_saved_usd || 0).toFixed(2);
 
+    // ⚡ Energía: API tokens actually consumed.
+    const energy = document.getElementById("cmd-energy-tokens");
+    if (energy) {
+      const t = ps.total_tokens || 0;
+      energy.textContent = t >= 1000 ? `${(t / 1000).toFixed(1)}k` : `${t}`;
+    }
+
     // Name the next reward instead of showing a bare bar — the XP number only
     // means something if the player can see what it is buying.
     const nextEl = document.getElementById("cmd-next-unlock");
@@ -4663,17 +4670,26 @@ switchTab("home");
     ];
 
     defaultAgents.forEach(def => {
-      const a = agents[def.name] || { ...def, wins: 0, losses: 0, reliability: 0, total_cost_usd: 0, cascades_avoided: 0 };
+      const a = agents[def.name] || { ...def, wins: 0, losses: 0, reliability: 0, power: 0, complex_attempted: 0, total_cost_usd: 0, cascades_avoided: 0 };
+      // Power reads "—" rather than 0% until this model has actually been
+      // given a complex task: an untested model is unknown, not bad.
+      const power = (a.complex_attempted || 0) > 0
+        ? `${((a.power || 0) * 100).toFixed(0)}%`
+        : "—";
       const card = document.createElement("div");
       card.className = "cmd-agent-card";
       card.innerHTML = `
         <div class="cmd-agent-card-head">
           <div class="cmd-agent-name">${a.emoji || def.emoji} ${a.display_name || def.display_name}</div>
-          <div class="cmd-agent-wins">${a.wins || 0} Wins</div>
+          <div class="cmd-agent-wins">${a.wins || 0}W / ${a.losses || 0}L</div>
         </div>
         <div class="cmd-agent-stat-row">
-          <span>Reliability:</span>
+          <span>❤️ Fiabilidad:</span>
           <span class="cmd-stat-val">${((a.reliability || 0) * 100).toFixed(0)}%</span>
+        </div>
+        <div class="cmd-agent-stat-row" title="Tareas complejas resueltas: ${a.complex_resolved || 0}/${a.complex_attempted || 0}">
+          <span>⚔️ Potencia:</span>
+          <span class="cmd-stat-val">${power}</span>
         </div>
         <div class="cmd-agent-stat-row">
           <span>Cost USD:</span>

@@ -42,7 +42,17 @@ func RecordPlanOutcome(dir string, plan Plan) error {
 		}
 		recorded++
 		isComplex := t.Complexity == Complex
-		ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, isComplex, acceptedGroundingFloor)
+		ps.RecordTaskResult(gamestate.TaskOutcome{
+			Model:              t.Model,
+			Grounding:          t.Grounding,
+			CostUSD:            t.CostUSD,
+			CascadeLevel:       t.CascadeLevel,
+			CascadeSaved:       t.CascadeSaved,
+			IsComplex:          isComplex,
+			InputTokens:        t.InputTokens,
+			OutputTokens:       t.OutputTokens,
+			GroundingThreshold: acceptedGroundingFloor,
+		})
 		ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, isComplex, acceptedGroundingFloor)
 
 		if err := logger.LogRecord(TournamentRecord{

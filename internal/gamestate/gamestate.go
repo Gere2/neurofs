@@ -50,11 +50,19 @@ type PlayerState struct {
 	MeanGrounding float64 `json:"mean_grounding"`
 	TotalCostUSD  float64 `json:"total_cost_usd"`
 
+	// TotalTokens is the Command Center's ⚡ Energía readout: API tokens
+	// actually consumed, prompt plus completion. It is the resource the game
+	// spends, so it has to be counted rather than estimated from cost, which
+	// varies per model.
+	TotalTokens int `json:"total_tokens"`
+
 	// Recent XP events (last 20, for UI feed)
 	RecentXP []XPEvent `json:"recent_xp"`
 }
 
-// AgentStats tracks real performance data for a model/agent.
+// AgentStats tracks real performance data for a model/agent. The four bars on
+// the agent's card are Reliability, Power, Economy and Speed — every one of
+// them an average over recorded runs, never a hand-assigned rating.
 type AgentStats struct {
 	Name            string   `json:"name"`
 	DisplayName     string   `json:"display_name"`
@@ -67,6 +75,14 @@ type AgentStats struct {
 	CascadesAvoided int      `json:"cascades_avoided"` // resolved without escalation
 	TotalCostUSD    float64  `json:"total_cost_usd"`
 	Specialties     []string `json:"specialties"`
+
+	// Power is the card's ⚔️ bar: the share of *complex* tasks this model
+	// cleared. Kept as its own counters rather than derived from Wins, which
+	// mixes every difficulty together and so cannot answer "can this model be
+	// trusted with the hard ones".
+	ComplexAttempted int     `json:"complex_attempted"`
+	ComplexResolved  int     `json:"complex_resolved"`
+	Power            float64 `json:"power"` // ComplexResolved / ComplexAttempted (0-1)
 }
 
 // Achievement represents a milestone badge earned from real usage.
@@ -317,40 +333,59 @@ func (ps *PlayerState) AddXP(amount int, reason string) {
 	}
 }
 
+// TaskOutcome is one recorded task result. It is a struct rather than a
+// positional list because the card's stats keep growing and a nine-argument
+// call is where silent argument-order bugs live.
+type TaskOutcome struct {
+	Model              string
+	Grounding          float64
+	CostUSD            float64
+	CascadeLevel       int
+	CascadeSaved       float64
+	IsComplex          bool
+	InputTokens        int
+	OutputTokens       int
+	GroundingThreshold float64
+}
+
 // RecordTaskResult updates game state from a real orchestration task result.
-func (ps *PlayerState) RecordTaskResult(
-	modelName string,
-	grounding float64,
-	costUSD float64,
-	cascadeLevel int,
-	cascadeSaved float64,
-	isComplex bool,
-	groundingThreshold float64,
-) {
+func (ps *PlayerState) RecordTaskResult(o TaskOutcome) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 
 	ps.TotalMissions++
-	ps.TotalCostUSD += costUSD
-	ps.TotalSavedUSD += cascadeSaved
+	ps.TotalCostUSD += o.CostUSD
+	ps.TotalSavedUSD += o.CascadeSaved
+	ps.TotalTokens += o.InputTokens + o.OutputTokens
+
+	cleared := o.Grounding >= o.GroundingThreshold
 
 	// Update agent stats
-	agent := ps.ensureAgent(modelName)
-	if grounding >= groundingThreshold {
+	agent := ps.ensureAgent(o.Model)
+	if cleared {
 		agent.Wins++
 	} else {
 		agent.Losses++
 	}
 	// Running average for reliability
 	total := agent.Wins + agent.Losses
-	agent.Reliability = (agent.Reliability*float64(total-1) + grounding) / float64(total)
-	agent.TotalCostUSD += costUSD
-	if cascadeLevel == 0 {
+	agent.Reliability = (agent.Reliability*float64(total-1) + o.Grounding) / float64(total)
+	agent.TotalCostUSD += o.CostUSD
+	if o.CascadeLevel == 0 {
 		agent.CascadesAvoided++
 	}
 
+	// Power: share of the hard tasks this model actually cleared.
+	if o.IsComplex {
+		agent.ComplexAttempted++
+		if cleared {
+			agent.ComplexResolved++
+		}
+		agent.Power = float64(agent.ComplexResolved) / float64(agent.ComplexAttempted)
+	}
+
 	// Update global mean grounding
-	ps.MeanGrounding = (ps.MeanGrounding*float64(ps.TotalMissions-1) + grounding) / float64(ps.TotalMissions)
+	ps.MeanGrounding = (ps.MeanGrounding*float64(ps.TotalMissions-1) + o.Grounding) / float64(ps.TotalMissions)
 }
 
 // AdvanceDailyStreak rolls the daily streak forward and reports whether this
