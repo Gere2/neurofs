@@ -7,7 +7,6 @@ import (
 
 	"github.com/Gere2/neurofs/internal/audit"
 	"github.com/Gere2/neurofs/internal/retrieval"
-	"strings"
 )
 
 // OrchestrationOptions configures a full orchestration run.
@@ -150,34 +149,8 @@ func calculateGroundingScore(response, contextStr string) float64 {
 	if response == "" || contextStr == "" {
 		return 0.0
 	}
-	citations := audit.ParseCitations(response)
-	if len(citations) > 0 {
-		valid := 0
-		for _, c := range citations {
-			if strings.Contains(contextStr, c.RelPath) {
-				valid++
-			}
-		}
-		return float64(valid) / float64(len(citations))
-	}
-	
-	// Fallback to token overlap
-	respWords := strings.Fields(strings.ToLower(response))
-	if len(respWords) == 0 {
-		return 0.0
-	}
-	matched := 0
-	ctxLower := strings.ToLower(contextStr)
-	for _, w := range respWords {
-		if len(w) > 3 && strings.Contains(ctxLower, w) {
-			matched++
-		}
-	}
-	score := float64(matched) / float64(len(respWords))
-	if score > 1.0 {
-		score = 1.0
-	}
-	return score
+	report := audit.VerifyResponse(context.Background(), response, contextStr, ".", false)
+	return report.Score
 }
 
 func joinSnippets(snippets []string) string {
