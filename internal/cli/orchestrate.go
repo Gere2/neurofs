@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
-	"github.com/Gere2/neurofs/internal/gamestate"
 	"github.com/Gere2/neurofs/internal/orchestrator"
 	"github.com/spf13/cobra"
 )
@@ -63,31 +61,14 @@ codebase context via NeuroFS chunk search, and verifies response grounding.`,
 
 			// Update gamestate & log tournament records
 			if home, err := os.UserHomeDir(); err == nil {
-				dir := filepath.Join(home, ".neurofs")
-				tLogger := orchestrator.NewTournamentLogger(dir)
-				if ps, err := gamestate.Load(dir); err == nil {
-					for _, t := range result.Plan.Tasks {
-						if t.Status == orchestrator.StatusDone {
-							ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
-							ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
-							_ = tLogger.LogRecord(orchestrator.TournamentRecord{
-								PlanID:       result.Plan.ID,
-								TaskID:       t.ID,
-								Kind:         t.Kind,
-								Complexity:   t.Complexity,
-								Model:        t.Model,
-								Provider:     t.Provider,
-								Grounding:    t.Grounding,
-								CostUSD:      t.CostUSD,
-								DurationMs:   t.Duration().Milliseconds(),
-								CascadeLevel: t.CascadeLevel,
-								Accepted:     true,
-							})
-						}
-					}
-					ps.CheckAchievements()
-					_ = ps.Save(dir)
-				}
+				_ = orchestrator.RecordPlanOutcome(orchestrator.NeuroFSHome(home), result.Plan)
+			}
+
+			if n := orchestrator.SyntheticTaskCount(result.Plan); n > 0 {
+				fmt.Fprintf(os.Stderr,
+					"\n  note: %d/%d task(s) ran without an API key and returned offline placeholder\n"+
+						"        text. They are excluded from the tournament ledger and XP.\n",
+					n, len(result.Plan.Tasks))
 			}
 
 			if jsonOut {

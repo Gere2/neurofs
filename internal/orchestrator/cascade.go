@@ -208,8 +208,10 @@ func (d *Dispatcher) dispatchWithCascade(
 		attempts = append(attempts, attempt)
 
 		if accepted {
-			// Save successful completion to cache
-			if d.Cache != nil {
+			// Save successful completion to cache. Mock responses are skipped:
+			// caching one would outlive the keyless run that produced it and
+			// serve fiction to a later, properly configured run.
+			if d.Cache != nil && !isMockResponse(response) {
 				_ = d.Cache.Put(ctx, t.Description, t.Context, CacheEntry{
 					Model:        modelName,
 					Provider:     entry.Provider,
@@ -227,6 +229,7 @@ func (d *Dispatcher) dispatchWithCascade(
 			t.FinishedAt = &finished
 			t.Status = StatusDone
 			t.Response = response
+			t.Synthetic = isMockResponse(response)
 			t.InputTokens = inTokens
 			t.OutputTokens = outTokens
 			t.CostUSD = totalCascadeCost
@@ -344,6 +347,7 @@ func (d *Dispatcher) dispatchSingle(ctx context.Context, t *Task, cb ProgressCal
 
 	t.Status = StatusDone
 	t.Response = response
+	t.Synthetic = isMockResponse(response)
 	t.InputTokens = inTokens
 	t.OutputTokens = outTokens
 	t.CostUSD = resolved.Entry.EstimateCost(inTokens, outTokens)

@@ -1,6 +1,9 @@
 package orchestrator
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -24,7 +27,7 @@ func TestHyperAgent_AutoTune(t *testing.T) {
 	}
 
 	tuner := &HyperAgentTuner{RepoRoot: dir}
-	res, err := tuner.AutoTune(dir, 3)
+	res, err := tuner.AutoTune(dir, 3, false)
 	if err != nil {
 		t.Fatalf("AutoTune failed: %v", err)
 	}
@@ -44,6 +47,57 @@ func TestHyperAgent_AutoTune(t *testing.T) {
 
 	if len(res.InsightsGenerated) == 0 {
 		t.Error("expected human-readable insights to be generated")
+	}
+	if !res.Changed {
+		t.Error("a proposed rule change must set Changed")
+	}
+	if res.Applied {
+		t.Error("AutoTune(apply=false) must not report Applied")
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".neurofs", "models.json")); !os.IsNotExist(err) {
+		t.Errorf("AutoTune(apply=false) must not write models.json; stat err=%v", err)
+	}
+}
+
+// A threshold-only tune used to be reported but never persisted, because the
+// save condition compared the new threshold against the already-mutated
+// config value and so was always false.
+func TestHyperAgent_AutoTuneApplyWrites(t *testing.T) {
+	dir := t.TempDir()
+
+	logger := NewTournamentLogger(dir)
+	for i := 0; i < 5; i++ {
+		_ = logger.LogRecord(TournamentRecord{
+			Timestamp: time.Now(),
+			Kind:      KindBackend,
+			Model:     "gemini-flash",
+			Provider:  "google",
+			Grounding: 0.94,
+			CostUSD:   0.0002,
+			Accepted:  true,
+		})
+	}
+
+	tuner := &HyperAgentTuner{RepoRoot: dir}
+	res, err := tuner.AutoTune(dir, 3, true)
+	if err != nil {
+		t.Fatalf("AutoTune failed: %v", err)
+	}
+	if !res.Applied {
+		t.Fatal("AutoTune(apply=true) with changes must report Applied")
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".neurofs", "models.json"))
+	if err != nil {
+		t.Fatalf("models.json must exist after apply: %v", err)
+	}
+
+	var cfg ModelsConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("models.json must be valid: %v", err)
+	}
+	if cfg.Routing["backend"] != "gemini-flash" {
+		t.Errorf("persisted routing must carry the tune; got %q", cfg.Routing["backend"])
 	}
 }
 

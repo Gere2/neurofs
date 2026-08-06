@@ -216,6 +216,12 @@ type Dispatcher struct {
 	Router    *Router
 	LLMClient LLMClient
 	Cache     *SemanticCache
+
+	// RepoRoot is the tree that grounding verification resolves citations
+	// against. Empty means the process cwd, which is only correct when the
+	// binary happens to be running inside the repo being orchestrated — not
+	// the case for the UI server, which is pinned to --repo.
+	RepoRoot string
 }
 
 // NewDispatcher creates a new task dispatcher.
@@ -233,7 +239,20 @@ func NewDispatcher(router *Router, client LLMClient) *Dispatcher {
 // When cascade is enabled in the config, each task uses speculative
 // execution: cheapest model first, escalating on low grounding.
 func (d *Dispatcher) Dispatch(ctx context.Context, plan *Plan, cb ProgressCallback) error {
-	return d.DispatchWithCascade(ctx, plan, d.Router.Config.Cascade, calculateGroundingScoreDefault, cb)
+	return d.DispatchWithCascade(ctx, plan, d.Router.Config.Cascade, d.groundingFn(), cb)
+}
+
+// groundingFn binds the dispatcher's repo root into the grounding scorer so
+// citations are verified against the repo being orchestrated rather than
+// whatever directory the process was started from.
+func (d *Dispatcher) groundingFn() func(response, context string) float64 {
+	root := d.RepoRoot
+	if root == "" {
+		root = "."
+	}
+	return func(response, contextStr string) float64 {
+		return calculateGroundingScoreIn(response, contextStr, root)
+	}
 }
 
 // DispatchWithCascade executes the plan with explicit cascade config and
@@ -314,13 +333,6 @@ func (d *Dispatcher) DispatchWithCascade(
 
 	return nil
 }
-
-// calculateGroundingScoreDefault is the package-level grounding function
-// used by Dispatch. It delegates to calculateGroundingScore in orchestrator.go.
-func calculateGroundingScoreDefault(response, contextStr string) float64 {
-	return calculateGroundingScore(response, contextStr)
-}
-
 
 func estimateTokens(s string) int {
 	words := len(strings.Fields(s))

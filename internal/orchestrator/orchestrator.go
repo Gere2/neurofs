@@ -34,6 +34,7 @@ func NewOrchestrator(repoRoot string, client LLMClient) (*Orchestrator, error) {
 	router := NewRouter(cfg)
 	decomposer := NewDecomposer(router, client)
 	dispatcher := NewDispatcher(router, client)
+	dispatcher.RepoRoot = repoRoot
 
 	if cache, err := NewSemanticCache("", 24*time.Hour); err == nil {
 		dispatcher.Cache = cache
@@ -59,6 +60,10 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 	if opts.RepoRoot == "" {
 		opts.RepoRoot = "."
 	}
+	// Run's root wins over the one NewOrchestrator was built with, so
+	// grounding inside the dispatcher verifies against the same tree as the
+	// re-scoring below.
+	o.Dispatcher.RepoRoot = opts.RepoRoot
 
 	// Step 1: Initial context query to orient decomposition
 	initialSearch, _ := retrieval.Search(ctx, retrieval.Options{
@@ -104,7 +109,7 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 				}
 			}
 			if taskCtx != "" {
-				ev.Grounding = calculateGroundingScore(ev.Response, taskCtx)
+				ev.Grounding = calculateGroundingScoreIn(ev.Response, taskCtx, opts.RepoRoot)
 			}
 		}
 		if opts.Callback != nil {
@@ -118,7 +123,7 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 	for i := range plan.Tasks {
 		t := &plan.Tasks[i]
 		if t.Status == StatusDone && t.Response != "" && t.Context != "" {
-			t.Grounding = calculateGroundingScore(t.Response, t.Context)
+			t.Grounding = calculateGroundingScoreIn(t.Response, t.Context, opts.RepoRoot)
 		}
 	}
 
@@ -145,11 +150,16 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 
 }
 
-func calculateGroundingScore(response, contextStr string) float64 {
+// calculateGroundingScoreIn verifies the response against contextStr with
+// citations resolved inside repoRoot.
+func calculateGroundingScoreIn(response, contextStr, repoRoot string) float64 {
 	if response == "" || contextStr == "" {
 		return 0.0
 	}
-	report := audit.VerifyResponse(context.Background(), response, contextStr, ".", false)
+	if repoRoot == "" {
+		repoRoot = "."
+	}
+	report := audit.VerifyResponse(context.Background(), response, contextStr, repoRoot, false)
 	return report.Score
 }
 

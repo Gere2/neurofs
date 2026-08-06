@@ -95,6 +95,15 @@ type Task struct {
 	CascadeAttempts []CascadeAttempt `json:"cascade_attempts,omitempty"`
 	CascadeSaved    float64          `json:"cascade_saved_usd,omitempty"` // cost saved vs using top model
 	Cached          bool             `json:"cached,omitempty"`
+
+	// Synthetic marks a task whose response came from the offline mock in
+	// DefaultLLMClient.Complete (no API key for the routed provider) rather
+	// than from a real model. Such a task still renders in the UI so the
+	// offline walkthrough works, but it must never reach the empirical
+	// ledgers: a mock's grounding score, cost and cascade level are
+	// artefacts of the placeholder string, and feeding them to the
+	// tournament log would let HyperAgentTuner retune routing on fiction.
+	Synthetic bool `json:"synthetic,omitempty"`
 }
 
 // Duration returns how long the task took, or zero if not finished.

@@ -4431,7 +4431,9 @@ switchTab("home");
         tuneBtn.disabled = true;
         tuneBtn.textContent = "⏳ Auto-Tuning...";
         const repo = state.repo || "";
-        const res = await j(`/api/orchestrate/tune?repo=${encodeURIComponent(repo)}`, { method: "POST" });
+        const qs = encodeURIComponent(repo);
+        // Preview first: the server only rewrites models.json when apply=true.
+        const res = await j(`/api/orchestrate/tune?repo=${qs}`, { method: "POST" });
         tuneBtn.disabled = false;
         tuneBtn.textContent = "⚡ Auto-Tune Routing";
 
@@ -4440,12 +4442,28 @@ switchTab("home");
           return;
         }
 
-        const insights = (res.insights_generated || []).join("\n• ");
-        if (insights) {
-          alert("⚡ HyperAgent Auto-Tune Applied:\n\n• " + insights);
-        } else {
+        if (!res.changed) {
           alert("⚡ HyperAgent Auto-Tune: Current routing rules are already optimal for your execution history.");
+          return;
         }
+
+        const insights = (res.insights_generated || []).join("\n• ");
+        const ok = confirm(
+          "⚡ HyperAgent proposes these routing changes:\n\n• " + insights +
+          "\n\nThis rewrites models.json from THIS repo's history only, which can " +
+          "overfit. Verify with `neurofs gate` and `neurofs bench --search` after " +
+          "applying.\n\nApply now?"
+        );
+        if (!ok) return;
+
+        const applied = await j(`/api/orchestrate/tune?repo=${qs}&apply=true`, { method: "POST" });
+        if (applied.error) {
+          alert("Auto-tune error: " + applied.error);
+          return;
+        }
+        alert(applied.applied
+          ? "⚡ Auto-Tune applied to models.json.\n\nNow run: neurofs gate && neurofs bench --search"
+          : "⚡ Auto-Tune made no changes.");
       } catch (err) {
         tuneBtn.disabled = false;
         tuneBtn.textContent = "⚡ Auto-Tune Routing";

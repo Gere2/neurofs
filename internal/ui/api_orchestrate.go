@@ -10,7 +10,6 @@ import (
 	"sync"
 
 	"github.com/Gere2/neurofs/internal/config"
-	"github.com/Gere2/neurofs/internal/gamestate"
 	"github.com/Gere2/neurofs/internal/orchestrator"
 )
 
@@ -86,33 +85,7 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 
 		// Update game state & log tournament records
 		if home, err := os.UserHomeDir(); err == nil {
-			dir := filepath.Join(home, ".neurofs")
-			tLogger := orchestrator.NewTournamentLogger(dir)
-
-			if ps, err := gamestate.Load(dir); err == nil {
-				for _, t := range res.Plan.Tasks {
-					if t.Status == orchestrator.StatusDone {
-						ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
-						ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
-
-						_ = tLogger.LogRecord(orchestrator.TournamentRecord{
-							PlanID:       res.Plan.ID,
-							TaskID:       t.ID,
-							Kind:         t.Kind,
-							Complexity:   t.Complexity,
-							Model:        t.Model,
-							Provider:     t.Provider,
-							Grounding:    t.Grounding,
-							CostUSD:      t.CostUSD,
-							DurationMs:   t.Duration().Milliseconds(),
-							CascadeLevel: t.CascadeLevel,
-							Accepted:     true,
-						})
-					}
-				}
-				ps.CheckAchievements()
-				_ = ps.Save(dir)
-			}
+			_ = orchestrator.RecordPlanOutcome(orchestrator.NeuroFSHome(home), res.Plan)
 		}
 	}()
 
@@ -295,8 +268,13 @@ func handleOrchestrateTune(w http.ResponseWriter, r *http.Request) {
 		repo = c.RepoRoot
 	}
 
+	// Preview unless the caller explicitly opts in. A routing tune derived
+	// from one repo's history overfits, so rewriting models.json must be a
+	// second, deliberate request rather than a side effect of inspecting it.
+	apply := r.URL.Query().Get("apply") == "true"
+
 	tuner := &orchestrator.HyperAgentTuner{RepoRoot: repo}
-	res, err := tuner.AutoTune(repo, 3)
+	res, err := tuner.AutoTune(repo, 3, apply)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "autotune failed: "+err.Error())
 		return

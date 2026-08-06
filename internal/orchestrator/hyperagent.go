@@ -20,10 +20,20 @@ type TuningResult struct {
 	RulesUpdated      map[string]string `json:"rules_updated"`      // kind -> new model
 	ThresholdAdjusted float64           `json:"threshold_adjusted"` // new grounding threshold
 	InsightsGenerated []string          `json:"insights_generated"` // human-readable summary of learnings
+	Changed           bool              `json:"changed"`            // the analysis proposes a different config
+	Applied           bool              `json:"applied"`            // models.json was actually rewritten
 }
 
-// AutoTune analyzes routing_history.jsonl and applies optimal model assignments to models.json.
-func (h *HyperAgentTuner) AutoTune(repoRoot string, minRunsPerKind int) (*TuningResult, error) {
+// AutoTune analyzes routing_history.jsonl and proposes optimal model
+// assignments for models.json.
+//
+// It writes nothing unless apply is true. Auto-applying was the original
+// behaviour and it is the same hazard CLAUDE.md calls out for `learn tune`:
+// a tune derived from one repo's history overfits to that repo, so the
+// change has to be a deliberate act with the proposal visible first. The
+// caller is expected to show the returned TuningResult, then re-run with
+// apply=true and verify with `neurofs gate` and `neurofs bench --search`.
+func (h *HyperAgentTuner) AutoTune(repoRoot string, minRunsPerKind int, apply bool) (*TuningResult, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -63,10 +73,11 @@ func (h *HyperAgentTuner) AutoTune(repoRoot string, minRunsPerKind int) (*Tuning
 		cfg = DefaultModelsConfig()
 	}
 
+	priorThreshold := cfg.Cascade.GroundingThreshold
 	result := &TuningResult{
 		TunedAt:           time.Now(),
 		RulesUpdated:      make(map[string]string),
-		ThresholdAdjusted: cfg.Cascade.GroundingThreshold,
+		ThresholdAdjusted: priorThreshold,
 	}
 
 	// Update routing rules based on tournament recommendations
@@ -108,9 +119,18 @@ func (h *HyperAgentTuner) AutoTune(repoRoot string, minRunsPerKind int) (*Tuning
 		}
 	}
 
-	// Save tuned models.json if changes occurred
-	if len(result.RulesUpdated) > 0 || result.ThresholdAdjusted != cfg.Cascade.GroundingThreshold {
-		_ = WriteModelsConfig(repoRoot, cfg)
+	// Compare against the threshold read before tuning. Comparing against
+	// cfg.Cascade.GroundingThreshold here is always false — the adjustment
+	// above assigns both it and result.ThresholdAdjusted the same value —
+	// so a threshold-only tune used to be reported and never persisted.
+	changed := len(result.RulesUpdated) > 0 || result.ThresholdAdjusted != priorThreshold
+	result.Changed = changed
+	result.Applied = changed && apply
+
+	if result.Applied {
+		if err := WriteModelsConfig(repoRoot, cfg); err != nil {
+			return nil, fmt.Errorf("write tuned models config: %w", err)
+		}
 	}
 
 	return result, nil
