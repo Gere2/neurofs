@@ -127,7 +127,16 @@ func (o *Orchestrator) Run(ctx context.Context, opts OrchestrationOptions) (Resu
 		DurationMs:    duration.Milliseconds(),
 	}
 
+	// Aggregate cascade metrics
+	for _, t := range plan.Tasks {
+		if len(t.CascadeAttempts) > 1 {
+			result.CascadeEscalations += len(t.CascadeAttempts) - 1
+		}
+		result.CascadeSavedUSD += t.CascadeSaved
+	}
+
 	return result, nil
+
 }
 
 func calculateGroundingScore(response, contextStr string) float64 {

@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -102,6 +103,9 @@ func TestParseRejections(t *testing.T) {
 		{"equals sign", "run=abc", "must match"},
 		{"missing prefix", "job-abc", "must start"},
 		{"too long", "run-" + strings.Repeat("a", 125), "must match"},
+		{"no prefix", "abc123", "must start with"},
+		{"wrong prefix", "session-abc", "must start with"},
+		{"prefix not at start", "x-run-abc", "must start with"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -399,12 +403,112 @@ func TestFromEnvIsReadOnce(t *testing.T) {
 	}
 }
 
+const (
+	subprocessMarker = "NEUROFS_RUNID_TEST_CHILD"
+	subprocessExpect = "NEUROFS_RUNID_TEST_EXPECT"
+)
+
+// TestEnvPropagationAcrossProcess is the end-to-end proof of the whole
+// mechanism: InjectEnv builds a child environment exactly as an adapter would
+// for exec.Cmd.Env, and the child — a real separate process — recovers the
+// identity through FromEnv. Everything else in this package tests one side of
+// that boundary; this crosses it.
+func TestEnvPropagationAcrossProcess(t *testing.T) {
+	if os.Getenv(subprocessMarker) == "1" {
+		childAssertions(t)
+		return
+	}
+
+	id := mustNew(t)
+	parentEnv := os.Environ()
+
+	injected, err := InjectEnv(parentEnv, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A malformed ambient value cannot be produced by InjectEnv (it validates),
+	// so it is planted directly — this is the "someone else set it wrong" case.
+	malformed := append(append([]string{}, parentEnv...), EnvVar+"=bad id")
+
+	cases := []struct {
+		name   string
+		env    []string
+		expect string
+	}{
+		{"valid ambient id", injected, id.String()},
+		{"absent", parentEnv, "unavailable"},
+		{"malformed ambient id", malformed, "unavailable"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestEnvPropagationAcrossProcess$", "-test.v")
+			cmd.Env = append(append([]string{}, tc.env...),
+				subprocessMarker+"=1",
+				subprocessExpect+"="+tc.expect)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("child failed: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func childAssertions(t *testing.T) {
+	expect := os.Getenv(subprocessExpect)
+	a := ForOwnedProcessTree()
+
+	if err := a.Validate(); err != nil {
+		t.Fatalf("child produced an invalid availability %+v: %v", a, err)
+	}
+
+	if expect == "unavailable" {
+		if a.Available() {
+			t.Fatalf("child correlated when it should not have: %+v", a)
+		}
+		if a.Reason == "" {
+			t.Fatal("child reported unavailable without a reason")
+		}
+		return
+	}
+
+	if !a.Available() {
+		t.Fatalf("child lost the injected identity: %+v", a)
+	}
+	if a.RunID.String() != expect {
+		t.Fatalf("child saw %q, want %q", a.RunID, expect)
+	}
+	// The environment is the child's only source, so Current must agree.
+	current, err := Current(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.RunID != a.RunID {
+		t.Fatalf("Current disagrees with ForOwnedProcessTree: %q vs %q", current.RunID, a.RunID)
+	}
+	// Resolve must accept the ambient id and reject a conflicting explicit one.
+	if _, _, err := Resolve(expect); err != nil {
+		t.Fatalf("Resolve rejected the agreeing explicit id: %v", err)
+	}
+	if _, _, err := Resolve("run-something-else"); err == nil {
+		t.Fatal("Resolve accepted a conflicting explicit id")
+	}
+}
+
 func TestContextPropagation(t *testing.T) {
 	id := mustNew(t)
 
 	t.Run("absent by default", func(t *testing.T) {
 		if got, ok := FromContext(context.Background()); ok {
 			t.Fatalf("empty context carried %q", got)
+		}
+	})
+
+	t.Run("nil parent context is rejected", func(t *testing.T) {
+		//nolint:staticcheck // deliberately exercising the nil guard
+		if _, err := NewContext(nil, id); err == nil {
+			t.Fatal("nil parent context must be rejected")
 		}
 	})
 

@@ -21,11 +21,32 @@ type ModelEntry struct {
 // RoutingRules maps a task kind (or "default"/"planner") to a model name.
 type RoutingRules map[string]string
 
+// CascadeConfig controls speculative execution: start cheap, escalate
+// to stronger models only when grounding falls below the threshold.
+type CascadeConfig struct {
+	Enabled            bool     `json:"enabled"`
+	GroundingThreshold float64  `json:"grounding_threshold"` // escalate below this (0.0-1.0)
+	MaxAttempts        int      `json:"max_attempts"`        // hard cap on cascade depth
+	EscalationChain    []string `json:"escalation_chain"`    // model names cheapest→strongest
+}
+
+// DefaultCascadeConfig returns a sensible cascade: Flash → Sonnet → Opus,
+// escalating when grounding < 85%, capped at 3 attempts.
+func DefaultCascadeConfig() CascadeConfig {
+	return CascadeConfig{
+		Enabled:            true,
+		GroundingThreshold: 0.85,
+		MaxAttempts:        3,
+		EscalationChain:    []string{"gemini-flash", "claude-sonnet", "claude-opus"},
+	}
+}
+
 // ModelsConfig is the user-editable model registry and routing rules.
 // It is read from ~/.neurofs/models.json or a repo-local override.
 type ModelsConfig struct {
 	Models  map[string]ModelEntry `json:"models"`
 	Routing RoutingRules          `json:"routing"`
+	Cascade CascadeConfig         `json:"cascade"`
 }
 
 // DefaultModelsConfig returns a sensible starter config with the three
@@ -83,6 +104,7 @@ func DefaultModelsConfig() ModelsConfig {
 			"general":  "claude-sonnet",
 			"default":  "claude-sonnet",
 		},
+		Cascade: DefaultCascadeConfig(),
 	}
 }
 

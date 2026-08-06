@@ -9,6 +9,23 @@ package orchestrator
 
 import "time"
 
+// CascadeAttempt records one attempt within a speculative cascade.
+// The cascade starts with the cheapest model and escalates if grounding
+// falls below the configured threshold.
+type CascadeAttempt struct {
+	Level        int        `json:"level"`
+	Model        string     `json:"model"`
+	Provider     string     `json:"provider"`
+	Response     string     `json:"response,omitempty"`
+	Grounding    float64    `json:"grounding"`
+	CostUSD      float64    `json:"cost_usd"`
+	InputTokens  int        `json:"input_tokens"`
+	OutputTokens int        `json:"output_tokens"`
+	DurationMs   int64      `json:"duration_ms"`
+	Accepted     bool       `json:"accepted"`
+	Reason       string     `json:"reason,omitempty"` // why escalated or accepted
+}
+
 // TaskKind classifies a sub-task so the router can pick a model.
 type TaskKind string
 
@@ -71,6 +88,11 @@ type Task struct {
 	OutputTokens int       `json:"output_tokens,omitempty"`
 	CostUSD      float64   `json:"cost_usd,omitempty"`
 	Grounding    float64   `json:"grounding,omitempty"`
+
+	// Cascade fields
+	CascadeLevel    int              `json:"cascade_level,omitempty"`
+	CascadeAttempts []CascadeAttempt `json:"cascade_attempts,omitempty"`
+	CascadeSaved    float64          `json:"cascade_saved_usd,omitempty"` // cost saved vs using top model
 }
 
 // Duration returns how long the task took, or zero if not finished.
@@ -137,10 +159,12 @@ func (p Plan) MeanGrounding() float64 {
 
 // Result is the final output of an orchestration run.
 type Result struct {
-	Plan           Plan    `json:"plan"`
-	TotalCostUSD   float64 `json:"total_cost_usd"`
-	MeanGrounding  float64 `json:"mean_grounding"`
-	DurationMs     int64   `json:"duration_ms"`
+	Plan              Plan    `json:"plan"`
+	TotalCostUSD      float64 `json:"total_cost_usd"`
+	MeanGrounding     float64 `json:"mean_grounding"`
+	DurationMs        int64   `json:"duration_ms"`
+	CascadeEscalations int    `json:"cascade_escalations,omitempty"`
+	CascadeSavedUSD    float64 `json:"cascade_saved_usd,omitempty"`
 }
 
 // StatusEvent is sent over SSE to update the UI in real time.
@@ -156,4 +180,6 @@ type StatusEvent struct {
 	DurationMs   int64      `json:"duration_ms,omitempty"`
 	Response     string     `json:"response,omitempty"`
 	Error        string     `json:"error,omitempty"`
+	CascadeLevel int        `json:"cascade_level,omitempty"`
+	CascadeReason string   `json:"cascade_reason,omitempty"` // "escalated: grounding 0.62 < 0.85" or "accepted"
 }

@@ -229,13 +229,25 @@ func NewDispatcher(router *Router, client LLMClient) *Dispatcher {
 }
 
 // Dispatch executes the plan tasks sequentially respecting dependencies.
+// When cascade is enabled in the config, each task uses speculative
+// execution: cheapest model first, escalating on low grounding.
 func (d *Dispatcher) Dispatch(ctx context.Context, plan *Plan, cb ProgressCallback) error {
-	tasksByID := make(map[string]*Task)
+	return d.DispatchWithCascade(ctx, plan, d.Router.Config.Cascade, calculateGroundingScoreDefault, cb)
+}
+
+// DispatchWithCascade executes the plan with explicit cascade config and
+// grounding function. This allows tests to inject custom grounding logic.
+func (d *Dispatcher) DispatchWithCascade(
+	ctx context.Context,
+	plan *Plan,
+	cascadeCfg CascadeConfig,
+	groundFn func(response, context string) float64,
+	cb ProgressCallback,
+) error {
 	completed := make(map[string]bool)
 
 	for i := range plan.Tasks {
 		plan.Tasks[i].Status = StatusPending
-		tasksByID[plan.Tasks[i].ID] = &plan.Tasks[i]
 	}
 
 	for i := range plan.Tasks {
@@ -266,75 +278,28 @@ func (d *Dispatcher) Dispatch(ctx context.Context, plan *Plan, cb ProgressCallba
 			continue
 		}
 
-		// Select model if not already set
-		resolved, err := d.Router.SelectModel(*t)
-		if err != nil {
-			t.Status = StatusFailed
-			t.Error = err.Error()
-			if cb != nil {
-				cb(StatusEvent{TaskID: t.ID, Status: StatusFailed, Error: t.Error})
+		// Select initial model for non-cascade path
+		if !cascadeCfg.Enabled {
+			resolved, err := d.Router.SelectModel(*t)
+			if err != nil {
+				t.Status = StatusFailed
+				t.Error = err.Error()
+				if cb != nil {
+					cb(StatusEvent{TaskID: t.ID, Status: StatusFailed, Error: t.Error})
+				}
+				continue
 			}
-			continue
-		}
-		t.Model = resolved.Name
-		t.Provider = resolved.Entry.Provider
-
-		// Mark running
-		t.Status = StatusRunning
-		now := time.Now()
-		t.StartedAt = &now
-		if cb != nil {
-			cb(StatusEvent{TaskID: t.ID, Status: StatusRunning, Model: t.Model, Provider: t.Provider})
+			t.Model = resolved.Name
+			t.Provider = resolved.Entry.Provider
 		}
 
-		// Build prompt with dependency context if available
-		prompt := t.Description
-		if t.Context != "" {
-			prompt = fmt.Sprintf("Context:\n%s\n\nTask:\n%s", t.Context, t.Description)
-		}
-
-		t.Prompt = prompt
-
-		// Call LLM
-		response, inTokens, outTokens, err := d.LLMClient.Complete(ctx, resolved.Entry, prompt)
-		finished := time.Now()
-		t.FinishedAt = &finished
-
-		if err != nil {
-			t.Status = StatusFailed
-			t.Error = err.Error()
-			if cb != nil {
-				cb(StatusEvent{
-					TaskID:     t.ID,
-					Status:     StatusFailed,
-					Model:      t.Model,
-					Provider:   t.Provider,
-					Error:      err.Error(),
-					DurationMs: t.Duration().Milliseconds(),
-				})
-			}
+		// Dispatch with cascade (or single-shot if disabled)
+		if err := d.dispatchWithCascade(ctx, t, cascadeCfg, groundFn, cb); err != nil {
 			continue
 		}
 
-		t.Status = StatusDone
-		t.Response = response
-		t.InputTokens = inTokens
-		t.OutputTokens = outTokens
-		t.CostUSD = resolved.Entry.EstimateCost(inTokens, outTokens)
-		completed[t.ID] = true
-
-		if cb != nil {
-			cb(StatusEvent{
-				TaskID:       t.ID,
-				Status:       StatusDone,
-				Model:        t.Model,
-				Provider:     t.Provider,
-				InputTokens:  t.InputTokens,
-				OutputTokens: t.OutputTokens,
-				CostUSD:      t.CostUSD,
-				DurationMs:   t.Duration().Milliseconds(),
-				Response:     t.Response,
-			})
+		if t.Status == StatusDone {
+			completed[t.ID] = true
 		}
 	}
 
@@ -348,6 +313,13 @@ func (d *Dispatcher) Dispatch(ctx context.Context, plan *Plan, cb ProgressCallba
 
 	return nil
 }
+
+// calculateGroundingScoreDefault is the package-level grounding function
+// used by Dispatch. It delegates to calculateGroundingScore in orchestrator.go.
+func calculateGroundingScoreDefault(response, contextStr string) float64 {
+	return calculateGroundingScore(response, contextStr)
+}
+
 
 func estimateTokens(s string) int {
 	words := len(strings.Fields(s))
