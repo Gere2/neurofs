@@ -4374,6 +4374,7 @@ switchTab("home");
         if (completedCount >= taskCardsMap.size) {
           statusPill.textContent = "Completed";
           currentEventSource.close();
+          loadPlayerData();
         }
       } catch (err) {
         console.error("SSE parse error", err);
@@ -4383,6 +4384,7 @@ switchTab("home");
     currentEventSource.onerror = () => {
       statusPill.textContent = "Execution Finished";
       if (currentEventSource) currentEventSource.close();
+      loadPlayerData();
     };
   }
 
@@ -4396,5 +4398,89 @@ switchTab("home");
       }
     });
   }
+
+  async function loadPlayerData() {
+    try {
+      const ps = await j("/api/player");
+      if (!ps || ps.error) return;
+      renderCommanderHeader(ps);
+      renderCommanderMatrix(ps);
+    } catch (e) {
+      console.warn("Failed to load player data", e);
+    }
+  }
+
+  function renderCommanderHeader(ps) {
+    const lvlNum = document.getElementById("cmd-level-num");
+    const title = document.getElementById("cmd-player-title");
+    const xpFill = document.getElementById("cmd-xp-bar-fill");
+    const streak = document.getElementById("cmd-streak-count");
+    const grounding = document.getElementById("cmd-grounding-score");
+    const saved = document.getElementById("cmd-saved-usd");
+
+    if (lvlNum) lvlNum.textContent = ps.level || 1;
+    if (title) title.textContent = ps.title || "Aprendiz";
+    if (xpFill && ps.xp_to_next > 0) {
+      const pct = Math.min(100, Math.max(0, (ps.xp / ps.xp_to_next) * 100));
+      xpFill.style.width = `${pct}%`;
+    }
+    if (streak) streak.textContent = ps.streak || 0;
+    if (grounding) grounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
+    if (saved) saved.textContent = (ps.total_saved_usd || 0).toFixed(2);
+  }
+
+  function renderCommanderMatrix(ps) {
+    const grid = document.getElementById("cmd-cards-grid");
+    const achRow = document.getElementById("cmd-achievements-row");
+    if (!grid) return;
+
+    grid.innerHTML = "";
+
+    const agents = ps.agents || {};
+    const defaultAgents = [
+      { name: "gemini-flash", display_name: "Flash", emoji: "⚡", specialties: ["planning", "sql", "docs"] },
+      { name: "claude-sonnet", display_name: "Sonnet", emoji: "🗡️", specialties: ["coding", "tests", "frontend", "backend"] },
+      { name: "claude-opus", display_name: "Opus", emoji: "👑", specialties: ["complex_reasoning", "architecture"] },
+      { name: "gpt-4o-mini", display_name: "Mini", emoji: "🔮", specialties: ["formatting", "simple_coding"] }
+    ];
+
+    defaultAgents.forEach(def => {
+      const a = agents[def.name] || { ...def, wins: 0, losses: 0, reliability: 0, total_cost_usd: 0, cascades_avoided: 0 };
+      const card = document.createElement("div");
+      card.className = "cmd-agent-card";
+      card.innerHTML = `
+        <div class="cmd-agent-card-head">
+          <div class="cmd-agent-name">${a.emoji || def.emoji} ${a.display_name || def.display_name}</div>
+          <div class="cmd-agent-wins">${a.wins || 0} Wins</div>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Reliability:</span>
+          <span class="cmd-stat-val">${((a.reliability || 0) * 100).toFixed(0)}%</span>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Cost USD:</span>
+          <span class="cmd-stat-val">$${(a.total_cost_usd || 0).toFixed(4)}</span>
+        </div>
+        <div class="cmd-agent-stat-row">
+          <span>Cascade Avoided:</span>
+          <span class="cmd-stat-val">${a.cascades_avoided || 0}</span>
+        </div>
+      `;
+      grid.appendChild(card);
+    });
+
+    if (achRow) {
+      achRow.innerHTML = "";
+      (ps.achievements || []).forEach(ach => {
+        const badge = document.createElement("div");
+        badge.className = "cmd-ach-badge";
+        badge.title = ach.description;
+        badge.innerHTML = `<span>${ach.emoji || "🎖️"}</span> <span>${ach.name}</span>`;
+        achRow.appendChild(badge);
+      });
+    }
+  }
+
+  loadPlayerData();
 })();
 

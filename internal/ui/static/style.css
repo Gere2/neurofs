@@ -2251,4 +2251,197 @@ table.records td code { font-size: 0.75rem; }
   color: #e4e4e7;
 }
 
+/* ==========================================================================
+   AGENT COMMANDER — GAMIFICATION & COMMAND CENTER STYLES
+   ========================================================================== */
+
+.cmd-header-wrap {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.cmd-commander-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: rgba(10, 10, 26, 0.75);
+  border: 1px solid rgba(0, 212, 255, 0.25);
+  border-radius: 8px;
+  padding: 4px 12px;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.08);
+  font-family: var(--mono);
+}
+
+.cmd-player-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.cmd-level-badge {
+  background: linear-gradient(135deg, #00d4ff, #aa66ff);
+  color: #000;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.5px;
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+}
+
+.cmd-player-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cmd-title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.cmd-xp-bar-wrap {
+  width: 90px;
+  height: 5px;
+  background: #1e1e38;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.cmd-xp-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff88, #00d4ff);
+  width: 0%;
+  transition: width 0.4s ease;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.cmd-stats-pills {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  padding-left: 10px;
+}
+
+.cmd-pill {
+  font-size: 0.72rem;
+  color: #a1a1aa;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cmd-pill span#cmd-streak-count { color: #ffaa00; font-weight: 600; }
+.cmd-pill span#cmd-grounding-score { color: #00ff88; font-weight: 600; }
+.cmd-pill span#cmd-saved-usd { color: #00d4ff; font-weight: 600; }
+
+/* Agent Cards Grid */
+.cmd-agent-matrix {
+  margin-bottom: 20px;
+  background: rgba(10, 10, 26, 0.5);
+  border: 1px solid rgba(0, 212, 255, 0.15);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cmd-matrix-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.cmd-matrix-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #00d4ff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cmd-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.cmd-agent-card {
+  background: #121222;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 12px;
+  transition: all 0.2s ease;
+}
+
+.cmd-agent-card:hover {
+  border-color: #00d4ff;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.15);
+  transform: translateY(-2px);
+}
+
+.cmd-agent-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 6px;
+}
+
+.cmd-agent-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: #f4f4f5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cmd-agent-wins {
+  font-size: 0.7rem;
+  color: #00ff88;
+  background: rgba(0, 255, 136, 0.1);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.cmd-agent-stat-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #a1a1aa;
+  margin: 3px 0;
+}
+
+.cmd-stat-val {
+  color: #f4f4f5;
+  font-weight: 500;
+}
+
+.cmd-achievements-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.cmd-ach-badge {
+  font-size: 0.7rem;
+  background: rgba(170, 102, 255, 0.12);
+  border: 1px solid rgba(170, 102, 255, 0.3);
+  color: #d8b4fe;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+
 

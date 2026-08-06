@@ -13,12 +13,20 @@
 </head>
 <body>
   <header>
-    <div class="brand">
-      <h1>NeuroFS</h1>
-      <span class="sub" data-i18n="brand.sub">context compiler — local UI</span>
-      <div class="lang-toggle" role="group" aria-label="Language">
-        <button type="button" data-lang="en" class="active">EN</button>
-        <button type="button" data-lang="es">ES</button>
+    <div id="cmd-commander-bar" class="cmd-commander-bar">
+      <div class="cmd-player-badge">
+        <span class="cmd-level-badge">Lv.<span id="cmd-level-num">1</span></span>
+        <div class="cmd-player-info">
+          <span class="cmd-title" id="cmd-player-title">Aprendiz</span>
+          <div class="cmd-xp-bar-wrap" title="XP to next level">
+            <div class="cmd-xp-bar-fill" id="cmd-xp-bar-fill" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+      <div class="cmd-stats-pills">
+        <span class="cmd-pill cmd-streak" title="Daily Streak"><span class="cmd-icon">🔥</span> <span id="cmd-streak-count">0</span>d</span>
+        <span class="cmd-pill cmd-grounding" title="Mean Grounding"><span class="cmd-icon">🎯</span> <span id="cmd-grounding-score">0%</span></span>
+        <span class="cmd-pill cmd-saved" title="USD Saved via Cascade"><span class="cmd-icon">💰</span> $<span id="cmd-saved-usd">0.00</span></span>
       </div>
     </div>
     <nav id="tabs">
@@ -972,6 +980,22 @@
 
     <!-- ============================ ORCHESTRATE ============================ -->
     <section id="tab-orchestrate" class="tab">
+      <!-- Agent Commander Roster & Achievements Matrix -->
+      <div id="cmd-agent-matrix" class="cmd-agent-matrix">
+        <div class="cmd-matrix-head">
+          <div class="cmd-matrix-title">
+            <span>🛡️ Agent Squad & Commander Roster</span>
+          </div>
+          <div class="v8-muted" style="font-size: 0.75rem;">Real-time stats from verified orchestration runs</div>
+        </div>
+        <div id="cmd-cards-grid" class="cmd-cards-grid">
+          <!-- Dynamically populated by app.js -->
+        </div>
+        <div id="cmd-achievements-row" class="cmd-achievements-row">
+          <!-- Dynamically populated achievements -->
+        </div>
+      </div>
+
       <div class="v8-card">
         <div class="v8-card-header">
           <h3>⚡ Multi-Agent Orchestration Engine</h3>

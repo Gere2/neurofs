@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/gamestate"
 	"github.com/Gere2/neurofs/internal/orchestrator"
 )
 
@@ -66,7 +69,7 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 
 	// Launch async execution
 	go func() {
-		_, _ = orc.Run(ctx, orchestrator.OrchestrationOptions{
+		res, _ := orc.Run(ctx, orchestrator.OrchestrationOptions{
 			Question: req.Question,
 			RepoRoot: repo,
 			Callback: func(ev orchestrator.StatusEvent) {
@@ -80,6 +83,21 @@ func handleOrchestrateRun(w http.ResponseWriter, r *http.Request) {
 				}
 			},
 		})
+
+		// Update game state
+		if home, err := os.UserHomeDir(); err == nil {
+			dir := filepath.Join(home, ".neurofs")
+			if ps, err := gamestate.Load(dir); err == nil {
+				for _, t := range res.Plan.Tasks {
+					if t.Status == orchestrator.StatusDone {
+						ps.RecordTaskResult(t.Model, t.Grounding, t.CostUSD, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
+						ps.GrantXPForTask(t.Grounding, t.CascadeLevel, t.CascadeSaved, t.Complexity == orchestrator.Complex, 0.85)
+					}
+				}
+				ps.CheckAchievements()
+				_ = ps.Save(dir)
+			}
+		}
 	}()
 
 	writeJSON(w, http.StatusOK, map[string]any{
