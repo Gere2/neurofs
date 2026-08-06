@@ -85,6 +85,15 @@ jobs:
         run: |
           set -o pipefail
           make scan-self
+          # TEMPORARY diagnostic: G5/G3 report a stale index here even though
+          # the scan above just ran, and the same sequence passes in a clean
+          # local clone. Print what the runner has that a local checkout does
+          # not, so the next run answers this with evidence instead of
+          # inference. Remove once the cause is identified.
+          echo "--- tracked-but-modified / untracked / ignored ---"
+          git status --porcelain=v1 --untracked-files=all --ignored=matching | head -60
+          echo "--- audit/ contents ---"
+          find audit -type f | sort | head -60
           ./bin/neurofs gate --json | tee gate-report.json
       - name: Upload pivot-readiness report
         if: always()
