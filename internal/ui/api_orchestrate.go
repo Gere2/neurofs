@@ -303,4 +303,47 @@ func handleOrchestrateTune(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+func handleSkillsGet(w http.ResponseWriter, r *http.Request) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot resolve home dir: "+err.Error())
+		return
+	}
+	dir := filepath.Join(home, ".neurofs")
+	store := orchestrator.NewSkillStore(dir)
+	skills, err := store.LoadSkills()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to load skill store: "+err.Error())
+		return
+	}
+	if skills == nil {
+		skills = []orchestrator.CrossProjectSkill{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"skills": skills})
+}
+
+func handleSkillsPost(w http.ResponseWriter, r *http.Request) {
+	var skill orchestrator.CrossProjectSkill
+	if err := json.NewDecoder(r.Body).Decode(&skill); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid skill payload: "+err.Error())
+		return
+	}
+	if skill.Domain == "" || skill.Insight == "" {
+		writeErr(w, http.StatusBadRequest, "domain and insight fields required")
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "cannot resolve home dir: "+err.Error())
+		return
+	}
+	dir := filepath.Join(home, ".neurofs")
+	store := orchestrator.NewSkillStore(dir)
+	if err := store.SaveSkill(skill); err != nil {
+		writeErr(w, http.StatusInternalServerError, "failed to save skill: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "saved"})
+}
+
 

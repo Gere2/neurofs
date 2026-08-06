@@ -41,6 +41,7 @@
       <button data-tab="compare" data-i18n="nav.compare">Compare</button>
       <button data-tab="proxy" data-i18n="nav.proxy">Agent Proxy</button>
       <button data-tab="orchestrate" class="v8-nav-accent" data-i18n="nav.orchestrate">⚡ Orchestrate</button>
+      <button data-tab="worldmap" class="v8-nav-accent">🗺 World Map</button>
       <button data-tab="playground" data-i18n="nav.playground">Playground</button>
       <button data-tab="guide" data-i18n="nav.guide">Guide</button>
     </nav>
@@ -1081,6 +1082,58 @@
               <strong>Model Output & Code:</strong>
               <pre id="orc-insp-resp" style="background: #000; padding: 10px; border-radius: 4px; max-height: 200px; overflow: auto; font-size: 0.75rem; color: #86efac;"></pre>
             </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WORLD MAP & CROSS-PROJECT SKILLS TAB -->
+    <section id="tab-worldmap" class="tab">
+      <div class="panel">
+        <h3 style="color: #00d4ff; font-size: 1.1rem; display: flex; align-items: center; gap: 8px; margin-bottom: 15px;">
+          <span>🗺 World Map & Cross-Project Skill Store</span>
+        </h3>
+        <p style="color: #a1a1aa; font-size: 0.85rem; margin-bottom: 20px;">
+          NeuroFS shares verified domain insights across repository boundaries. Skills learned in one project automatically optimize task decomposition and model routing in all projects.
+        </p>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 25px;">
+          <div>
+            <h4 style="color: #00ff88; font-size: 0.9rem; margin-bottom: 10px;">🏰 Active Repository Territory</h4>
+            <div id="wm-repo-card" style="background: #0d0d1a; border: 1px solid rgba(0, 212, 255, 0.3); border-radius: 6px; padding: 15px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <strong id="wm-repo-name" style="font-size: 0.95rem; color: #fff;">Current Repo</strong>
+                <span class="badge" style="background: rgba(0,255,136,0.15); color: #86efac;">Active Territory</span>
+              </div>
+              <p id="wm-repo-path" style="font-family: var(--mono); font-size: 0.75rem; color: #71717a; margin-bottom: 10px;"></p>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8rem; color: #a1a1aa;">
+                <div>Indexed Files: <strong id="wm-stat-files">--</strong></div>
+                <div>Grounding Score: <strong id="wm-stat-grounding" style="color: #00ff88;">--</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="color: #d8b4fe; font-size: 0.9rem; margin-bottom: 10px;">➕ Add Domain Insight Skill</h4>
+            <form id="wm-add-skill-form" style="background: #0d0d1a; border: 1px solid rgba(170, 102, 255, 0.3); border-radius: 6px; padding: 15px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <input type="text" id="wm-skill-domain" placeholder="Domain (e.g. go_cli, nextjs)" required style="background: #000; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.8rem;">
+                <select id="wm-skill-model" style="background: #000; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.8rem;">
+                  <option value="gemini-flash">⚡ gemini-flash</option>
+                  <option value="claude-sonnet">🗡️ claude-sonnet</option>
+                  <option value="claude-opus">👑 claude-opus</option>
+                </select>
+              </div>
+              <textarea id="wm-skill-insight" placeholder="Verified insight rule (e.g. Always use bufio.Scanner with 64MB buffer)" rows="2" required style="background: #000; border: 1px solid #333; color: #fff; padding: 6px 10px; border-radius: 4px; font-size: 0.8rem; font-family: var(--mono);"></textarea>
+              <button type="submit" class="btn primary" style="align-self: flex-start; padding: 4px 12px; font-size: 0.8rem;">💾 Save Skill</button>
+            </form>
+          </div>
+        </div>
+
+        <div>
+          <h4 style="color: #00d4ff; font-size: 0.9rem; margin-bottom: 10px;">🌐 Global Skills Repository Memory</h4>
+          <div id="wm-skills-list" style="display: flex; flex-direction: column; gap: 8px;">
+            <p style="color: #71717a; font-size: 0.8rem;">Loading cross-project skills...</p>
           </div>
         </div>
       </div>

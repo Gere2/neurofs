@@ -52,6 +52,15 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/api/a2a/agent-card", getOnly(a2a.Handler("")))
 	mux.HandleFunc("/api/mcp", mcp.StatelessHandler("", ""))
 	mux.HandleFunc("/api/mcp/discover", getOnly(mcp.StatelessHandler("", "")))
+	mux.HandleFunc("/api/skills", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			handleSkillsGet(w, r)
+		} else if r.Method == http.MethodPost {
+			safePost(allowedOrigins, handleSkillsPost)(w, r)
+		} else {
+			writeErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	})
 }
 
 // --------------------- method gates ---------------------

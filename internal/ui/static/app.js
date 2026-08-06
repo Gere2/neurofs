@@ -299,6 +299,7 @@ function switchTab(name) {
   if (name === "records") loadRecords();
   if (name === "journal") loadJournal();
   if (name === "proxy") loadProxyStats();
+  if (name === "worldmap") renderWorldMap();
 
   if (name === "proxy") {
     if (!state.proxyPollInterval) {
@@ -4624,6 +4625,78 @@ switchTab("home");
         achRow.appendChild(badge);
       });
     }
+  }
+
+  async function renderWorldMap() {
+    const repoName = document.getElementById("wm-repo-name");
+    const repoPath = document.getElementById("wm-repo-path");
+    const statFiles = document.getElementById("wm-stat-files");
+    const statGrounding = document.getElementById("wm-stat-grounding");
+    const skillsList = document.getElementById("wm-skills-list");
+
+    if (repoName) repoName.textContent = state.project ? state.project.name || "Current Repo" : "Current Repo";
+    if (repoPath) repoPath.textContent = state.repo || "local repository";
+    if (statFiles) statFiles.textContent = state.summary ? state.summary.total_files || "--" : "--";
+
+    try {
+      const ps = await j("/api/player");
+      if (ps && statGrounding) {
+        statGrounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
+      }
+    } catch (e) {}
+
+    try {
+      const res = await j("/api/skills");
+      if (!skillsList) return;
+      skillsList.innerHTML = "";
+      const skills = res.skills || [];
+      if (skills.length === 0) {
+        skillsList.innerHTML = `<p style="color: #71717a; font-size: 0.8rem;">No cross-project skills saved in <code>~/.neurofs/global_skills.jsonl</code> yet. Add one above or let HyperAgent learn from executions.</p>`;
+        return;
+      }
+      skills.forEach(s => {
+        const item = document.createElement("div");
+        item.style.cssText = "background: #0d0d1a; border: 1px solid rgba(0, 212, 255, 0.2); border-radius: 6px; padding: 12px; font-size: 0.82rem;";
+        item.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <strong style="color: #00d4ff;">🌐 Domain: ${s.domain || "general"}</strong>
+            <span class="badge" style="background: rgba(170,102,255,0.2); color: #d8b4fe; font-size: 0.72rem;">Model: ${s.recommended_model || "auto"}</span>
+          </div>
+          <p style="font-family: var(--mono); color: #e4e4e7; margin: 0 0 6px 0;">${s.insight}</p>
+          <div style="font-size: 0.72rem; color: #71717a;">Confidence: ${((s.confidence || 0.9) * 100).toFixed(0)}% · Learned: ${s.learned_at ? new Date(s.learned_at).toLocaleDateString() : "Recent"}</div>
+        `;
+        skillsList.appendChild(item);
+      });
+    } catch (err) {
+      if (skillsList) skillsList.innerHTML = `<p style="color: #ff4466; font-size: 0.8rem;">Failed to load skills: ${err.message}</p>`;
+    }
+  }
+
+  const addSkillForm = document.getElementById("wm-add-skill-form");
+  if (addSkillForm) {
+    addSkillForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const domain = document.getElementById("wm-skill-domain").value;
+      const model = document.getElementById("wm-skill-model").value;
+      const insight = document.getElementById("wm-skill-insight").value;
+
+      try {
+        const res = await j("/api/skills", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ domain, recommended_model: model, insight, confidence: 0.95 })
+        });
+        if (res.error) {
+          alert("Error saving skill: " + res.error);
+          return;
+        }
+        document.getElementById("wm-skill-domain").value = "";
+        document.getElementById("wm-skill-insight").value = "";
+        renderWorldMap();
+      } catch (err) {
+        alert("Failed to save skill: " + err.message);
+      }
+    });
   }
 
   loadPlayerData();
