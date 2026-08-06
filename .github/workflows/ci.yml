@@ -76,30 +76,27 @@ jobs:
       - name: Retrieval and iso-recall economy gates
         run: make check-retrieval check-economy
       - name: Pivot-readiness oracle
-        # Re-scan immediately before the gate, exactly as `make check-gate`
-        # does. G5 hashes the current Go source tree and refuses to verify
-        # against a stale index, so the gate cannot rely on the scan that
-        # check-retrieval/check-economy did earlier in the job. release.yml
-        # goes through `make check-gate` and is unaffected; this step called
-        # the binary directly and so had drifted from that contract.
+        # The report must be written OUTSIDE the repository. G3 and G5 refuse
+        # to measure against an index that does not match the working tree, and
+        # `| tee gate-report.json` created an unindexed .json in the repo root
+        # before the gate ran — so capturing the report was itself what made
+        # the gate fail. Reproduced exactly: same tree, `gate` passes and
+        # `gate --json | tee gate-report.json` fails with "target index is
+        # stale". release.yml goes through `make check-gate`, captures nothing,
+        # and was never affected.
+        #
+        # scan-self stays because G3 needs a fresh index too, and this step
+        # calls the binary directly rather than via `make check-gate`.
         run: |
           set -o pipefail
           make scan-self
-          # TEMPORARY diagnostic: G5/G3 report a stale index here even though
-          # the scan above just ran, and the same sequence passes in a clean
-          # local clone. Print what the runner has that a local checkout does
-          # not, so the next run answers this with evidence instead of
-          # inference. Remove once the cause is identified.
-          echo "--- tracked-but-modified / untracked / ignored ---"
-          git status --porcelain=v1 --untracked-files=all --ignored=matching | head -60
-          echo "--- audit/ contents ---"
-          find audit -type f | sort | head -60
-          ./bin/neurofs gate --json | tee gate-report.json
+          ./bin/neurofs gate --json > "$RUNNER_TEMP/gate-report.json"
+          cat "$RUNNER_TEMP/gate-report.json"
       - name: Upload pivot-readiness report
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: pivot-readiness
-          path: gate-report.json
+          path: ${{ runner.temp }}/gate-report.json
           if-no-files-found: warn
           retention-days: 30
