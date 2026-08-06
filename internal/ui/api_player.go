@@ -21,5 +21,16 @@ func handlePlayer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ps.CheckAchievements()
-	writeJSON(w, http.StatusOK, ps)
+
+	// The ladder ships alongside the state so the UI never hardcodes level
+	// thresholds: gamestate stays the single source of truth for what is
+	// unlocked and what the next reward is.
+	payload := map[string]any{
+		"player":  ps,
+		"unlocks": ps.Unlocks(),
+	}
+	if next, ok := ps.NextUnlock(); ok {
+		payload["next_unlock"] = next
+	}
+	writeJSON(w, http.StatusOK, payload)
 }

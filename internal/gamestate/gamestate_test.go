@@ -392,3 +392,76 @@ func TestEveryXPSourceIsReachable(t *testing.T) {
 		}
 	}
 }
+
+// The ladder is the vision's most distinctive claim: levels must reveal real
+// capabilities, not award a badge for having levelled up.
+func TestFeatureUnlocks_LadderMatchesTiers(t *testing.T) {
+	ladder := FeatureUnlocks()
+	if len(ladder) == 0 {
+		t.Fatal("the unlock ladder is empty")
+	}
+
+	prev := 0
+	for _, u := range ladder {
+		if u.MinLevel <= prev {
+			t.Errorf("ladder must ascend: %s at level %d follows level %d", u.Feature, u.MinLevel, prev)
+		}
+		prev = u.MinLevel
+		if u.Label == "" || u.Teaches == "" {
+			t.Errorf("%s has no label/teaches text; a lock that explains nothing teaches nothing", u.Feature)
+		}
+	}
+}
+
+func TestIsUnlocked_GatesOnLevel(t *testing.T) {
+	ps := NewPlayerState() // level 1
+
+	if ps.IsUnlocked(FeatureTournament) {
+		t.Error("tournament must be locked at level 1")
+	}
+	ps.Level = 10
+	if !ps.IsUnlocked(FeatureTournament) {
+		t.Error("tournament must be unlocked at level 10")
+	}
+	ps.Level = 9
+	if ps.IsUnlocked(FeatureTournament) {
+		t.Error("level 9 is below the tournament threshold")
+	}
+
+	// Failing open matters: a typo in a feature key must not hide real UI.
+	if !ps.IsUnlocked(Feature("not_on_the_ladder")) {
+		t.Error("unknown features must be treated as unlocked")
+	}
+}
+
+func TestUnlocksAndNextUnlock(t *testing.T) {
+	ps := NewPlayerState()
+	ps.Level = 12
+
+	states := ps.Unlocks()
+	if len(states) != len(FeatureUnlocks()) {
+		t.Fatalf("Unlocks() returned %d entries, want %d", len(states), len(FeatureUnlocks()))
+	}
+	for _, s := range states {
+		want := 12 >= s.MinLevel
+		if s.Unlocked != want {
+			t.Errorf("%s at level 12: unlocked=%v, want %v", s.Feature, s.Unlocked, want)
+		}
+	}
+
+	next, ok := ps.NextUnlock()
+	if !ok {
+		t.Fatal("level 12 still has rewards ahead")
+	}
+	if next.MinLevel <= 12 {
+		t.Errorf("next unlock is level %d, which is not ahead of 12", next.MinLevel)
+	}
+	if next.Feature != FeatureCrossProject {
+		t.Errorf("next unlock = %s, want %s", next.Feature, FeatureCrossProject)
+	}
+
+	ps.Level = 999
+	if _, ok := ps.NextUnlock(); ok {
+		t.Error("everything must be unlocked at a very high level")
+	}
+}

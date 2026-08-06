@@ -4392,7 +4392,7 @@ switchTab("home");
   if (configBtn) {
     configBtn.addEventListener("click", async () => {
       try {
-        const cfg = await j(`/api/orchestrate/models?repo=${encodeURIComponent(state.repo || "")}`);
+        const cfg = await j("GET", `/api/orchestrate/models?repo=${encodeURIComponent(state.repo || "")}`);
         alert("Current Router & Models Config:\n\n" + JSON.stringify(cfg, null, 2));
       } catch (err) {
         alert("Failed to load models config: " + err.message);
@@ -4416,7 +4416,7 @@ switchTab("home");
       if (tournamentDrawer) tournamentDrawer.style.display = "block";
       if (tournamentContent) tournamentContent.textContent = "Loading tournament analysis...";
       try {
-        const analysis = await j("/api/orchestrate/tournament");
+        const analysis = await j("GET", "/api/orchestrate/tournament");
         renderTournament(analysis);
       } catch (err) {
         if (tournamentContent) tournamentContent.textContent = "Failed to load tournament data: " + err.message;
@@ -4433,7 +4433,7 @@ switchTab("home");
         const repo = state.repo || "";
         const qs = encodeURIComponent(repo);
         // Preview first: the server only rewrites models.json when apply=true.
-        const res = await j(`/api/orchestrate/tune?repo=${qs}`, { method: "POST" });
+        const res = await j("POST", `/api/orchestrate/tune?repo=${qs}`);
         tuneBtn.disabled = false;
         tuneBtn.textContent = "⚡ Auto-Tune Routing";
 
@@ -4456,7 +4456,7 @@ switchTab("home");
         );
         if (!ok) return;
 
-        const applied = await j(`/api/orchestrate/tune?repo=${qs}&apply=true`, { method: "POST" });
+        const applied = await j("POST", `/api/orchestrate/tune?repo=${qs}&apply=true`);
         if (applied.error) {
           alert("Auto-tune error: " + applied.error);
           return;
@@ -4511,11 +4511,15 @@ switchTab("home");
 
   async function loadPlayerData() {
     try {
-      const ps = await j("/api/player");
-      if (!ps || ps.error) return;
-      renderCommanderHeader(ps);
+      // /api/player returns { player, unlocks, next_unlock }: the ladder ships
+      // with the state so the thresholds live in gamestate, not in here.
+      const res = await j("GET", "/api/player");
+      if (!res || res.error) return;
+      const ps = res.player || res;
+      renderCommanderHeader(ps, res.next_unlock);
       renderCommanderMatrix(ps);
       renderCommanderHistoryModal(ps);
+      applyFeatureUnlocks(res.unlocks || []);
     } catch (e) {
       console.warn("Failed to load player data", e);
     }
@@ -4574,7 +4578,48 @@ switchTab("home");
     }
   }
 
-  function renderCommanderHeader(ps) {
+  // Which DOM anchors belong to which unlockable feature. Keys must match the
+  // Feature constants in internal/gamestate; the level thresholds deliberately
+  // live there and never here.
+  const FEATURE_ANCHORS = {
+    tournament: ["orc-tournament-btn"],
+    cross_project_memory: ['[data-tab="worldmap"]'],
+    hyperagent: ["orc-tune-btn"],
+  };
+
+  // Progressive disclosure, not access control: the CLI and the HTTP API stay
+  // open at every level. Hiding here is what the vision means by "aprendes a
+  // usar la herramienta jugando" — level 1 shows an input, the agents and the
+  // result, and the rest appears as the player earns the context for it.
+  function applyFeatureUnlocks(unlocks) {
+    unlocks.forEach((u) => {
+      const anchors = FEATURE_ANCHORS[u.feature];
+      if (!anchors) return;
+      anchors.forEach((sel) => {
+        const el = sel.startsWith("[")
+          ? document.querySelector(sel)
+          : document.getElementById(sel);
+        if (!el) return;
+        if (u.unlocked) {
+          el.hidden = false;
+          el.removeAttribute("data-locked");
+          el.removeAttribute("title");
+          el.disabled = false;
+          return;
+        }
+        // Locked items stay visible but inert, and say what unlocks them:
+        // a lock the player cannot see teaches nothing.
+        el.hidden = false;
+        el.setAttribute("data-locked", "true");
+        el.setAttribute("title", `🔒 Nivel ${u.min_level} — ${u.label}: ${u.teaches}`);
+        if ("disabled" in el) el.disabled = true;
+        el.style.opacity = "0.45";
+        el.style.cursor = "not-allowed";
+      });
+    });
+  }
+
+  function renderCommanderHeader(ps, nextUnlock) {
     const lvlNum = document.getElementById("cmd-level-num");
     const title = document.getElementById("cmd-player-title");
     const xpFill = document.getElementById("cmd-xp-bar-fill");
@@ -4591,6 +4636,15 @@ switchTab("home");
     if (streak) streak.textContent = ps.streak || 0;
     if (grounding) grounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
     if (saved) saved.textContent = (ps.total_saved_usd || 0).toFixed(2);
+
+    // Name the next reward instead of showing a bare bar — the XP number only
+    // means something if the player can see what it is buying.
+    const nextEl = document.getElementById("cmd-next-unlock");
+    if (nextEl) {
+      nextEl.textContent = nextUnlock
+        ? `Nivel ${nextUnlock.min_level} → ${nextUnlock.label}`
+        : "Todo desbloqueado";
+    }
   }
 
   function renderCommanderMatrix(ps) {
@@ -4657,14 +4711,15 @@ switchTab("home");
     if (statFiles) statFiles.textContent = state.summary ? state.summary.total_files || "--" : "--";
 
     try {
-      const ps = await j("/api/player");
+      const res = await j("GET", "/api/player");
+      const ps = res && (res.player || res);
       if (ps && statGrounding) {
         statGrounding.textContent = `${((ps.mean_grounding || 0) * 100).toFixed(0)}%`;
       }
     } catch (e) {}
 
     try {
-      const res = await j("/api/skills");
+      const res = await j("GET", "/api/skills");
       if (!skillsList) return;
       skillsList.innerHTML = "";
       const skills = res.skills || [];

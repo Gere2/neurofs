@@ -111,6 +111,111 @@ var levelTiers = []struct {
 	{50, "Leyenda"},
 }
 
+// Feature names a capability that the player unlocks by levelling up.
+type Feature string
+
+const (
+	FeatureCascadeManual Feature = "cascade_manual"
+	FeatureTournament    Feature = "tournament"
+	FeatureCrossProject  Feature = "cross_project_memory"
+	FeatureHyperAgent    Feature = "hyperagent"
+	FeatureAgentCardsA2A Feature = "agent_cards_a2a"
+)
+
+// Unlock ties a feature to the level that reveals it.
+type Unlock struct {
+	Feature  Feature `json:"feature"`
+	MinLevel int     `json:"min_level"`
+	Label    string  `json:"label"`
+	Teaches  string  `json:"teaches"`
+}
+
+// featureUnlocks is the progression ladder. It is deliberately about
+// *progressive disclosure*, not access control: level 1 shows an input, the
+// agents and the result, and everything else appears as the player earns the
+// context to understand it. Locking teaches; it does not defend. The CLI and
+// the HTTP API stay fully open at every level, so scripts, automation and
+// power users are never gated — only the UI reveals gradually.
+var featureUnlocks = []Unlock{
+	{FeatureCascadeManual, 5, "Cascade manual",
+		"Elegir qué modelo intenta cada tarea, y cuándo escalar."},
+	{FeatureTournament, 10, "War Room",
+		"Qué modelo gana en cada tipo de tarea, medido sobre tu propio historial."},
+	{FeatureCrossProject, 20, "Cross-project memory",
+		"Lo aprendido en un repo alimenta los demás."},
+	{FeatureHyperAgent, 35, "HyperAgent",
+		"Re-afinar el routing automáticamente desde los datos del torneo."},
+	{FeatureAgentCardsA2A, 50, "Agent Cards A2A",
+		"Publicar NeuroFS como agente descubrible por otros agentes."},
+}
+
+// FeatureUnlocks returns the full ladder, locked and unlocked alike, so the UI
+// can show what is still ahead — a lock the player cannot see teaches nothing.
+func FeatureUnlocks() []Unlock {
+	out := make([]Unlock, len(featureUnlocks))
+	copy(out, featureUnlocks)
+	return out
+}
+
+// LevelFor returns the level at which feature becomes available, and whether
+// it is a known feature.
+func LevelFor(feature Feature) (int, bool) {
+	for _, u := range featureUnlocks {
+		if u.Feature == feature {
+			return u.MinLevel, true
+		}
+	}
+	return 0, false
+}
+
+// IsUnlocked reports whether the player has reached the level for feature.
+// Unknown features are treated as unlocked: a capability nobody put on the
+// ladder is not a secret, and failing open keeps a typo from hiding real UI.
+func (ps *PlayerState) IsUnlocked(feature Feature) bool {
+	minLevel, known := LevelFor(feature)
+	if !known {
+		return true
+	}
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+	return ps.Level >= minLevel
+}
+
+// UnlockState is the per-feature view handed to the UI.
+type UnlockState struct {
+	Unlock
+	Unlocked bool `json:"unlocked"`
+}
+
+// Unlocks returns the ladder annotated with what the player has reached.
+func (ps *PlayerState) Unlocks() []UnlockState {
+	ps.mu.RLock()
+	level := ps.Level
+	ps.mu.RUnlock()
+
+	out := make([]UnlockState, 0, len(featureUnlocks))
+	for _, u := range featureUnlocks {
+		out = append(out, UnlockState{Unlock: u, Unlocked: level >= u.MinLevel})
+	}
+	return out
+}
+
+// NextUnlock returns the next feature the player has not reached yet, so the
+// UI can name the reward instead of showing a bare progress bar. The second
+// result is false once everything is unlocked.
+func (ps *PlayerState) NextUnlock() (Unlock, bool) {
+	ps.mu.RLock()
+	level := ps.Level
+	ps.mu.RUnlock()
+
+	for _, u := range featureUnlocks {
+		if level < u.MinLevel {
+			return u, true
+		}
+	}
+	return Unlock{}, false
+}
+
 // xpForLevel returns the XP needed to reach a given level.
 // Uses a gentle curve: level N needs N*50 XP from the previous level.
 func xpForLevel(level int) int {
