@@ -76,8 +76,15 @@ jobs:
       - name: Retrieval and iso-recall economy gates
         run: make check-retrieval check-economy
       - name: Pivot-readiness oracle
+        # Re-scan immediately before the gate, exactly as `make check-gate`
+        # does. G5 hashes the current Go source tree and refuses to verify
+        # against a stale index, so the gate cannot rely on the scan that
+        # check-retrieval/check-economy did earlier in the job. release.yml
+        # goes through `make check-gate` and is unaffected; this step called
+        # the binary directly and so had drifted from that contract.
         run: |
           set -o pipefail
+          make scan-self
           ./bin/neurofs gate --json | tee gate-report.json
       - name: Upload pivot-readiness report
         if: always()
