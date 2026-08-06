@@ -151,19 +151,29 @@ func LoadModelsConfig(repoRoot string) (ModelsConfig, error) {
 	return DefaultModelsConfig(), nil
 }
 
-// WriteDefaultConfig writes the default models.json to the given directory.
-// Used by `neurofs setup` to bootstrap the config.
-func WriteDefaultConfig(dir string) error {
-	cfg := DefaultModelsConfig()
+// WriteModelsConfig writes a ModelsConfig struct to .neurofs/models.json in the given directory.
+func WriteModelsConfig(dir string, cfg ModelsConfig) error {
+	if dir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, ".neurofs")
+		} else {
+			dir = "."
+		}
+	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, "models.json")
+	path := filepath.Join(dir, ".neurofs", "models.json")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// WriteDefaultConfig writes the default models.json to the given directory.
+func WriteDefaultConfig(dir string) error {
+	return WriteModelsConfig(dir, DefaultModelsConfig())
 }
 
 // ResolveAPIKey returns the API key for a model entry from the environment.

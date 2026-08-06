@@ -287,3 +287,20 @@ func handleOrchestrateTournament(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, analysis)
 }
 
+func handleOrchestrateTune(w http.ResponseWriter, r *http.Request) {
+	repoParam := r.URL.Query().Get("repo")
+	repo := repoParam
+	if c, err := config.New(repoParam); err == nil {
+		repo = c.RepoRoot
+	}
+
+	tuner := &orchestrator.HyperAgentTuner{RepoRoot: repo}
+	res, err := tuner.AutoTune(repo, 3)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "autotune failed: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+

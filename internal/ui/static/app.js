@@ -4423,6 +4423,36 @@ switchTab("home");
     });
   }
 
+  const tuneBtn = document.getElementById("orc-tune-btn");
+  if (tuneBtn) {
+    tuneBtn.addEventListener("click", async () => {
+      try {
+        tuneBtn.disabled = true;
+        tuneBtn.textContent = "⏳ Auto-Tuning...";
+        const repo = state.repo || "";
+        const res = await j(`/api/orchestrate/tune?repo=${encodeURIComponent(repo)}`, { method: "POST" });
+        tuneBtn.disabled = false;
+        tuneBtn.textContent = "⚡ Auto-Tune Routing";
+
+        if (res.error) {
+          alert("Auto-tune error: " + res.error);
+          return;
+        }
+
+        const insights = (res.insights_generated || []).join("\n• ");
+        if (insights) {
+          alert("⚡ HyperAgent Auto-Tune Applied:\n\n• " + insights);
+        } else {
+          alert("⚡ HyperAgent Auto-Tune: Current routing rules are already optimal for your execution history.");
+        }
+      } catch (err) {
+        tuneBtn.disabled = false;
+        tuneBtn.textContent = "⚡ Auto-Tune Routing";
+        alert("Auto-tune failed: " + err.message);
+      }
+    });
+  }
+
   function renderTournament(analysis) {
     if (!tournamentContent) return;
     if (!analysis || !analysis.by_kind || Object.keys(analysis.by_kind).length === 0) {
