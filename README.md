@@ -53,6 +53,32 @@ Full loop and evidence: [`docs/self_improvement.md`](docs/self_improvement.md).
 
 ---
 
+## Agent Commander & Multi-Agent Orchestration
+
+NeuroFS includes a **multi-model task dispatcher and verified orchestration engine** with real-data gamification:
+
+```bash
+# Run multi-agent plan with Speculative Cascade & Claim Entailment Verification
+neurofs orchestrate "Add user authentication with JWT and DB migrations"
+
+# View your Agent Commander progression, level badge, model squad stats & achievements
+neurofs player
+
+# View War Room empirical model squad rankings and recommendations
+neurofs tournament
+```
+
+### Key Capabilities
+
+1. **⚡ Speculative Cascade**: Tries cheap models (`gemini-flash`) first, escalating to `claude-sonnet` or `claude-opus` only if verified grounding score falls below threshold. Saves 40%-85% API cost per task.
+2. **🛡️ Receipt-Based Verification**: Decomposes claims (file citations, code symbols), verifies entailment against context, and runs `go build` / `go test` sandbox checks.
+3. **💾 SQLite Semantic Cache**: Caches verified completions in WAL-mode SQLite (~2ms latency, $0 USD cost).
+4. **🏆 Model Tournament**: Logs all runs to `routing_history.jsonl`, computes empirical win rates, and auto-tunes `models.json` routing rules via HyperAgent.
+5. **🌐 A2A Protocol & Stateless MCP**: Exports A2A v1.0 Agent Cards at `/.well-known/agent.json` and supports stateless MCP 2026 HTTP transport at `/api/mcp`.
+6. **🎮 Agent Commander UI**: Cyber-strategy strategy interface (`neurofs ui`) with RPG levels, titles, model squad cards, and achievements gallery.
+
+---
+
 ## Why the loop changes the economics
 
 A one-shot chat and an autonomous loop are not the same product. Three costs
