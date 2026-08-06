@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Gere2/neurofs/internal/atomicfile"
 )
 
 // PlayerState is the persistent game state, saved to ~/.neurofs/player.json.
@@ -163,6 +165,11 @@ func Load(dir string) (*PlayerState, error) {
 }
 
 // Save writes the player state to disk atomically.
+//
+// Atomicity is not a nicety here: player.json IS the whole progression, and
+// Load treats a parse failure as a hard error, so a torn write — a crash or a
+// full disk mid-save — does not degrade the state, it erases the player's
+// history. os.WriteFile truncates in place and cannot offer that guarantee.
 func (ps *PlayerState) Save(dir string) error {
 	ps.mu.RLock()
 	defer ps.mu.RUnlock()
@@ -175,7 +182,7 @@ func (ps *PlayerState) Save(dir string) error {
 		return err
 	}
 	path := filepath.Join(dir, "player.json")
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	return atomicfile.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 // AddXP grants experience points, handles leveling up, and records the event.

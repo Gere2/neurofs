@@ -264,3 +264,48 @@ func TestLoad_NoFile(t *testing.T) {
 		t.Errorf("expected fresh state with level 1, got %d", ps.Level)
 	}
 }
+
+// player.json is the entire progression and Load treats a parse failure as a
+// hard error, so Save must replace the file rather than truncate it in place.
+// Crash-safety itself needs fault injection to test directly; what is testable
+// is the property that provides it — the replacement goes through a rename, so
+// it succeeds even when the existing target is not itself writable, and never
+// leaves the previous contents partially overwritten.
+func TestSave_ReplacesRatherThanTruncates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "player.json")
+
+	first := NewPlayerState()
+	first.AddXP(10, "seed")
+	if err := first.Save(dir); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	second := NewPlayerState()
+	second.AddXP(999, "replacement")
+	if err := second.Save(dir); err != nil {
+		t.Fatalf("save over a read-only target must succeed via rename: %v", err)
+	}
+
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatalf("load after replace: %v", err)
+	}
+	if loaded.XP == 0 && loaded.Level == 1 {
+		t.Fatal("state did not survive the replacement")
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	for _, e := range entries {
+		if e.Name() != "player.json" {
+			t.Errorf("save left a stray file behind: %s", e.Name())
+		}
+	}
+}

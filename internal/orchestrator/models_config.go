@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Gere2/neurofs/internal/atomicfile"
 )
 
 // ModelEntry describes a single LLM available for dispatch.
@@ -168,7 +170,10 @@ func WriteModelsConfig(dir string, cfg ModelsConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o644)
+	// Atomic: this is the routing config every dispatch reads, and both the
+	// UI's save button and HyperAgentTuner rewrite it wholesale. A truncated
+	// models.json would take routing down until someone deleted it by hand.
+	return atomicfile.WriteFile(path, append(data, '\n'), 0o644)
 }
 
 // WriteDefaultConfig writes the default models.json to the given directory.
