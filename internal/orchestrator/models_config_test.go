@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -32,8 +33,13 @@ func TestEstimateCost(t *testing.T) {
 	}
 	cost := entry.EstimateCost(1000, 1000)
 	expected := (1000.0/1_000_000.0)*3.0 + (1000.0/1_000_000.0)*15.0
-	if cost != expected {
-		t.Errorf("expected cost %f, got %f", expected, cost)
+	// Compared with a tolerance, not ==: the two sides are the same algebra
+	// but not necessarily the same instruction sequence, so a build that
+	// contracts one of them into an FMA (as -covermode=atomic does) makes an
+	// exact comparison fail on the last bits — "expected 0.018000, got
+	// 0.018000".
+	if math.Abs(cost-expected) > 1e-12 {
+		t.Errorf("expected cost %v, got %v", expected, cost)
 	}
 }
 
