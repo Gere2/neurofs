@@ -12,6 +12,7 @@ import (
 
 	"github.com/Gere2/neurofs/internal/a2a"
 	"github.com/Gere2/neurofs/internal/config"
+	"github.com/Gere2/neurofs/internal/mcp"
 )
 
 // registerAPI wires every endpoint onto mux. The routes are flat and match
@@ -49,6 +50,8 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/api/player", getOnly(handlePlayer))
 	mux.HandleFunc("/.well-known/agent.json", getOnly(a2a.Handler("")))
 	mux.HandleFunc("/api/a2a/agent-card", getOnly(a2a.Handler("")))
+	mux.HandleFunc("/api/mcp", mcp.StatelessHandler("", ""))
+	mux.HandleFunc("/api/mcp/discover", getOnly(mcp.StatelessHandler("", "")))
 }
 
 // --------------------- method gates ---------------------
