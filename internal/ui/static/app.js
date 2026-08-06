@@ -4399,6 +4399,67 @@ switchTab("home");
     });
   }
 
+  const tournamentBtn = document.getElementById("orc-tournament-btn");
+  const tournamentDrawer = document.getElementById("orc-tournament-drawer");
+  const tournamentClose = document.getElementById("orc-tournament-close");
+  const tournamentContent = document.getElementById("orc-tournament-content");
+
+  if (tournamentClose) {
+    tournamentClose.addEventListener("click", () => {
+      if (tournamentDrawer) tournamentDrawer.style.display = "none";
+    });
+  }
+
+  if (tournamentBtn) {
+    tournamentBtn.addEventListener("click", async () => {
+      if (tournamentDrawer) tournamentDrawer.style.display = "block";
+      if (tournamentContent) tournamentContent.textContent = "Loading tournament analysis...";
+      try {
+        const analysis = await j("/api/orchestrate/tournament");
+        renderTournament(analysis);
+      } catch (err) {
+        if (tournamentContent) tournamentContent.textContent = "Failed to load tournament data: " + err.message;
+      }
+    });
+  }
+
+  function renderTournament(analysis) {
+    if (!tournamentContent) return;
+    if (!analysis || !analysis.by_kind || Object.keys(analysis.by_kind).length === 0) {
+      tournamentContent.innerHTML = `<p>No tournament records in <code>routing_history.jsonl</code> yet. Run orchestration tasks to populate empirical data.</p>`;
+      return;
+    }
+
+    let html = `<p style="margin-bottom: 12px;">Analyzed <strong>${analysis.total_records || 0}</strong> task executions across model squad.</p>`;
+
+    html += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 15px;">`;
+
+    for (const [kind, perfList] of Object.entries(analysis.by_kind)) {
+      const rec = (analysis.recommendations || {})[kind] || "none";
+      html += `
+        <div style="background: #121222; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; padding: 12px;">
+          <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <strong style="color: #00d4ff; text-transform: uppercase;">${kind}</strong>
+            <span style="font-size: 0.75rem; color: #00ff88;">Rec: <strong>${rec}</strong></span>
+          </div>
+      `;
+
+      perfList.forEach(p => {
+        html += `
+          <div style="font-size: 0.78rem; border-top: 1px solid rgba(255,255,255,0.05); padding: 4px 0; display: flex; justify-content: space-between;">
+            <span>${p.model}</span>
+            <span>Win: <strong>${(p.win_rate * 100).toFixed(0)}%</strong> | Ground: ${(p.mean_grounding * 100).toFixed(0)}% | $${p.mean_cost_usd.toFixed(4)}</span>
+          </div>
+        `;
+      });
+
+      html += `</div>`;
+    }
+
+    html += `</div>`;
+    tournamentContent.innerHTML = html;
+  }
+
   async function loadPlayerData() {
     try {
       const ps = await j("/api/player");

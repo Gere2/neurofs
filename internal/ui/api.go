@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Gere2/neurofs/internal/a2a"
 	"github.com/Gere2/neurofs/internal/config"
 )
 
@@ -45,6 +46,8 @@ func registerAPI(mux *http.ServeMux, allowedOrigins map[string]bool) {
 	mux.HandleFunc("/api/orchestrate/node/control", safePost(allowedOrigins, handleOrchestrateNodeControl))
 	mux.HandleFunc("/api/orchestrate/tournament", getOnly(handleOrchestrateTournament))
 	mux.HandleFunc("/api/player", getOnly(handlePlayer))
+	mux.HandleFunc("/.well-known/agent.json", getOnly(a2a.Handler("")))
+	mux.HandleFunc("/api/a2a/agent-card", getOnly(a2a.Handler("")))
 }
 
 // --------------------- method gates ---------------------

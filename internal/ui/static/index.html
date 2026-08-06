@@ -1010,8 +1010,22 @@
           <div class="v8-actions">
             <button type="submit" id="orc-submit-btn" class="btn primary">▶ Orchestrate Plan</button>
             <button type="button" id="orc-config-btn" class="btn secondary">⚙ Models & Router Config</button>
+            <button type="button" id="orc-tournament-btn" class="btn secondary">🏆 War Room (Tournament)</button>
           </div>
         </form>
+      </div>
+
+      <!-- Model Tournament Analytics Drawer -->
+      <div id="orc-tournament-drawer" class="v8-card" style="display: none; margin-top: 20px; border-color: #00d4ff;">
+        <div class="v8-card-header">
+          <h4>🏆 Model Tournament & Empirical Routing Analytics</h4>
+          <button type="button" id="orc-tournament-close" class="btn secondary" style="padding: 2px 8px;">✕ Close</button>
+        </div>
+        <div class="v8-card-body" style="margin-top: 10px;">
+          <div id="orc-tournament-content" style="font-size: 0.85rem; color: #a1a1aa;">
+            Loading tournament analysis...
+          </div>
+        </div>
       </div>
 
       <!-- Execution Progress Dashboard -->
