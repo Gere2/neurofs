@@ -160,6 +160,14 @@ check-economy: scan-self
 check-gate: scan-self
 	NEUROFS_EMBEDDING_PROVIDER=mock $(OUT_DIR)/$(BINARY) gate
 
+## g5-remeasure: Re-measure the G5 cross-shape evidence from a clean clone (run after any commit that touches code, docs or deps)
+g5-remeasure:
+	scripts/g5_remeasure.sh $(TAG)
+
+## g5-verify: Verify the committed G5 evidence the way CI does, from a fresh clone
+g5-verify:
+	scripts/g5_verify.sh
+
 ## corpora: Clone and index the cross-shape tuning corpora (pallets/click, vuejs/core) under /tmp — required before any multi-corpus `learn tune`; /tmp is wiped on reboot so re-run as needed
 corpora: build
 	@test -d /tmp/click || git clone --depth 1 https://github.com/pallets/click /tmp/click
