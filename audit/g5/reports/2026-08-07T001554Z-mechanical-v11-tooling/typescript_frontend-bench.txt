@@ -1,0 +1,42 @@
+NeuroFS — benchmark on /tmp/vue
+  questions : docs/g5_bench/vue.json
+
+  questions : 6
+  top-k     : 3
+
+  [✓] "How does Vue's reactivity system track and trigger dependencies?"
+       expects : packages/reactivity/src/dep.ts, packages/reactivity/src/effect.ts
+       matched : packages/reactivity/src/dep.ts (rank 1)
+       top 5   : packages/reactivity/src/dep.ts(17.18), packages/reactivity/src/effect.ts(13.54), packages/reactivity/src/arrayInstrumentations.ts(11.24), packages/runtime-core/src/apiLifecycle.ts(9.10), packages/reactivity/src/computed.ts(8.84)
+
+  [✓] "How does computed caching work in Vue reactivity?"
+       expects : packages/reactivity/src/computed.ts
+       matched : packages/reactivity/src/computed.ts (rank 1)
+       top 5   : packages/reactivity/src/computed.ts(15.78), packages/runtime-core/src/apiComputed.ts(11.14), packages/reactivity/src/effect.ts(11.02), README.md(10.84), packages/reactivity/src/dep.ts(10.43)
+
+  [✓] "How does the Vue renderer mount components and patch children?"
+       expects : packages/runtime-core/src/renderer.ts
+       matched : packages/runtime-core/src/renderer.ts (rank 1)
+       top 5   : packages/runtime-core/src/renderer.ts(21.61), packages/runtime-core/src/component.ts(17.78), packages/runtime-core/src/vnode.ts(16.36), packages/runtime-core/src/components/Suspense.ts(14.48), packages/runtime-core/src/compat/instanceChildren.ts(14.19)
+
+  [✓] "How is a Vue component instance set up with its props and setup function?"
+       expects : packages/runtime-core/src/component.ts
+       matched : packages/runtime-core/src/component.ts (rank 1)
+       top 5   : packages/runtime-core/src/component.ts(29.82), packages/runtime-core/src/componentPublicInstance.ts(28.09), packages/runtime-core/src/componentEmits.ts(25.26), packages/runtime-core/src/apiDefineComponent.ts(25.18), packages/runtime-core/src/compat/instance.ts(23.94)
+
+  [✓] "How does the Vue compiler transform a template AST and generate render code?"
+       expects : packages/compiler-core/src/compile.ts, packages/compiler-core/src/transform.ts, packages/compiler-core/src/codegen.ts
+       matched : packages/compiler-core/src/compile.ts (rank 3)
+       top 5   : packages/compiler-core/src/ast.ts(20.78), packages/compiler-ssr/src/ssrCodegenTransform.ts(19.00), packages/compiler-core/src/compile.ts(18.50), packages/compiler-core/src/transform.ts(17.50), packages/compiler-sfc/src/compileTemplate.ts(17.18)
+
+  [✓] "How do nextTick and the scheduler job queue work in Vue?"
+       expects : packages/runtime-core/src/scheduler.ts
+       matched : packages/runtime-core/src/scheduler.ts (rank 1)
+       top 5   : packages/runtime-core/src/scheduler.ts(27.02), README.md(11.33), packages/vue-compat/src/createCompatVue.ts(10.04), packages-private/dts-test/scheduler.test-d.ts(8.71), packages/vue-compat/src/index.ts(8.51)
+
+  summary:
+    hits      : 6 / 6
+    top-1     : 83.3%
+    top-3     : 100.0%
+    top-5     : 100.0%
+    mean rank : 1.33 (hits only)
