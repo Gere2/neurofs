@@ -49,6 +49,12 @@ unset NEUROFS_MOCK_SEMANTIC
   --g5-attest --g5-engine-root "$ENGINE" --out "$REPORT_DIR/gate.json"
 ```
 
+> Use `make g5-remeasure` and then, after committing, `make g5-verify`. They
+> encode this whole procedure including both traps below, so the manual steps
+> that follow are the contract they implement rather than something to run by
+> hand. Re-measure after **any** commit touching code, docs or dependencies:
+> the digest covers all of them.
+
 **Measure the Go shape from a clean checkout, not your working tree.** G5
 binds `target_source_tree_sha256` to the *indexed* tree, and `audit/` is
 indexed while `audit/bundles/` and `audit/records/` are gitignored. A working
