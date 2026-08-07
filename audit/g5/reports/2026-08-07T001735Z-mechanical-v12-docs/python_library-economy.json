@@ -1,0 +1,217 @@
+{
+  "repo": "/tmp/click",
+  "search_limit": 8,
+  "summary": {
+    "tasks": 5,
+    "fact_tasks": 5,
+    "scored": 5,
+    "search_miss": 0,
+    "mean_tokens_neurofs": 3815,
+    "mean_tokens_native": 30962,
+    "mean_recall_neurofs": 0.6666666666666666,
+    "mean_recall_native": 0.8666666666666668,
+    "overall_recall_neurofs": 0.6666666666666666,
+    "miss_rate": 0,
+    "mean_token_reduction": 0.7146885693968417,
+    "median_token_reduction": 0.8959047191436066,
+    "threshold": 0.25,
+    "verdict": "PASS",
+    "detail": "mean iso-recall token reduction 71.5% \u003e= 25% (B 3815 tok vs native 30962 tok); overall recall 67% over 5 fact tasks, 0 miss"
+  },
+  "tasks": [
+    {
+      "question": "How does click create and manage the Context object during command invocation?",
+      "source": "context.json",
+      "neurofs": {
+        "tokens": 4405,
+        "recall": 1,
+        "files": [
+          "src/click/decorators.py",
+          "src/click/core.py",
+          "docs/commands-and-groups.md",
+          "docs/complex.md",
+          "README.md",
+          "docs/api.md"
+        ],
+        "facts_hit": [
+          "make_context",
+          "resilient_parsing",
+          "class Context"
+        ]
+      },
+      "native_iso": {
+        "tokens": 42317,
+        "recall": 1,
+        "files": [
+          "src/click/decorators.py",
+          "src/click/core.py"
+        ],
+        "facts_hit": [
+          "make_context",
+          "resilient_parsing",
+          "class Context"
+        ]
+      },
+      "token_reduction": 0.8959047191436066,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How do click command and option decorators work?",
+      "source": "decorators.json",
+      "neurofs": {
+        "tokens": 3663,
+        "recall": 0.6666666666666666,
+        "files": [
+          "src/click/decorators.py",
+          "docs/options.md",
+          "src/click/core.py",
+          "docs/commands-and-groups.md",
+          "docs/api.md",
+          "docs/option-decorators.md"
+        ],
+        "facts_hit": [
+          "def command",
+          "def option"
+        ]
+      },
+      "native_iso": {
+        "tokens": 5420,
+        "recall": 1,
+        "files": [
+          "src/click/decorators.py"
+        ],
+        "facts_hit": [
+          "def command",
+          "def option",
+          "def pass_context"
+        ]
+      },
+      "token_reduction": 0.32416974169741697,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does click parse command line arguments?",
+      "source": "parsing.json",
+      "neurofs": {
+        "tokens": 2706,
+        "recall": 0.6666666666666666,
+        "files": [
+          "docs/arguments.md",
+          "src/click/core.py",
+          "src/click/decorators.py",
+          "docs/commands-and-groups.md",
+          "README.md",
+          "docs/command-line-reference.md"
+        ],
+        "facts_hit": [
+          "class Command",
+          "class Argument"
+        ]
+      },
+      "native_iso": {
+        "tokens": 38146,
+        "recall": 1,
+        "files": [
+          "docs/arguments.md",
+          "src/click/core.py"
+        ],
+        "facts_hit": [
+          "def parse_args",
+          "class Command",
+          "class Argument"
+        ]
+      },
+      "token_reduction": 0.9290620248518848,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How does the click testing runner invoke commands and capture output?",
+      "source": "testing.json",
+      "neurofs": {
+        "tokens": 4028,
+        "recall": 0.3333333333333333,
+        "files": [
+          "tests/conftest.py",
+          "docs/commands-and-groups.md",
+          "tests/test_commands.py",
+          "src/click/testing.py",
+          "src/click/core.py",
+          "src/click/decorators.py"
+        ],
+        "facts_hit": [
+          "def invoke"
+        ]
+      },
+      "native_iso": {
+        "tokens": 7967,
+        "recall": 0.3333333333333333,
+        "files": [
+          "tests/conftest.py",
+          "docs/commands-and-groups.md",
+          "tests/test_commands.py"
+        ],
+        "facts_hit": [
+          "def invoke"
+        ]
+      },
+      "token_reduction": 0.4944144596460399,
+      "has_facts": true,
+      "scored": true
+    },
+    {
+      "question": "How are option parameter types defined and converted in click?",
+      "source": "types.json",
+      "neurofs": {
+        "tokens": 4274,
+        "recall": 0.6666666666666666,
+        "files": [
+          "src/click/decorators.py",
+          "src/click/types.py",
+          "docs/options.md",
+          "docs/parameters.md",
+          "src/click/core.py",
+          "docs/parameter-types.md"
+        ],
+        "facts_hit": [
+          "class Option",
+          "class ParamType"
+        ]
+      },
+      "native_iso": {
+        "tokens": 60963,
+        "recall": 1,
+        "files": [
+          "src/click/decorators.py",
+          "src/click/types.py",
+          "docs/options.md",
+          "docs/parameters.md",
+          "src/click/core.py"
+        ],
+        "facts_hit": [
+          "class Option",
+          "def get_default",
+          "class ParamType"
+        ]
+      },
+      "token_reduction": 0.9298919016452603,
+      "has_facts": true,
+      "scored": true
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "eddefbb7cf8dd6fb446a47b0d374ae922cb55d2b8522398c6ee2c39fda505a27",
+    "engine_source_tree_sha256": "3b41d49fbd8c29b67c964d78a00c9b35565e6c6a4415608e1e62af679657a224",
+    "target_source_tree_sha256": "97467676467db9bf8ba319060c42ce681b33e574c22c8134b8518035c4eb8091",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "d4d207777871fddc83ededbee0af22dab85ca21bc645c5296a88bbcd225e68c4",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "00e592cea702e0b2caa0dee42489fdb1c22cd845",
+    "repo_remote_url": "https://github.com/pallets/click",
+    "repo_dirty": false
+  }
+}

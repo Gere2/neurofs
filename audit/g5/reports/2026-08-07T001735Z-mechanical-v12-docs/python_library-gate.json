@@ -1,0 +1,204 @@
+{
+  "criteria": [
+    {
+      "id": "G1",
+      "name": "Real-use signal",
+      "verdict": "SKIP",
+      "detail": "no human-rated entries yet — run `neurofs task --rate` to produce them",
+      "numbers": {
+        "ignored_non_human": 0
+      }
+    },
+    {
+      "id": "G2",
+      "name": "Budget discipline",
+      "verdict": "PASS",
+      "detail": "5 bundles, no overshoot; median utilisation 93%, p95 99%",
+      "numbers": {
+        "bundles": 5,
+        "median_util": 0.93275,
+        "overshoots": 0,
+        "p95_util": 0.992375
+      }
+    },
+    {
+      "id": "G3",
+      "name": "Fact recovery",
+      "verdict": "PASS",
+      "detail": "mean recall 80% over 5 fixtures (threshold 80%); 2 perfect",
+      "numbers": {
+        "failed": 0,
+        "fixtures": 5,
+        "mean_recall": 0.7999999999999999,
+        "min_fixtures": 5,
+        "min_recall": 0.8,
+        "perfect": 2,
+        "worst_recall": 0.6666666666666666
+      }
+    },
+    {
+      "id": "G4",
+      "name": "Replay drift",
+      "verdict": "SKIP",
+      "detail": "no drift evidence — run `neurofs audit replay`, save bundle+response pairs under audit/, or enable the grounding hook"
+    },
+    {
+      "id": "G5",
+      "name": "Cross-shape sanity",
+      "verdict": "SKIP",
+      "detail": "no cross-shape evidence available"
+    }
+  ],
+  "overall": "SKIP",
+  "g3_details": [
+    {
+      "fixture": {
+        "question": "How does click create and manage the Context object during command invocation?",
+        "expects_facts": [
+          "make_context",
+          "resilient_parsing",
+          "class Context"
+        ],
+        "source_path": "docs/g5_fixtures/click/context.json"
+      },
+      "recall": 1,
+      "hits": [
+        "make_context",
+        "resilient_parsing",
+        "class Context"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How do click command and option decorators work?",
+        "expects_facts": [
+          "def command",
+          "def option",
+          "def pass_context"
+        ],
+        "source_path": "docs/g5_fixtures/click/decorators.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "def command",
+        "def option"
+      ],
+      "misses": [
+        "def pass_context"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "How does click parse command line arguments?",
+        "expects_facts": [
+          "def parse_args",
+          "class Command",
+          "class Argument"
+        ],
+        "source_path": "docs/g5_fixtures/click/parsing.json"
+      },
+      "recall": 1,
+      "hits": [
+        "def parse_args",
+        "class Command",
+        "class Argument"
+      ],
+      "misses": null
+    },
+    {
+      "fixture": {
+        "question": "How does the click testing runner invoke commands and capture output?",
+        "expects_facts": [
+          "class CliRunner",
+          "def invoke",
+          "def isolation"
+        ],
+        "source_path": "docs/g5_fixtures/click/testing.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "class CliRunner",
+        "def invoke"
+      ],
+      "misses": [
+        "def isolation"
+      ]
+    },
+    {
+      "fixture": {
+        "question": "How are option parameter types defined and converted in click?",
+        "expects_facts": [
+          "class Option",
+          "def get_default",
+          "class ParamType"
+        ],
+        "source_path": "docs/g5_fixtures/click/types.json"
+      },
+      "recall": 0.6666666666666666,
+      "hits": [
+        "class Option",
+        "class ParamType"
+      ],
+      "misses": [
+        "def get_default"
+      ]
+    }
+  ],
+  "g5_metadata": {
+    "binary_sha256": "eddefbb7cf8dd6fb446a47b0d374ae922cb55d2b8522398c6ee2c39fda505a27",
+    "engine_source_tree_sha256": "3b41d49fbd8c29b67c964d78a00c9b35565e6c6a4415608e1e62af679657a224",
+    "target_source_tree_sha256": "97467676467db9bf8ba319060c42ce681b33e574c22c8134b8518035c4eb8091",
+    "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+    "fixture_set_sha256": "d4d207777871fddc83ededbee0af22dab85ca21bc645c5296a88bbcd225e68c4",
+    "embedding_provider": "mock",
+    "embedding_model": "mock-lcg",
+    "mock_semantic": false,
+    "repo_commit_sha": "00e592cea702e0b2caa0dee42489fdb1c22cd845",
+    "repo_remote_url": "https://github.com/pallets/click",
+    "repo_dirty": false
+  },
+  "g5_gate_invocation": {
+    "fixture_budget": 8000,
+    "no_chunks": false,
+    "max_fixtures": 0,
+    "skip_fixtures": false,
+    "fixture_bundles": [
+      {
+        "fixture_source": "context.json",
+        "question_sha256": "88dc558fd4497a5c44dd53106440402941f50b5d44394b11b9ea9aa35b7424aa",
+        "bundle_hash": "c975240a016616e26f2ffbae8cd59292249b5a6d8f9c7eba538470f161866ff4",
+        "tokens_used": 7913,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "decorators.json",
+        "question_sha256": "a0c023f293a7ff75478afdd38fa26fedd1e2d1b00c688ec3f0ad14cc92eb7685",
+        "bundle_hash": "8598c76a7a59dc826731da74d06c8fd8d2b9c236f138553f40610b54746cf371",
+        "tokens_used": 7462,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "parsing.json",
+        "question_sha256": "ea210af85af95c4e49486802bbc90d0900b687a4100bce442f567e53a28598da",
+        "bundle_hash": "05eb15429217e71b424bfbe9b1fe3cac8402af3204bbaaf65f914d0970151124",
+        "tokens_used": 6851,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "testing.json",
+        "question_sha256": "2eb3267f002dfe8781660903c16c432603283521a5c0c5771eeb3f972e9d01b0",
+        "bundle_hash": "a0929d7bb88218a7930613a9f7c5bf27a10f7929fffa6e0856f56e6e170b8ff1",
+        "tokens_used": 7428,
+        "tokens_budget": 8000
+      },
+      {
+        "fixture_source": "types.json",
+        "question_sha256": "2a876d73a6210136ab2b54d5547ae33984ad4b2cff156283be50ed596dce9fda",
+        "bundle_hash": "05303a3f3acb54fd694cdc719fe99b0de1d54ac1a2067d1d7ec1e12389c57598",
+        "tokens_used": 7939,
+        "tokens_budget": 8000
+      }
+    ]
+  }
+}
