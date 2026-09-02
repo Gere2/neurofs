@@ -40,6 +40,12 @@ type Weights struct {
 	// weights with fixed candidate values, so only measured cross-corpus
 	// evidence turns it on.
 	ImplKind float64 `json:"impl_kind"`
+	// HeadingPathMatch boosts a document section whose heading chain names a
+	// query term exactly — query "S6.1" against "Roadmap/Sprint S6/S6.1
+	// Cancelación". Section identifiers like that are invisible to BM25:
+	// they tokenise away to nothing, so before this the ranker had no way to
+	// prefer the requested subsection over its siblings.
+	HeadingPathMatch float64 `json:"heading_path_match"`
 
 	// Penalties.
 	LongChunkPenaltyMax float64 `json:"long_chunk_penalty_max"`
@@ -53,6 +59,16 @@ type Weights struct {
 	// no longer the binding constraint once impl_kind landed. Kept for
 	// re-exploration as fixtures grow.
 	LegacyPathKeep float64 `json:"legacy_path_keep"`
+	// PathAffinityKeep is the keep-fraction applied to chunks that live
+	// outside the dominant top-1 directory and are not imported by the
+	// top-1 file. It only engages when one result clearly dominates the
+	// ranking (see pathAffinityDominanceRatio): a decisive top hit means
+	// the question has a home directory, and results from unrelated trees
+	// are lexical collisions rather than answers. Measured origin: on
+	// raiz-app, a query answered by apps/brain/lib/inventory/consumption/
+	// at score 110 also pulled apps/brain/lib/gmail/oauth.ts at 21 on the
+	// word "identity" alone.
+	PathAffinityKeep float64 `json:"path_affinity_keep"`
 }
 
 const maxWeightsFileSize int64 = 1 << 20
@@ -77,6 +93,7 @@ func DefaultWeights() Weights {
 		ExactFilename:           4.25,
 		Graph:                   1.25,
 		ImplKind:                0.0,
+		HeadingPathMatch:        10.0,
 		LongChunkPenaltyMax:     4.0,
 		TestDownrank:            0.72,
 		// Neutral by default: downranking tiny chunks was A/B-tested on
@@ -84,8 +101,9 @@ func DefaultWeights() Weights {
 		// at keep=0.7, tokens up on every shape (tiny stubs are cheap).
 		// The knob stays so the tuner can re-explore it as fixtures grow,
 		// but only evidence should ever move it off 1.0.
-		TinyChunkKeep:  1.0,
-		LegacyPathKeep: 1.0,
+		TinyChunkKeep:    1.0,
+		LegacyPathKeep:   1.0,
+		PathAffinityKeep: 0.6,
 	}
 }
 
@@ -157,6 +175,7 @@ func (w *Weights) Clamp() {
 	clampBoost(&w.ExactFilename)
 	clampBoost(&w.Graph)
 	clampBoost(&w.ImplKind)
+	clampBoost(&w.HeadingPathMatch)
 	clampBoost(&w.LongChunkPenaltyMax)
 	if w.TestDownrank <= 0.05 {
 		w.TestDownrank = 0.05
@@ -175,5 +194,11 @@ func (w *Weights) Clamp() {
 	}
 	if w.LegacyPathKeep > 1.0 {
 		w.LegacyPathKeep = 1.0
+	}
+	if w.PathAffinityKeep <= 0.05 {
+		w.PathAffinityKeep = 0.05
+	}
+	if w.PathAffinityKeep > 1.0 {
+		w.PathAffinityKeep = 1.0
 	}
 }

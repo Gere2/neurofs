@@ -53,9 +53,12 @@ Full loop and evidence: [`docs/self_improvement.md`](docs/self_improvement.md).
 
 ---
 
-## Agent Commander & Multi-Agent Orchestration
+## Experimental extension: Agent Commander
 
-NeuroFS includes a **multi-model task dispatcher and verified orchestration engine** with real-data gamification:
+NeuroFS also contains an optional multi-model dispatcher and Agent Commander
+interface. This is an experimental extension, not part of the core context and
+verification contract described above; NeuroFS remains usable without it and
+does not need to own an agent's loop.
 
 ```bash
 # Run multi-agent plan with Speculative Cascade & Claim Entailment Verification
@@ -70,7 +73,10 @@ neurofs tournament
 
 ### Key Capabilities
 
-1. **⚡ Speculative Cascade**: Tries cheap models (`gemini-flash`) first, escalating to `claude-sonnet` or `claude-opus` only if verified grounding score falls below threshold. Saves 40%-85% API cost per task.
+1. **⚡ Speculative Cascade**: Tries configured lower-cost models first and can
+   escalate when verification falls below a threshold. Cost impact is workload-
+   and provider-dependent; treat locally recorded routing evidence as the source
+   of truth rather than assuming a fixed saving.
 2. **🛡️ Receipt-Based Verification**: Decomposes claims (file citations, code symbols), verifies entailment against context, and runs `go build` / `go test` sandbox checks.
 3. **💾 SQLite Semantic Cache**: Caches verified completions in WAL-mode SQLite (~2ms latency, $0 USD cost).
 4. **🏆 Model Tournament**: Logs all runs to `routing_history.jsonl`, computes empirical win rates, and auto-tunes `models.json` routing rules via HyperAgent.

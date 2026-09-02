@@ -137,17 +137,21 @@ type FileRelation struct {
 
 // Chunk represents a logic block of code within a file.
 type Chunk struct {
-	ID            int64     `json:"id"`
-	FilePath      string    `json:"file_path"`
-	ChunkID       string    `json:"chunk_id"`
-	ParentID      string    `json:"parent_id"`
-	Kind          string    `json:"kind"`
-	Symbol        string    `json:"symbol"`
-	StartLine     int       `json:"start_line"`
-	EndLine       int       `json:"end_line"`
-	Content       string    `json:"content"`
-	ContentHash   string    `json:"content_hash"`
-	ASTHash       string    `json:"ast_hash"`
+	ID          int64  `json:"id"`
+	FilePath    string `json:"file_path"`
+	ChunkID     string `json:"chunk_id"`
+	ParentID    string `json:"parent_id"`
+	Kind        string `json:"kind"`
+	Symbol      string `json:"symbol"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	Content     string `json:"content"`
+	ContentHash string `json:"content_hash"`
+	ASTHash     string `json:"ast_hash"`
+	// HeadingPath is the chain of parent headings for a document section,
+	// slash-joined ("Roadmap/Sprint S6/S6.1 Cancelación"). Empty for code
+	// chunks and for documents without headings.
+	HeadingPath   string    `json:"heading_path,omitempty"`
 	Calls         []string  `json:"calls,omitempty"`
 	TokenEstimate int       `json:"token_estimate"`
 	IndexedAt     time.Time `json:"indexed_at"`

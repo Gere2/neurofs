@@ -41,14 +41,24 @@ type Hit struct {
 // Entry is one retrieval served to a consumer.
 type Entry struct {
 	runid.Availability
-	Timestamp time.Time `json:"ts"`
-	ID        string    `json:"id"`
-	Source    string    `json:"source"` // "mcp" or "cli"
-	Tool      string    `json:"tool"`   // e.g. "neurofs_search", "neurofs_context"
-	Query     string    `json:"query"`
-	Mode      string    `json:"mode,omitempty"` // search mode or context route
-	Hits      []Hit     `json:"hits,omitempty"`
-	Tokens    int       `json:"tokens"` // token estimate of the delivered context
+	SchemaVersion     int       `json:"schema_version,omitempty"`
+	Timestamp         time.Time `json:"ts"`
+	ID                string    `json:"id"`
+	SessionID         string    `json:"session_id,omitempty"`
+	ParentRetrievalID string    `json:"parent_retrieval_id,omitempty"`
+	Source            string    `json:"source"` // "mcp" or "cli"
+	Tool              string    `json:"tool"`   // e.g. "neurofs_search", "neurofs_context"
+	Query             string    `json:"query"`
+	Mode              string    `json:"mode,omitempty"` // search mode or context route
+	Hits              []Hit     `json:"hits,omitempty"`
+	HitTokens         int       `json:"hit_tokens,omitempty"`
+	PayloadBytes      int       `json:"payload_bytes,omitempty"`
+	PayloadTokens     int       `json:"payload_tokens,omitempty"`
+	LatencyMS         int64     `json:"latency_ms,omitempty"`
+	// Tokens remains the compatibility field consumed by older reports. New
+	// producers set it to PayloadTokens: what crossed the MCP boundary, not
+	// the sum of estimates attached to ranked hits.
+	Tokens int `json:"tokens"`
 }
 
 // Feedback ratings mirror quality's yes/no plus "partial" for retrievals
@@ -71,6 +81,36 @@ type Feedback struct {
 	UsefulSymbols []string  `json:"useful_symbols,omitempty"`
 	MissingFacts  []string  `json:"missing_facts,omitempty"`
 	Comment       string    `json:"comment,omitempty"`
+	ActorKind     string    `json:"actor_kind,omitempty"`
+}
+
+// NewEntry creates the identifiers used to correlate a retrieval, its
+// follow-up expansions, and the feedback that closes the loop. These IDs are
+// independent of run attribution: a long-lived MCP process cannot safely use
+// a launcher run id, while every served response can safely carry its own id.
+func NewEntry(source, tool, query, mode, sessionID, parentID string, now time.Time) Entry {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	} else {
+		now = now.UTC()
+	}
+	key := strings.Join([]string{source, tool, query, mode, parentID}, "|")
+	id := "r_" + entryID(now, key)
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = "s_" + entryID(now, "session|"+key)
+	}
+	return Entry{
+		SchemaVersion:     2,
+		Timestamp:         now,
+		ID:                id,
+		SessionID:         sessionID,
+		ParentRetrievalID: strings.TrimSpace(parentID),
+		Source:            source,
+		Tool:              tool,
+		Query:             query,
+		Mode:              mode,
+	}
 }
 
 // Path returns the usage ledger location for repoRoot.
@@ -102,6 +142,9 @@ func AppendContext(ctx context.Context, repoRoot string, e Entry) (Entry, error)
 	}
 	if e.ID == "" {
 		e.ID = entryID(e.Timestamp, e.Query)
+	}
+	if e.SchemaVersion == 0 && (e.SessionID != "" || e.PayloadTokens != 0 || e.PayloadBytes != 0) {
+		e.SchemaVersion = 2
 	}
 	if err := appendJSONL(Path(repoRoot), e); err != nil {
 		return e, err
@@ -148,6 +191,22 @@ func MatchEntry(entries []Entry, q string) (Entry, bool) {
 	q = strings.ToLower(strings.TrimSpace(q))
 	for i := len(entries) - 1; i >= 0; i-- {
 		if q == "" || strings.ToLower(strings.TrimSpace(entries[i].Query)) == q {
+			return entries[i], true
+		}
+	}
+	return Entry{}, false
+}
+
+// MatchEntryByID resolves feedback to exactly one served retrieval. Prefer
+// this over query matching whenever a caller supplies the retrieval_id from a
+// search, context, or expansion response.
+func MatchEntryByID(entries []Entry, id string) (Entry, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Entry{}, false
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		if entries[i].ID == id {
 			return entries[i], true
 		}
 	}

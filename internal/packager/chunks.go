@@ -21,6 +21,10 @@ type ChunkHit struct {
 	TokenEstimate int
 	ContentHash   string
 	Snippet       string
+	// AlsoAt lists other paths holding byte-identical content, folded into
+	// this hit by retrieval's content dedupe. Rendered in the excerpt header
+	// so the bundle still cites every location the content lives at.
+	AlsoAt []string
 }
 
 // PackChunks assembles a context bundle directly from ranked code chunks.
@@ -128,6 +132,9 @@ func formatChunkExcerpt(hit ChunkHit, content string, hasSourceRange bool) strin
 	fmt.Fprintf(&sb, "// chunk: %s\n", label)
 	if hit.ContentHash != "" {
 		fmt.Fprintf(&sb, "// content_hash: %s\n", hit.ContentHash)
+	}
+	if len(hit.AlsoAt) > 0 {
+		fmt.Fprintf(&sb, "// also_at: %s\n", strings.Join(hit.AlsoAt, ", "))
 	}
 	sb.WriteString("\n")
 	sb.WriteString(strings.TrimRight(content, "\n"))

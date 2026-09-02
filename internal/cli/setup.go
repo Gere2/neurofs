@@ -24,10 +24,13 @@ const claudeMDBlock = `
 
 - Before reading whole files, ask NeuroFS first: use ` + "`neurofs_context`" + `
   (or ` + "`neurofs_search`" + `) to get targeted, citable excerpts.
+- Preserve the returned ` + "`session_id`" + ` across follow-up calls. Pass the
+  returned ` + "`retrieval_id`" + ` as ` + "`parent_retrieval_id`" + ` when an expansion or
+  another retrieval follows from it.
 - After finishing a task that used those results, call ` + "`neurofs_feedback`" + `
-  once: rating ` + "`yes`/`no`/`partial`" + `, the symbols/paths that actually
-  helped, and any identifier that should have been retrieved but wasn't.
-  Only name symbols you verified exist.
+  once with that exact ` + "`retrieval_id`" + `: rating ` + "`yes`/`no`/`partial`" + `,
+  the symbols/paths that actually helped, and any identifier that should have
+  been retrieved but wasn't. Only name symbols you verified exist.
 `
 
 // newSetupCmd wires a repo for the improve-through-use loop in one shot:

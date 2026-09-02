@@ -22,21 +22,25 @@ import (
 // Entry is one context event in a patch session.
 type Entry struct {
 	runid.Availability
-	Timestamp      time.Time `json:"timestamp"`
-	SessionID      string    `json:"session_id"`
-	Phase          string    `json:"phase"`
-	Command        string    `json:"command"`
-	Query          string    `json:"query,omitempty"`
-	BundlePath     string    `json:"bundle_path,omitempty"`
-	BundleHash     string    `json:"bundle_hash,omitempty"`
-	Path           string    `json:"path,omitempty"`
-	Mode           string    `json:"mode,omitempty"`
-	StartLine      int       `json:"start_line,omitempty"`
-	EndLine        int       `json:"end_line,omitempty"`
-	Hash           string    `json:"hash,omitempty"`
-	Tokens         int       `json:"tokens"`
-	BaselineTokens int       `json:"baseline_tokens,omitempty"`
-	Bytes          int       `json:"bytes,omitempty"`
+	Timestamp         time.Time `json:"timestamp"`
+	SessionID         string    `json:"session_id"`
+	RetrievalID       string    `json:"retrieval_id,omitempty"`
+	ParentRetrievalID string    `json:"parent_retrieval_id,omitempty"`
+	Phase             string    `json:"phase"`
+	Command           string    `json:"command"`
+	Query             string    `json:"query,omitempty"`
+	BundlePath        string    `json:"bundle_path,omitempty"`
+	BundleHash        string    `json:"bundle_hash,omitempty"`
+	Path              string    `json:"path,omitempty"`
+	Mode              string    `json:"mode,omitempty"`
+	StartLine         int       `json:"start_line,omitempty"`
+	EndLine           int       `json:"end_line,omitempty"`
+	Hash              string    `json:"hash,omitempty"`
+	Tokens            int       `json:"tokens"`
+	BaselineTokens    int       `json:"baseline_tokens,omitempty"`
+	Bytes             int       `json:"bytes,omitempty"`
+	PayloadBytes      int       `json:"payload_bytes,omitempty"`
+	LatencyMS         int64     `json:"latency_ms,omitempty"`
 }
 
 // Summary aggregates entries for a session.
@@ -166,7 +170,7 @@ func Summarise(sessionID string, entries []Entry, baselineTokens int) Summary {
 			s.SessionID = entry.SessionID
 		}
 		switch entry.Phase {
-		case "initial_bundle":
+		case "initial_bundle", "initial_context":
 			s.InitialTokens += entry.Tokens
 		case "expansion":
 			s.ExpansionTokens += entry.Tokens

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -68,8 +69,12 @@ type Hit struct {
 	TokenEstimate int      `json:"token_estimate"`
 	ContentHash   string   `json:"content_hash"`
 	Snippet       string   `json:"snippet"`
-	ChunkID       string   `json:"-"`
-	ParentID      string   `json:"-"`
+	// AlsoAt lists the other paths that hold byte-identical content, folded
+	// into this hit by dedupeSameContent. The chunk is served once; a caller
+	// looking for the copy it expected still sees where it lives.
+	AlsoAt   []string `json:"also_at,omitempty"`
+	ChunkID  string   `json:"-"`
+	ParentID string   `json:"-"`
 }
 
 type candidate struct {
@@ -381,6 +386,9 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 				addReason(&hit, "structural_import", impBoost)
 			}
 		}
+		if boost := headingPathBoost(chunk.HeadingPath, query, weights); boost > 0 {
+			addReason(&hit, "heading_path_match", boost)
+		}
 		if len(queryEmbedding) > 0 {
 			if chunkEmbedding, ok := chunkEmbeddings[chunk.ContentHash]; ok {
 				if sim := embeddings.CosineSimilarity(queryEmbedding, chunkEmbedding); sim >= semanticSimilarityThreshold {
@@ -406,6 +414,9 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	applyTinyChunkPenalty(candidates, weights)
 	applyTestPenalty(candidates, query, weights)
 	applyLegacyPathPenalty(candidates, query, weights)
+	// Last: path affinity reads the finished ranking to decide whether one
+	// result dominates, so every other boost and penalty must already be in.
+	applyPathAffinity(candidates, relations, weights)
 
 	hits := make([]Hit, 0, len(candidates))
 	for _, candidate := range candidates {
@@ -429,6 +440,7 @@ func (s *Session) Search(ctx context.Context, opts Options) (Response, error) {
 	})
 
 	hits = dedupeSameSymbol(hits)
+	hits = dedupeSameContent(hits)
 	rankedHits := hits
 
 	// Enforce diversity: allow at most 3 chunks per file in the final search results
@@ -495,6 +507,37 @@ func dedupeSameSymbol(hits []Hit) []Hit {
 		}
 		keptAt[k] = len(out)
 		out = append(out, h)
+	}
+	return out
+}
+
+// dedupeSameContent keeps one hit per content hash. Identical bytes reach
+// the ranker from several paths routinely — a generated file mirrored under
+// output/ and tmp/, a vendored copy, the same type re-declared in three
+// modules — and every extra copy spends bundle budget without carrying a
+// fact the first copy did not. Measured on raiz-app: `class Poster:` was
+// served twice from output/pdf/build_poster.py and tmp/pdfs/build_poster.py
+// under one hash. Hits must already be sorted by score, so the first
+// occurrence is the highest-scoring one and wins; the paths it displaces are
+// recorded in AlsoAt instead of being silently dropped.
+func dedupeSameContent(hits []Hit) []Hit {
+	keptAt := make(map[string]int, len(hits))
+	out := make([]Hit, 0, len(hits))
+	for _, h := range hits {
+		if h.ContentHash == "" {
+			out = append(out, h)
+			continue
+		}
+		i, seen := keptAt[h.ContentHash]
+		if !seen {
+			keptAt[h.ContentHash] = len(out)
+			out = append(out, h)
+			continue
+		}
+		if h.Path == out[i].Path || containsString(out[i].AlsoAt, h.Path) {
+			continue
+		}
+		out[i].AlsoAt = append(out[i].AlsoAt, h.Path)
 	}
 	return out
 }
@@ -818,6 +861,61 @@ func scoreChunkHit(rec models.FileRecord, chunk models.Chunk, snippet string, te
 // live — as opposed to declarations (types, aliases, re-export stubs).
 // Classes are deliberately neither: click's fixtures need class-header
 // chunks to compete on equal footing.
+// headingPathBoost rewards a document section whose heading chain names a
+// section identifier from the query verbatim — "S6.1", "D-09", "G5". Those
+// are exactly the tokens the lexical path cannot see: the tokeniser splits
+// them on punctuation and drops the sub-3-character fragments, so nothing
+// distinguishes "### S6.1 Cancelación" from any other section of the file.
+//
+// Ordinary heading words are deliberately NOT boosted here. A section chunk
+// carries its heading as its Symbol, so words like "packager" or "ranker"
+// already score through symbol_match; boosting them again on the heading
+// path double-counts one signal. Measured on this repo: the unrestricted
+// version lifted doc sections over the code the fixtures expect and cost
+// 16.7pp of search and context top-3 (75.0% → 58.3%). Restricted to
+// identifiers it is a pure addition — the ranking is unchanged except for
+// queries that name a subsection nothing else could find.
+//
+// The boost is flat and fires once per chunk: a heading match says "this is
+// the section you named", not "this section is n times more relevant".
+func headingPathBoost(headingPath, query string, w *Weights) float64 {
+	if headingPath == "" || w.HeadingPathMatch <= 0 {
+		return 0
+	}
+	queryIdentifiers := headingIdentifiers(query)
+	if len(queryIdentifiers) == 0 {
+		return 0
+	}
+	for _, segment := range strings.Split(headingPath, "/") {
+		for identifier := range headingIdentifiers(segment) {
+			if queryIdentifiers[identifier] {
+				return w.HeadingPathMatch
+			}
+		}
+	}
+	return 0
+}
+
+// headingIdentifiers returns the section identifiers in text: numbered
+// labels such as "s6.1", "d-09" or "g5" that carry a digit and that the
+// ranker's own tokeniser discards entirely. Anything the tokeniser keeps is
+// left out — those words already score through the normal lexical path.
+// Edge punctuation is trimmed so "S6.1," and "S6.1" are the same identifier.
+func headingIdentifiers(text string) map[string]bool {
+	identifiers := make(map[string]bool)
+	for _, field := range strings.Fields(strings.ToLower(text)) {
+		field = strings.Trim(field, ".,;:!?()[]{}\"'`*_#")
+		if len(field) < 2 || !strings.ContainsAny(field, "0123456789") {
+			continue
+		}
+		if len(ranking.Tokenise(field)) > 0 {
+			continue
+		}
+		identifiers[field] = true
+	}
+	return identifiers
+}
+
 func isImplementationKind(kind string) bool {
 	switch kind {
 	case "func", "export_func", "method", "nested_func", "get", "set":
@@ -1148,6 +1246,153 @@ func applyTestPenalty(candidates []candidate, query string, w *Weights) {
 		candidates[i].hit.Score = before * w.TestDownrank
 		addPenalty(&candidates[i].hit, "test_like_downrank", before-candidates[i].hit.Score)
 	}
+}
+
+const (
+	// pathAffinityDominanceRatio is how far the top hit must lead the probe
+	// rank before its directory is treated as the query's home. Below it the
+	// ranking has no clear winner and every result stays at full score.
+	pathAffinityDominanceRatio = 1.5
+	// pathAffinityProbeRank is the rank the top hit is compared against
+	// (1-based): #3 is far enough down to represent "the rest of the field"
+	// while still being present on short result sets. It counts distinct
+	// FILES, not chunks — see rankedFileOrder.
+	pathAffinityProbeRank = 3
+	// pathAffinityMinDepth is the shallowest anchor path affinity will use.
+	// The anchor is the parent of the top hit's directory — so sibling
+	// modules of one feature area, apps/brain/lib/inventory/{consumption,
+	// adapters}, stay inside it — but never broadens past this depth, which
+	// keeps shallow trees anchored on the top hit's own directory instead of
+	// a top-level directory that holds the whole repo.
+	pathAffinityMinDepth = 3
+)
+
+// applyPathAffinity downranks chunks that live outside the dominant top-1
+// directory. It engages only when one result decisively leads the field: a
+// decisive top hit means the question has a home in the tree, and results
+// from unrelated directories are lexical collisions on a generic word rather
+// than answers. Files the top hit imports are exempt — a caller reading the
+// winner needs its collaborators wherever they live. Measured origin on
+// raiz-app: a consumption-contract question answered by
+// apps/brain/lib/inventory/consumption/job-contract.ts at score ~110 also
+// carried apps/brain/lib/gmail/oauth.ts at ~21, matched on "identity" alone.
+// Multiplicative like the test and legacy downranks, so a genuinely isolated
+// answer elsewhere still survives when nothing competes with it.
+func applyPathAffinity(candidates []candidate, relations []models.FileRelation, w *Weights) {
+	if w.PathAffinityKeep >= 1.0 || len(candidates) < pathAffinityProbeRank {
+		return
+	}
+	ranked := rankedFileOrder(candidates)
+	if len(ranked) < pathAffinityProbeRank {
+		return
+	}
+	top := candidates[ranked[0]]
+	probe := candidates[ranked[pathAffinityProbeRank-1]]
+	if probe.hit.Score <= 0 || top.hit.Score < probe.hit.Score*pathAffinityDominanceRatio {
+		return
+	}
+	dominant := dominantPathPrefix(top.hit.Path)
+	if dominant == "" {
+		return
+	}
+	imported := importedPaths(relations, top.filePath)
+
+	for i := range candidates {
+		hit := &candidates[i].hit
+		if hit.Score <= 0 || pathWithinPrefix(hit.Path, dominant) {
+			continue
+		}
+		if imported[candidates[i].filePath] {
+			addReason(hit, "path_affinity_import_exempt", 0)
+			continue
+		}
+		addPenalty(hit, "path_affinity_downrank", hit.Score*(1-w.PathAffinityKeep))
+	}
+}
+
+// rankedFileOrder returns one candidate index per file — the file's best
+// chunk — in ranked order. Dominance has to be judged between files, not
+// between chunks: a file that answers the question usually owns the first
+// several chunk slots, so comparing chunk #1 against chunk #3 compares a file
+// against itself and no query ever looks dominant. Measured on a monorepo
+// fixture: chunk ranks put the winner at 52.50 and its own third chunk at
+// 35.75 (ratio 1.47, inert), while the file ranks put the runner-up file at
+// 20.25 (ratio 2.59) and the unrelated directories were correctly downranked.
+func rankedFileOrder(candidates []candidate) []int {
+	ranked := rankedCandidateOrder(candidates)
+	seen := make(map[string]bool, len(ranked))
+	best := make([]int, 0, len(ranked))
+	for _, i := range ranked {
+		if seen[candidates[i].filePath] {
+			continue
+		}
+		seen[candidates[i].filePath] = true
+		best = append(best, i)
+	}
+	return best
+}
+
+// rankedCandidateOrder returns the indices of scoring candidates ordered the
+// way Search orders its hits, so "the top hit" and "rank 3" mean the same
+// thing here as they do in the response.
+func rankedCandidateOrder(candidates []candidate) []int {
+	ranked := make([]int, 0, len(candidates))
+	for i := range candidates {
+		if candidates[i].hit.Score > 0 {
+			ranked = append(ranked, i)
+		}
+	}
+	sort.SliceStable(ranked, func(a, b int) bool {
+		x, y := candidates[ranked[a]].hit, candidates[ranked[b]].hit
+		if x.Score != y.Score {
+			return x.Score > y.Score
+		}
+		if x.Path != y.Path {
+			return x.Path < y.Path
+		}
+		return x.StartLine < y.StartLine
+	})
+	return ranked
+}
+
+// dominantPathPrefix returns the directory that anchors path affinity for a
+// top hit: the parent of its directory, floored at pathAffinityMinDepth so a
+// shallow tree anchors on the hit's own directory rather than on a top-level
+// directory that holds most of the repo. Files at the repo root return "" —
+// a root-level winner names no feature area to stay inside of.
+func dominantPathPrefix(relPath string) string {
+	dir := path.Dir(filepath.ToSlash(strings.TrimSpace(relPath)))
+	dir = strings.Trim(dir, "/")
+	if dir == "" || dir == "." {
+		return ""
+	}
+	segments := strings.Split(dir, "/")
+	if len(segments) > pathAffinityMinDepth {
+		segments = segments[:len(segments)-1]
+	}
+	return strings.Join(segments, "/")
+}
+
+// pathWithinPrefix reports whether relPath sits at or under prefix, matching
+// whole path segments so "apps/pos" never counts as inside "apps/po".
+func pathWithinPrefix(relPath, prefix string) bool {
+	relPath = filepath.ToSlash(relPath)
+	return relPath == prefix || strings.HasPrefix(relPath, prefix+"/")
+}
+
+// importedPaths returns the files sourcePath imports, keyed the way
+// candidate.filePath is (absolute paths, as stored in the relation graph).
+func importedPaths(relations []models.FileRelation, sourcePath string) map[string]bool {
+	if sourcePath == "" || len(relations) == 0 {
+		return nil
+	}
+	imported := make(map[string]bool)
+	for _, rel := range relations {
+		if rel.SourcePath == sourcePath {
+			imported[rel.TargetPath] = true
+		}
+	}
+	return imported
 }
 
 func seedPathsForCandidates(candidates []candidate, limit int) map[string]bool {

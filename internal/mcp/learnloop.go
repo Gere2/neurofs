@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/Gere2/neurofs/internal/tokenbudget"
 	"github.com/Gere2/neurofs/internal/usage"
 )
 
@@ -18,6 +20,8 @@ const feedbackInputSchema = `{
   "type": "object",
   "properties": {
     "rating":         { "type": "string", "enum": ["yes", "no", "partial"], "description": "Did the retrieved context serve the task? partial = helped but something was missing." },
+    "retrieval_id":   { "type": "string", "description": "Exact retrieval_id returned by neurofs_context, neurofs_search, or neurofs_expand. Preferred over query matching." },
+    "usage_id":       { "type": "string", "description": "Deprecated alias for retrieval_id." },
     "query":          { "type": "string", "description": "The query being rated. Default: the most recent logged retrieval." },
     "useful_paths":   { "type": "array", "items": { "type": "string" }, "description": "Repo-relative paths that were actually useful." },
     "useful_symbols": { "type": "array", "items": { "type": "string" }, "description": "Identifiers (functions, types, methods) that were actually useful." },
@@ -30,6 +34,8 @@ const feedbackInputSchema = `{
 
 type feedbackArgs struct {
 	Rating        string   `json:"rating"`
+	RetrievalID   string   `json:"retrieval_id"`
+	UsageID       string   `json:"usage_id"`
 	Query         string   `json:"query"`
 	UsefulPaths   []string `json:"useful_paths"`
 	UsefulSymbols []string `json:"useful_symbols"`
@@ -68,8 +74,23 @@ func runFeedbackTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		UsefulSymbols: trimNonEmpty(args.UsefulSymbols),
 		MissingFacts:  trimNonEmpty(args.Missing),
 		Comment:       strings.TrimSpace(args.Comment),
+		ActorKind:     "agent",
 	}
-	if matched, ok := usage.MatchEntry(entries, fb.Query); ok {
+	retrievalID := strings.TrimSpace(args.RetrievalID)
+	if retrievalID == "" {
+		retrievalID = strings.TrimSpace(args.UsageID)
+	}
+	if retrievalID != "" {
+		matched, ok := usage.MatchEntryByID(entries, retrievalID)
+		if !ok {
+			return errResult(fmt.Sprintf("retrieval_id %q was not found in the usage ledger", retrievalID))
+		}
+		if fb.Query != "" && !strings.EqualFold(fb.Query, strings.TrimSpace(matched.Query)) {
+			return errResult("query does not match the retrieval identified by retrieval_id")
+		}
+		fb.UsageID = matched.ID
+		fb.Query = matched.Query
+	} else if matched, ok := usage.MatchEntry(entries, fb.Query); ok {
 		fb.UsageID = matched.ID
 		if fb.Query == "" {
 			fb.Query = matched.Query
@@ -86,28 +107,25 @@ func runFeedbackTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	return jsonTextResult(map[string]any{
 		"recorded":       true,
 		"query":          fb.Query,
+		"retrieval_id":   fb.UsageID,
 		"usage_id":       fb.UsageID,
 		"feedback_count": len(feedbacks),
 		"next":           "run `neurofs learn promote` to fold feedback into fixtures, then `neurofs learn tune` to improve ranking weights",
 	})
 }
 
-// logSearchUsage appends one usage entry for a served retrieval. Logging is
-// best-effort by design: a full disk or read-only checkout must never fail
+// logSearchUsage appends one usage entry for a served retrieval. Payload
+// metrics describe the serialized response the consumer actually received;
+// HitTokens preserves the older estimate of the ranked context inside it.
+// Logging is best-effort: a full disk or read-only checkout must never fail
 // the retrieval the caller actually asked for.
-func logSearchUsage(ctx context.Context, repo, tool, query, mode string, hits []SearchResultHit, bundleTokens int) {
-	if strings.TrimSpace(query) == "" {
+func logSearchUsage(ctx context.Context, repo string, entry usage.Entry, hits []SearchResultHit, bundleTokens int, payload []byte) {
+	if strings.TrimSpace(entry.Query) == "" {
 		return
 	}
-	entry := usage.Entry{
-		Source: "mcp",
-		Tool:   tool,
-		Query:  query,
-		Mode:   mode,
-		Tokens: bundleTokens,
-	}
+	entry.HitTokens = bundleTokens
 	for _, h := range hits {
-		entry.Tokens += h.TokenEstimate
+		entry.HitTokens += h.TokenEstimate
 		entry.Hits = append(entry.Hits, usage.Hit{
 			Path:      h.Path,
 			Symbol:    h.Symbol,
@@ -116,6 +134,12 @@ func logSearchUsage(ctx context.Context, repo, tool, query, mode string, hits []
 			Score:     h.Score,
 			Reasons:   h.Reasons,
 		})
+	}
+	entry.PayloadBytes = len(payload)
+	entry.PayloadTokens = tokenbudget.EstimateTokens(string(payload))
+	entry.Tokens = entry.PayloadTokens
+	if elapsed := time.Since(entry.Timestamp); elapsed > 0 {
+		entry.LatencyMS = int64((elapsed + time.Millisecond - 1) / time.Millisecond)
 	}
 	_, _ = usage.AppendContext(ctx, repo, entry)
 }

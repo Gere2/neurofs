@@ -11,7 +11,7 @@ weights, fed by two append-only ledgers that fill themselves while you work.
  neurofs_context   usage.jsonl neurofs_  feedback+usage  audit/facts/     over weights, recall
  (every call       (query,    feedback   into fixtures   learned-*.json   first, tokens second
   logged free)      hits,     (useful/                                    --apply persists to
-                    tokens)    missing)                                    .neurofs/weights.json
+                    payload)   missing)                                    .neurofs/weights.json
                                                         └──── gate G3 reads the same fixtures ────┘
 ```
 
@@ -19,17 +19,21 @@ weights, fed by two append-only ledgers that fill themselves while you work.
 
 | piece | file | written by |
 |---|---|---|
-| usage ledger | `.neurofs/usage.jsonl` | every MCP `neurofs_search` / `neurofs_context` call |
+| usage ledger | `.neurofs/usage.jsonl` | every MCP `neurofs_search`, `neurofs_context`, and `neurofs_expand` call |
 | feedback ledger | `.neurofs/feedback.jsonl` | the `neurofs_feedback` MCP tool |
 | learned fixtures | `audit/facts/learned-*.json` | `neurofs learn promote` |
 | tuned weights | `.neurofs/weights.json` | `neurofs learn tune --apply` |
 
-- **Usage** records what retrieval delivered: query, ranked hits with their
-  reasons, token estimate. Logging is best-effort and never fails a search.
+- **Usage** records what retrieval delivered: an exact `retrieval_id`, its
+  `session_id` and optional parent, query, ranked hits and reasons, payload
+  bytes/tokens, hit-token estimate, and latency. Logging is best-effort and
+  never fails a retrieval.
 - **Feedback** is the post-task judgement: rating (`yes`/`no`/`partial`),
   which paths/symbols actually mattered, which identifiers were *missing*.
   A `no` with `missing` facts is the most valuable entry — it becomes the
-  strictest fixture.
+  strictest fixture. Pass the response's exact `retrieval_id`; query-only
+  matching remains available for compatibility but is unsafe when concurrent
+  agents ask the same question.
 - **Promote** turns each distinct judged query into a G3-style fixture
   (identifier-shaped facts, 6 max). Later feedback on the same query
   replaces earlier judgements at promote time; existing fixture files are
@@ -131,9 +135,12 @@ CLAUDE.md snippet for any repo where NeuroFS is registered:
 ## Retrieval
 - Before reading whole files, ask NeuroFS: use `neurofs_context` (or
   `neurofs_search`) to get targeted, citable excerpts.
+- Keep the returned `session_id`; pass `retrieval_id` as
+  `parent_retrieval_id` when expanding or asking a follow-up retrieval.
 - After finishing a task that used those results, call `neurofs_feedback`
-  once: rating yes/no/partial, the symbols/paths that actually helped, and
-  any identifier that should have been retrieved but wasn't.
+  once with that exact `retrieval_id`: rating yes/no/partial, the symbols/paths
+  that actually helped, and any identifier that should have been retrieved but
+  wasn't.
 ```
 
 ## Honesty constraints (read before trusting a tune)
