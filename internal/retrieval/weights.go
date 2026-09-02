@@ -43,14 +43,26 @@ type Weights struct {
 
 	// Penalties.
 	LongChunkPenaltyMax float64 `json:"long_chunk_penalty_max"`
-	TestDownrank        float64 `json:"test_downrank"`   // multiplicative keep-fraction in (0, 1]
-	TinyChunkKeep       float64 `json:"tiny_chunk_keep"` // multiplicative keep-fraction in (0, 1] for sub-40-token chunks
+	// TestDownrank, TinyChunkKeep and LegacyPathKeep are multiplicative
+	// keep-fractions in (0, 1]: a penalised chunk keeps exactly that
+	// fraction of its score, and 1.0 is neutral. Until 2026-09-02 all
+	// three helpers in search.go applied the fraction twice — they scaled
+	// the score and then handed addPenalty the difference, which
+	// addPenalty subtracts again — so the effective keep was 2*keep-1
+	// clamped at 0. Every measurement below that names a keep value was
+	// taken under that behaviour; the annotations say what was actually
+	// applied.
+	TestDownrank  float64 `json:"test_downrank"`
+	TinyChunkKeep float64 `json:"tiny_chunk_keep"` // sub-40-token chunks
 	// LegacyPathKeep is the keep-fraction for chunks under compat/legacy
 	// directories when the query does not ask for that surface. Neutral at
 	// 1.0 and measured to stay there (2026-07-04): the 3-corpus tuner
 	// declined 0.6/0.8, and a manual 0.3 probe left recall identical on
 	// every shape while raising vue tokens 758 → 1154 — compat stubs were
-	// no longer the binding constraint once impl_kind landed. Kept for
+	// no longer the binding constraint once impl_kind landed. Those probes
+	// ran double-applied, so they measured effective keeps of 0.2/0.6 and
+	// 0 (full suppression); "1.0 is where this belongs" survives, but no
+	// mild legacy downrank has actually been tested. Kept for
 	// re-exploration as fixtures grow.
 	LegacyPathKeep float64 `json:"legacy_path_keep"`
 }
@@ -82,6 +94,8 @@ func DefaultWeights() Weights {
 		// Neutral by default: downranking tiny chunks was A/B-tested on
 		// three corpora (2026-07-04) and lost — click recall 66.7% → 53.3%
 		// at keep=0.7, tokens up on every shape (tiny stubs are cheap).
+		// That probe was double-applied (effective keep 0.4), so what lost
+		// was a harsher penalty than its label; a true 0.7 is untested.
 		// The knob stays so the tuner can re-explore it as fixtures grow,
 		// but only evidence should ever move it off 1.0.
 		TinyChunkKeep:  1.0,

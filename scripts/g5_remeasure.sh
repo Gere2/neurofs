@@ -48,6 +48,17 @@ clone_pinned() {
 clone_pinned /tmp/click https://github.com/pallets/click "$(pinned python_library)" || exit 1
 clone_pinned /tmp/vue https://github.com/vuejs/core "$(pinned typescript_frontend)" || exit 1
 
+# Every measured shape is attested against the engine's weights, so each
+# corpus needs that exact weights.json on disk — the retained evidence
+# records one weights_sha256 shared by all three shapes. Unconditional: a
+# corpus already at the pinned SHA skips clone_pinned above and would
+# otherwise keep whatever (or nothing) it had. Without this the run dies at
+# the first corpus with "hash measured retrieval weights: no such file".
+for corpus in /tmp/click /tmp/vue; do
+  mkdir -p "$corpus/.neurofs"
+  cp "$REPO/.neurofs/weights.json" "$corpus/.neurofs/weights.json"
+done
+
 # Trap 1: a clean clone of the branch, not this working tree.
 git clone -q --branch "$BRANCH" "$REPO" "$WORK/engine"
 cd "$WORK/engine"
