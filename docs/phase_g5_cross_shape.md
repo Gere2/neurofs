@@ -241,6 +241,15 @@ Findings, in measured order:
    on every shape, vue recall unchanged. Tiny stubs are *cheap* tokens and
    sometimes *are* the answer. The knob ships neutral (`tiny_chunk_keep`
    = 1.0, tunable) so the weight tuner can re-explore it as fixtures grow.
+
+   > **Correction (2026-09-02).** The three keep-fraction penalties applied
+   > their fraction twice (fixed in `applyTestPenalty` /
+   > `applyLegacyPathPenalty` / `applyTinyChunkPenalty`; effective keep was
+   > `2*keep-1` clamped at 0). The `keep=0.7` A/B above therefore ran at an
+   > effective keep of **0.4**. The falsification stands — that penalty did
+   > lose — but it falsified a harsher downrank than its label says, and a
+   > true 0.7 has never been measured. The same applies to every
+   > keep-labelled probe on this page.
 4. **Out-of-sample validation of the applied weights.** The multi-corpus
    tuned weights (trained on NeuroFS + click) were tested on vue before any
    vue-specific work: recall identical to defaults (same 2 misses), economy
