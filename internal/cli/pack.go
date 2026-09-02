@@ -234,6 +234,7 @@ func chunkHitsFromSearch(searchRes retrieval.Response, files []models.FileRecord
 			TokenEstimate: hit.TokenEstimate,
 			ContentHash:   hit.ContentHash,
 			Snippet:       hit.Snippet,
+			AlsoAt:        hit.AlsoAt,
 		})
 	}
 	return hits
