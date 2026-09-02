@@ -1,0 +1,115 @@
+{
+ "schema_version": 2,
+ "measured_at": "2026-09-02T22:13:16Z",
+ "actor_kind": "agent",
+ "signal_kind": "mechanical_cross_shape",
+ "binary_sha256": "8704298bae5a7cf376a459b9b713cc89a64aff044e19052ce8488c37bf7846f5",
+ "weights_sha256": "3cfd56b31f7de94046d1495c019259e3ca27dea49b8a960da3aee20176d48a86",
+ "source_tree_sha256": "70fce734c6bccd447ab03351050a14033ed4fb09598028e51df557797809830a",
+ "run_config": {
+  "embedding_provider": "mock",
+  "embedding_model": "mock-lcg",
+  "economy_search_limit": 8,
+  "fixture_budget": 8000,
+  "no_chunks": false,
+  "mock_semantic": false
+ },
+ "shapes": [
+  {
+   "name": "NeuroFS",
+   "kind": "go_service",
+   "repo_url": "https://github.com/Gere2/neurofs.git",
+   "commit_sha": "56b2fcbbfa7ebff93fbd3ca91599762cc3df72b9",
+   "fixture_set_sha256": "a61a8990ed851c1a8514627b21da7231ac16db7f62394fd7244829fb0b4e4197",
+   "economy": {
+    "verdict": "PASS",
+    "mean_token_reduction": 0.6389534553216928,
+    "overall_recall": 0.769230769230769,
+    "miss_rate": 0.07692307692307693,
+    "report_sha256": "db8d97a21a608226c18a977015c5895c28c4febbe6b9e07ac6d8536382049628"
+   },
+   "g2": {
+    "verdict": "PASS",
+    "bundles": 13,
+    "overshoots": 0,
+    "report_sha256": "24c0717c54848d12b49cc40cdb96fc8fe2dd32a9bc9ffb7a70bdbbe198c1d405"
+   },
+   "g3": {
+    "verdict": "PASS",
+    "mean_recall": 0.8782051282051282,
+    "fixtures": 13,
+    "perfect": 9,
+    "report_sha256": "24c0717c54848d12b49cc40cdb96fc8fe2dd32a9bc9ffb7a70bdbbe198c1d405"
+   },
+   "bench": {
+    "questions": 12,
+    "top3_percent": 66.7,
+    "report_sha256": "f0fc812ee24acaec9a514bc70c8956e79669a3cd6d6f60d6c796ca381e4446ac"
+   }
+  },
+  {
+   "name": "pallets/click",
+   "kind": "python_library",
+   "repo_url": "https://github.com/pallets/click",
+   "commit_sha": "00e592cea702e0b2caa0dee42489fdb1c22cd845",
+   "fixture_set_sha256": "d4d207777871fddc83ededbee0af22dab85ca21bc645c5296a88bbcd225e68c4",
+   "economy": {
+    "verdict": "PASS",
+    "mean_token_reduction": 0.7146885693968417,
+    "overall_recall": 0.6666666666666666,
+    "miss_rate": 0,
+    "report_sha256": "47ac7761a9d2ed7f5677bfadf48cad3b1a24028420390573439741907867976d"
+   },
+   "g2": {
+    "verdict": "PASS",
+    "bundles": 5,
+    "overshoots": 0,
+    "report_sha256": "b1e1e0207203eebffa163261f362c5438ab306f60bb508e64384c97fc17b464d"
+   },
+   "g3": {
+    "verdict": "PASS",
+    "mean_recall": 0.7999999999999999,
+    "fixtures": 5,
+    "perfect": 2,
+    "report_sha256": "b1e1e0207203eebffa163261f362c5438ab306f60bb508e64384c97fc17b464d"
+   },
+   "bench": {
+    "questions": 5,
+    "top3_percent": 100,
+    "report_sha256": "c2c6a570b08b340820270b8116f521a98254fd67eab7d9e406fe0629e4dcbcb6"
+   }
+  },
+  {
+   "name": "vuejs/core",
+   "kind": "typescript_frontend",
+   "repo_url": "https://github.com/vuejs/core",
+   "commit_sha": "b5f8518379b77c3b62a7a9d2b52f6c76cda09bd5",
+   "fixture_set_sha256": "92733dbc37ce5e75306f4d4cc72e21f3886cbf66a9a7927391aadc70a583ddaa",
+   "economy": {
+    "verdict": "PASS",
+    "mean_token_reduction": 0.7280460934180363,
+    "overall_recall": 0.7222222222222222,
+    "miss_rate": 0,
+    "report_sha256": "fab9ea55b62ed8cf2c8b6ad85a07d712ecdd6a8ab947d9ad4ff48ea65e274477"
+   },
+   "g2": {
+    "verdict": "PASS",
+    "bundles": 6,
+    "overshoots": 0,
+    "report_sha256": "1a7b1660d54d7b64e92b14c27a4315b685b363d5d0745a602ff67e25042dca0f"
+   },
+   "g3": {
+    "verdict": "PASS",
+    "mean_recall": 0.8333333333333334,
+    "fixtures": 6,
+    "perfect": 4,
+    "report_sha256": "1a7b1660d54d7b64e92b14c27a4315b685b363d5d0745a602ff67e25042dca0f"
+   },
+   "bench": {
+    "questions": 6,
+    "top3_percent": 100,
+    "report_sha256": "0edc631bbd18c1a093b0bcad9e12f91bc637681c4c7237241428533dbfee0ebb"
+   }
+  }
+ ]
+}
