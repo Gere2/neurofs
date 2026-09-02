@@ -444,7 +444,7 @@ func runContextBenchmark(ctx context.Context, repo string, questions []benchmark
 			route = "(none)"
 		}
 		routes[route]++
-		structuralHints += len(resp.StructuralHints)
+		structuralHints += resp.StructuralHintCount
 
 		hitRank := 0
 		matched := ""
@@ -478,7 +478,7 @@ func runContextBenchmark(ctx context.Context, repo string, questions []benchmark
 			MatchedAt:       matched,
 			ContextTokens:   tokenCount,
 			Latency:         latency,
-			StructuralHints: len(resp.StructuralHints),
+			StructuralHints: resp.StructuralHintCount,
 		})
 	}
 

@@ -26,6 +26,8 @@ import (
 	"github.com/Gere2/neurofs/internal/runid"
 	"github.com/Gere2/neurofs/internal/storage"
 	"github.com/Gere2/neurofs/internal/taskflow"
+	"github.com/Gere2/neurofs/internal/tokenbudget"
+	"github.com/Gere2/neurofs/internal/usage"
 )
 
 const taskInputSchema = `{
@@ -74,7 +76,8 @@ const expandInputSchema = `{
     "path":       { "type": "string", "description": "Alias for target, for hosts that prefer path-shaped arguments." },
     "mode":       { "type": "string", "enum": ["auto", "outline", "excerpt", "full"], "description": "Expansion mode. Default: auto." },
     "hash":       { "type": "string", "description": "Require a matching current file/chunk content hash." },
-    "session_id": { "type": "string", "description": "Optional context usage session id for token measurement." },
+    "session_id": { "type": "string", "description": "Context session id returned by the parent retrieval. Generated when omitted." },
+    "parent_retrieval_id": { "type": "string", "description": "retrieval_id that caused this expansion." },
     "repo":       { "type": "string", "description": "Absolute path to repo. Default: cwd." }
   }
 }`
@@ -112,7 +115,9 @@ const searchInputSchema = `{
     "query": { "type": "string", "description": "Search query for relevant code chunks." },
     "repo":  { "type": "string", "description": "Absolute path to repo. Default: cwd." },
     "limit": { "type": "integer", "description": "Number of primary ranked hits. Direct search may append a bounded set of structural parent/implementation companions. Default: 8." },
-    "mode":  { "type": "string", "description": "Retrieval mode hint: research, build, review, or test." }
+    "mode":  { "type": "string", "description": "Retrieval mode hint: research, build, review, or test." },
+    "session_id": { "type": "string", "description": "Optional session id used to correlate related retrievals." },
+    "parent_retrieval_id": { "type": "string", "description": "Optional retrieval_id that led to this search." }
   },
   "required": ["query"]
 }`
@@ -124,7 +129,10 @@ const contextInputSchema = `{
     "repo":   { "type": "string", "description": "Absolute path to repo. Default: cwd." },
     "intent": { "type": "string", "description": "Routing hint: outline, search, excerpt, bundle, build, research, review, test, or unknown." },
     "budget": { "type": "integer", "description": "Token budget when the route needs a prompt bundle. Default: 3000." },
-    "limit":  { "type": "integer", "description": "Maximum chunk hits when the route uses search. Default: 8." }
+    "limit":  { "type": "integer", "description": "Maximum chunk hits when the route uses search. Default: 8." },
+    "session_id": { "type": "string", "description": "Optional session id used to correlate context, expansion, and feedback events." },
+    "parent_retrieval_id": { "type": "string", "description": "Optional retrieval_id that led to this context request." },
+    "debug": { "type": "boolean", "description": "Include detailed routing trace and structural matches. Default: false." }
   }
 }`
 
@@ -332,11 +340,14 @@ type taskAgentResponse struct {
 
 // ContextOptions configures the high-level broker used by neurofs_context.
 type ContextOptions struct {
-	Query  string `json:"query"`
-	Repo   string `json:"repo"`
-	Intent string `json:"intent"`
-	Budget int    `json:"budget"`
-	Limit  int    `json:"limit"`
+	Query             string `json:"query"`
+	Repo              string `json:"repo"`
+	Intent            string `json:"intent"`
+	Budget            int    `json:"budget"`
+	Limit             int    `json:"limit"`
+	SessionID         string `json:"session_id"`
+	ParentRetrievalID string `json:"parent_retrieval_id"`
+	Debug             bool   `json:"debug"`
 	// NeutralizeGitState is set by benchmarks (never over MCP): routed
 	// searches skip the working-set boost so measurements are
 	// tree-independent.
@@ -360,18 +371,25 @@ type ContextStructuralHint struct {
 
 // ContextResponse is the JSON payload returned by neurofs_context.
 type ContextResponse struct {
-	Query           string                  `json:"query,omitempty"`
-	Intent          string                  `json:"intent"`
-	Route           string                  `json:"route"`
-	ToolTrace       []ContextTraceStep      `json:"tool_trace"`
-	StructuralHints []ContextStructuralHint `json:"structural_hints,omitempty"`
-	Results         []SearchResultHit       `json:"results,omitempty"`
-	Text            string                  `json:"text,omitempty"`
-	Prompt          string                  `json:"prompt,omitempty"`
-	PromptPath      string                  `json:"prompt_path,omitempty"`
-	BundlePath      string                  `json:"bundle_path,omitempty"`
-	JoinKey         *runid.JoinKey          `json:"join_key,omitempty"`
-	Stats           *models.BundleStats     `json:"stats,omitempty"`
+	Query               string                  `json:"query,omitempty"`
+	Intent              string                  `json:"intent"`
+	Route               string                  `json:"route"`
+	RetrievalID         string                  `json:"retrieval_id,omitempty"`
+	SessionID           string                  `json:"session_id,omitempty"`
+	ParentRetrievalID   string                  `json:"parent_retrieval_id,omitempty"`
+	ToolTrace           []ContextTraceStep      `json:"tool_trace,omitempty"`
+	StructuralHints     []ContextStructuralHint `json:"structural_hints,omitempty"`
+	StructuralHintCount int                     `json:"structural_hint_count,omitempty"`
+	// DomainWarning mirrors SearchResponse.DomainWarning for the routes that
+	// serve ranked results.
+	DomainWarning string              `json:"domain_warning,omitempty"`
+	Results       []SearchResultHit   `json:"results,omitempty"`
+	Text          string              `json:"text,omitempty"`
+	Prompt        string              `json:"prompt,omitempty"`
+	PromptPath    string              `json:"prompt_path,omitempty"`
+	BundlePath    string              `json:"bundle_path,omitempty"`
+	JoinKey       *runid.JoinKey      `json:"join_key,omitempty"`
+	Stats         *models.BundleStats `json:"stats,omitempty"`
 }
 
 func runContextTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
@@ -381,18 +399,41 @@ func runContextTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 			return errResult(fmt.Sprintf("invalid arguments: %v", err))
 		}
 	}
+	started := time.Now().UTC()
 	response, err := Context(ctx, args)
 	if err != nil {
 		return errResult(err.Error())
+	}
+	entry := usage.NewEntry("mcp", "neurofs_context", response.Query, response.Route,
+		args.SessionID, args.ParentRetrievalID, started)
+	response.RetrievalID = entry.ID
+	response.SessionID = entry.SessionID
+	response.ParentRetrievalID = entry.ParentRetrievalID
+	payload, err := json.MarshalIndent(response, "", "  ")
+	if err != nil {
+		return errResult(fmt.Sprintf("marshal context response: %v", err))
 	}
 	if repo, repoErr := resolveRepo(ctx, args.Repo); repoErr == nil {
 		bundleTokens := 0
 		if response.Stats != nil {
 			bundleTokens = response.Stats.TokensUsed
 		}
-		logSearchUsage(ctx, repo, "neurofs_context", response.Query, response.Route, response.Results, bundleTokens)
+		logSearchUsage(ctx, repo, entry, response.Results, bundleTokens, payload)
+		_ = contextusage.AppendContext(ctx, repo, contextusage.Entry{
+			SessionID:         entry.SessionID,
+			RetrievalID:       entry.ID,
+			ParentRetrievalID: entry.ParentRetrievalID,
+			Phase:             "initial_context",
+			Command:           "mcp.neurofs_context",
+			Query:             response.Query,
+			BundlePath:        response.BundlePath,
+			Mode:              response.Route,
+			Tokens:            tokenbudget.EstimateTokens(string(payload)),
+			PayloadBytes:      len(payload),
+			LatencyMS:         int64((time.Since(started) + time.Millisecond - 1) / time.Millisecond),
+		})
 	}
-	return jsonTextResult(response)
+	return textResult(string(payload))
 }
 
 // Context routes a codebase question to the smallest sufficient NeuroFS
@@ -421,9 +462,10 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 	}
 
 	response := ContextResponse{
-		Query:           args.Query,
-		Intent:          args.Intent,
-		StructuralHints: structuralHints,
+		Query:               args.Query,
+		Intent:              args.Intent,
+		StructuralHints:     structuralHints,
+		StructuralHintCount: len(structuralHints),
 	}
 	if len(structuralHints) > 0 {
 		response.ToolTrace = append(response.ToolTrace, ContextTraceStep{
@@ -462,13 +504,14 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 		if err != nil {
 			return ContextResponse{}, err
 		}
+		response.DomainWarning = searchResponse.DomainWarning
 		if len(searchResponse.Results) == 0 {
 			response.Route = "search"
 			response.Results = searchResponse.Results
 			response.ToolTrace = append(response.ToolTrace,
 				ContextTraceStep{Tool: "neurofs_search", Reason: "no matching chunk found for excerpt"},
 			)
-			return response, nil
+			return finalizeContextResponse(response, args.Debug), nil
 		}
 		excerptRaw, _ := json.Marshal(map[string]any{
 			"path":  searchResponse.Results[0].Path,
@@ -487,7 +530,7 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 			// at 75% — the router was discarding candidates it had.
 			trimmed := make([]SearchResultHit, len(searchResponse.Results))
 			copy(trimmed, searchResponse.Results)
-			for i := 1; i < len(trimmed); i++ {
+			for i := range trimmed {
 				// Fallback navigation needs path, lines, symbol, and score;
 				// snippets would double-pay the excerpt and reasons +
 				// content hashes are the bulk of the remaining metadata
@@ -502,7 +545,7 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 				ContextTraceStep{Tool: "neurofs_get_excerpt", Reason: "expand only the selected file span"},
 			)
 			response.Text = firstText(res)
-			return response, nil
+			return finalizeContextResponse(response, args.Debug), nil
 		}
 		// Fallback to search results if excerpt extraction fails (e.g. for Markdown or unsupported files)
 		response.Route = "search"
@@ -554,11 +597,20 @@ func Context(ctx context.Context, args ContextOptions) (ContextResponse, error) 
 			Tool:   "neurofs_search",
 			Reason: contextSearchReason(args.Intent, searchLimit),
 		})
+		response.DomainWarning = searchResponse.DomainWarning
 		response.Results = searchResponse.Results
 	default:
 		return ContextResponse{}, fmt.Errorf("unsupported intent: %s", args.Intent)
 	}
-	return response, nil
+	return finalizeContextResponse(response, args.Debug), nil
+}
+
+func finalizeContextResponse(response ContextResponse, debug bool) ContextResponse {
+	if !debug {
+		response.ToolTrace = nil
+		response.StructuralHints = nil
+	}
+	return response
 }
 
 func contextStructuralHints(repo, query string, limit int) ([]ContextStructuralHint, error) {
@@ -603,7 +655,11 @@ func contextStructuralHints(repo, query string, limit int) ([]ContextStructuralH
 			}
 			hint.SymbolMatches = append(hint.SymbolMatches, sym)
 			hint.Score += contextSymbolScore(sym.Name, terms)
-			addContextReason(&hint, "symbol_match")
+			if contextSymbolExact(sym.Name, terms) {
+				addContextReason(&hint, "symbol_exact")
+			} else {
+				addContextReason(&hint, "symbol_match")
+			}
 		}
 		for _, imp := range file.Imports {
 			if !contextMatchesTerms(imp, terms) {
@@ -668,15 +724,22 @@ func compactContextText(text string) string {
 }
 
 func contextSymbolScore(symbol string, terms []string) float64 {
-	lower := strings.ToLower(symbol)
+	if contextSymbolExact(symbol, terms) {
+		return 18.0
+	}
+	return 3.0
+}
+
+func contextSymbolExact(symbol string, terms []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(symbol))
 	compact := compactContextText(lower)
 	for _, term := range terms {
 		term = strings.ToLower(strings.TrimSpace(term))
-		if term != "" && (lower == term || compact == term) {
-			return 18.0
+		if term != "" && (lower == term || compact == compactContextText(term)) {
+			return true
 		}
 	}
-	return 3.0
+	return false
 }
 
 func addContextReason(hint *ContextStructuralHint, reason string) {
@@ -692,7 +755,13 @@ func shouldRouteContextToExcerpt(rawIntent, currentIntent string, hints []Contex
 	if currentIntent != "search" || len(hints) == 0 {
 		return false
 	}
-	return len(hints[0].SymbolMatches) > 0 && hints[0].Score >= 6.0
+	if !containsString(hints[0].Reasons, "symbol_exact") {
+		return false
+	}
+	// Ambiguous exact matches are better served as ranked search results so
+	// the caller can compare candidates instead of paying for an arbitrary
+	// first excerpt.
+	return len(hints) == 1 || hints[0].Score >= hints[1].Score*1.25
 }
 
 func normalizeContextIntent(intent, query string) string {
@@ -814,6 +883,23 @@ func jsonTextResult(v any) ToolCallResult {
 		return errResult(fmt.Sprintf("marshal context response: %v", err))
 	}
 	return textResult(string(payload))
+}
+
+func marshalWithRetrieval(v any, entry usage.Entry) ([]byte, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &object); err != nil || object == nil {
+		return nil, fmt.Errorf("retrieval response must be a JSON object")
+	}
+	object["retrieval_id"], _ = json.Marshal(entry.ID)
+	object["session_id"], _ = json.Marshal(entry.SessionID)
+	if entry.ParentRetrievalID != "" {
+		object["parent_retrieval_id"], _ = json.Marshal(entry.ParentRetrievalID)
+	}
+	return json.MarshalIndent(object, "", "  ")
 }
 
 func firstText(res ToolCallResult) string {
@@ -1166,15 +1252,17 @@ func runGetOutlineTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 }
 
 type expandArgs struct {
-	Target    string `json:"target"`
-	Path      string `json:"path"`
-	Mode      string `json:"mode"`
-	Hash      string `json:"hash"`
-	SessionID string `json:"session_id"`
-	Repo      string `json:"repo"`
+	Target            string `json:"target"`
+	Path              string `json:"path"`
+	Mode              string `json:"mode"`
+	Hash              string `json:"hash"`
+	SessionID         string `json:"session_id"`
+	ParentRetrievalID string `json:"parent_retrieval_id"`
+	Repo              string `json:"repo"`
 }
 
 func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	started := time.Now().UTC()
 	var args expandArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -1264,21 +1352,37 @@ func runExpandTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 		return errResult(fmt.Sprintf("unsupported expansion mode: %s", effMode))
 	}
 
-	if strings.TrimSpace(args.SessionID) != "" {
-		_ = contextusage.AppendContext(ctx, cfg.RepoRoot, contextusage.Entry{
-			SessionID: strings.TrimSpace(args.SessionID),
-			Phase:     "expansion",
-			Command:   "mcp.neurofs_expand",
-			Path:      rec.RelPath,
-			Mode:      string(effMode),
-			StartLine: spec.StartLine,
-			EndLine:   spec.EndLine,
-			Hash:      spec.Hash,
-			Tokens:    loggedTokens,
-			Bytes:     len(contentBytes),
-		})
+	entry := usage.NewEntry("mcp", "neurofs_expand", target, string(effMode),
+		args.SessionID, args.ParentRetrievalID, started)
+	payload, err := marshalWithRetrieval(response, entry)
+	if err != nil {
+		return errResult(fmt.Sprintf("marshal expansion response: %v", err))
 	}
-	return jsonTextResult(response)
+	logSearchUsage(ctx, cfg.RepoRoot, entry, []SearchResultHit{{
+		Path:          rec.RelPath,
+		StartLine:     spec.StartLine,
+		EndLine:       spec.EndLine,
+		TokenEstimate: loggedTokens,
+	}}, 0, payload)
+	latencyMS := int64((time.Since(started) + time.Millisecond - 1) / time.Millisecond)
+	_ = contextusage.AppendContext(ctx, cfg.RepoRoot, contextusage.Entry{
+		SessionID:         entry.SessionID,
+		RetrievalID:       entry.ID,
+		ParentRetrievalID: entry.ParentRetrievalID,
+		Phase:             "expansion",
+		Command:           "mcp.neurofs_expand",
+		Query:             target,
+		Path:              rec.RelPath,
+		Mode:              string(effMode),
+		StartLine:         spec.StartLine,
+		EndLine:           spec.EndLine,
+		Hash:              spec.Hash,
+		Tokens:            tokenbudget.EstimateTokens(string(payload)),
+		Bytes:             len(contentBytes),
+		PayloadBytes:      len(payload),
+		LatencyMS:         latencyMS,
+	})
+	return textResult(string(payload))
 }
 
 type measureArgs struct {
@@ -1432,10 +1536,12 @@ func runGetExcerptTool(ctx context.Context, raw json.RawMessage) ToolCallResult 
 }
 
 type searchArgs struct {
-	Query string `json:"query"`
-	Repo  string `json:"repo"`
-	Limit int    `json:"limit"`
-	Mode  string `json:"mode"`
+	Query             string `json:"query"`
+	Repo              string `json:"repo"`
+	Limit             int    `json:"limit"`
+	Mode              string `json:"mode"`
+	SessionID         string `json:"session_id"`
+	ParentRetrievalID string `json:"parent_retrieval_id"`
 }
 
 // SearchOptions configures a reusable NeuroFS chunk search.
@@ -1455,9 +1561,16 @@ type SearchOptions struct {
 
 // SearchResponse is the JSON-serializable result returned by neurofs_search.
 type SearchResponse struct {
-	Query   string            `json:"query"`
-	Mode    string            `json:"mode,omitempty"`
-	Results []SearchResultHit `json:"results"`
+	Query             string `json:"query"`
+	Mode              string `json:"mode,omitempty"`
+	RetrievalID       string `json:"retrieval_id,omitempty"`
+	SessionID         string `json:"session_id,omitempty"`
+	ParentRetrievalID string `json:"parent_retrieval_id,omitempty"`
+	// DomainWarning is set when the query asks for visual or binary assets
+	// that NeuroFS does not index. The results are still returned — the
+	// warning tells the caller not to spend a turn reading them.
+	DomainWarning string            `json:"domain_warning,omitempty"`
+	Results       []SearchResultHit `json:"results"`
 }
 
 // SearchResultHit is a ranked chunk returned by neurofs_search.
@@ -1472,12 +1585,16 @@ type SearchResultHit struct {
 	TokenEstimate int      `json:"token_estimate"`
 	ContentHash   string   `json:"content_hash"`
 	Snippet       string   `json:"snippet"`
+	// AlsoAt lists other paths carrying byte-identical content that the
+	// retrieval dedupe folded into this hit.
+	AlsoAt []string `json:"also_at,omitempty"`
 }
 
 // Types and constants are loaded from the retrieval package directly.
 type searchResponse = SearchResponse
 
 func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
+	started := time.Now().UTC()
 	var args searchArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &args); err != nil {
@@ -1510,11 +1627,16 @@ func runSearchTool(ctx context.Context, raw json.RawMessage) ToolCallResult {
 	if err != nil {
 		return errResult(err.Error())
 	}
-	logSearchUsage(ctx, repo, "neurofs_search", args.Query, args.Mode, response.Results, 0)
+	entry := usage.NewEntry("mcp", "neurofs_search", response.Query, response.Mode,
+		args.SessionID, args.ParentRetrievalID, started)
+	response.RetrievalID = entry.ID
+	response.SessionID = entry.SessionID
+	response.ParentRetrievalID = entry.ParentRetrievalID
 	payload, err := json.MarshalIndent(response, "", "  ")
 	if err != nil {
 		return errResult(fmt.Sprintf("marshal search response: %v", err))
 	}
+	logSearchUsage(ctx, repo, entry, response.Results, 0, payload)
 	return textResult(string(payload))
 }
 
@@ -1547,12 +1669,14 @@ func Search(ctx context.Context, opts SearchOptions) (SearchResponse, error) {
 			TokenEstimate: hit.TokenEstimate,
 			ContentHash:   hit.ContentHash,
 			Snippet:       hit.Snippet,
+			AlsoAt:        hit.AlsoAt,
 		})
 	}
 	return SearchResponse{
-		Query:   response.Query,
-		Mode:    response.Mode,
-		Results: hits,
+		Query:         response.Query,
+		Mode:          response.Mode,
+		DomainWarning: domainWarningFor(opts.Query, topResultPath(hits)),
+		Results:       hits,
 	}, nil
 }
 

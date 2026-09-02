@@ -410,6 +410,7 @@ func BetaWorker() string {
 		"repo":   tmpDir,
 		"intent": "search",
 		"limit":  3,
+		"debug":  true,
 	})
 	searchRes := runContextTool(ctx, searchArgsRaw)
 	if searchRes.IsError {
@@ -473,6 +474,7 @@ func BetaWorker() string {
 		"repo":   tmpDir,
 		"intent": "research",
 		"limit":  1,
+		"debug":  true,
 	})
 	researchRes := runContextTool(ctx, researchArgsRaw)
 	if researchRes.IsError {
