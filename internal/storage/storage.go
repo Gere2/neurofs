@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS chunks (
     end_line       INTEGER NOT NULL,
     content_hash   TEXT    NOT NULL,
     ast_hash       TEXT    NOT NULL DEFAULT '',
+    heading_path   TEXT    NOT NULL DEFAULT '',
     calls          TEXT    NOT NULL DEFAULT '[]',
     token_estimate INTEGER NOT NULL DEFAULT 0,
     indexed_at     TEXT    NOT NULL,
@@ -107,6 +108,12 @@ CREATE TABLE IF NOT EXISTS chunk_embeddings (
 type DB struct {
 	db   *sql.DB
 	path string
+	// hasHeadingPath records whether chunks.heading_path exists in this
+	// index. Read-only opens (gate, cross-shape verification, any
+	// --disable-index-refresh measurement) deliberately skip migrations, so
+	// they can be handed an index written by an older binary; chunk reads
+	// degrade to an empty heading path there instead of failing.
+	hasHeadingPath bool
 }
 
 // ChunkSearchOptions filters chunk lookups.
@@ -179,6 +186,7 @@ func Open(dbPath string) (*DB, error) {
 		column string
 		ddl    string
 	}{
+		{"chunks", "heading_path", `ALTER TABLE chunks ADD COLUMN heading_path TEXT NOT NULL DEFAULT ''`},
 		{"files", "mtime_ns", `ALTER TABLE files ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0`},
 		{"file_embeddings", "checksum", `ALTER TABLE file_embeddings ADD COLUMN checksum TEXT NOT NULL DEFAULT ''`},
 		{"file_embeddings", "provider", `ALTER TABLE file_embeddings ADD COLUMN provider TEXT NOT NULL DEFAULT ''`},
@@ -191,7 +199,7 @@ func Open(dbPath string) (*DB, error) {
 		}
 	}
 
-	return &DB{db: db, path: dbPath}, nil
+	return &DB{db: db, path: dbPath, hasHeadingPath: hasColumn(db, "chunks", "heading_path")}, nil
 }
 
 // OpenReadOnly opens an existing NeuroFS index without creating directories,
@@ -240,7 +248,7 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 		_ = db.Close()
 		return nil, err
 	}
-	return &DB{db: db, path: dbPath}, nil
+	return &DB{db: db, path: dbPath, hasHeadingPath: hasColumn(db, "chunks", "heading_path")}, nil
 }
 
 func prepareDatabasePath(path string) (os.FileInfo, error) {
@@ -303,6 +311,34 @@ func verifyDatabasePath(path string, expected os.FileInfo) error {
 		return fmt.Errorf("storage: database path changed while opening: %s", path)
 	}
 	return nil
+}
+
+// hasColumn reports whether table already has column. Errors are reported as
+// "absent" on purpose: the callers use this to pick a tolerant query shape,
+// and a PRAGMA failure must not take a read-only measurement down.
+func hasColumn(db *sql.DB, table, column string) bool {
+	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return false
+	}
+	defer closeRows(rows)
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			typ        string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultVal, &pk); err != nil {
+			return false
+		}
+		if name == column {
+			return true
+		}
+	}
+	return false
 }
 
 func ensureColumn(db *sql.DB, table, column, ddl string) error {
@@ -1132,8 +1168,8 @@ func replaceChunksInTx(tx *sql.Tx, filePath string, chunks []models.Chunk) error
 		INSERT INTO chunks (
 			file_path, chunk_id, parent_id, kind, symbol,
 			start_line, end_line, content_hash, ast_hash,
-			calls, token_estimate, indexed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			heading_path, calls, token_estimate, indexed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("storage: prepare chunk insert: %w", err)
@@ -1149,7 +1185,7 @@ func replaceChunksInTx(tx *sql.Tx, filePath string, chunks []models.Chunk) error
 		_, err = stmt.Exec(
 			filePath, c.ChunkID, c.ParentID, c.Kind, c.Symbol,
 			c.StartLine, c.EndLine, c.ContentHash, c.ASTHash,
-			string(calls), c.TokenEstimate, nowStr,
+			c.HeadingPath, string(calls), c.TokenEstimate, nowStr,
 		)
 		if err != nil {
 			return fmt.Errorf("storage: insert chunk %s: %w", c.ChunkID, err)
@@ -1283,8 +1319,13 @@ func (s *DB) AllChunks() ([]models.Chunk, error) {
 
 // SearchChunks retrieves chunks by file path, symbol substring, or content hash.
 func (s *DB) SearchChunks(opts ChunkSearchOptions) ([]models.Chunk, error) {
+	headingPath := "heading_path"
+	if !s.hasHeadingPath {
+		// Pre-migration index opened read-only: no such column to select.
+		headingPath = "'' AS heading_path"
+	}
 	query := `
-		SELECT id, file_path, chunk_id, parent_id, kind, symbol, start_line, end_line, content_hash, ast_hash, calls, token_estimate, indexed_at
+		SELECT id, file_path, chunk_id, parent_id, kind, symbol, start_line, end_line, content_hash, ast_hash, ` + headingPath + `, calls, token_estimate, indexed_at
 		FROM chunks
 	`
 	var where []string
@@ -1327,8 +1368,8 @@ func scanChunks(rows *sql.Rows) ([]models.Chunk, error) {
 		var callsJSON string
 		err := rows.Scan(
 			&c.ID, &c.FilePath, &c.ChunkID, &c.ParentID, &c.Kind, &c.Symbol,
-			&c.StartLine, &c.EndLine, &c.ContentHash, &c.ASTHash, &callsJSON,
-			&c.TokenEstimate, &indexedAtStr,
+			&c.StartLine, &c.EndLine, &c.ContentHash, &c.ASTHash, &c.HeadingPath,
+			&callsJSON, &c.TokenEstimate, &indexedAtStr,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("storage: scan chunk: %w", err)

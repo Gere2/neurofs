@@ -28,7 +28,7 @@ const (
 	// indexerVersion changes whenever parser or chunk-boundary semantics
 	// change. Source checksums alone cannot detect that a newer NeuroFS binary
 	// must rebuild unchanged files with a corrected index representation.
-	indexerVersion = "3"
+	indexerVersion = "4"
 )
 
 // RequiresReindex reports whether db was built with different parser/chunker

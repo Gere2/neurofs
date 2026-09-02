@@ -798,9 +798,17 @@ func buildMarkdownChunks(filePath, relPath, content string, indexedAt time.Time)
 	if first := res.Symbols[0].Line; first > 1 {
 		chunks = append(chunks, newChunkFromLines(filePath, "section", "preamble", 1, first-1, lines, indexedAt))
 	}
+	// ancestors[level-1] holds the heading currently open at that level, so a
+	// section knows the chain it hangs off: "Roadmap/Sprint S6/S6.1".
+	var ancestors [maxMarkdownHeadingLevel]string
 	for i, sym := range res.Symbols {
 		if sym.Line <= 0 || sym.Line > total {
 			continue
+		}
+		level := markdownHeadingLevel(sym.Kind)
+		ancestors[level-1] = sym.Name
+		for deeper := level; deeper < maxMarkdownHeadingLevel; deeper++ {
+			ancestors[deeper] = ""
 		}
 		end := total
 		if i+1 < len(res.Symbols) {
@@ -809,9 +817,40 @@ func buildMarkdownChunks(filePath, relPath, content string, indexedAt time.Time)
 		if end < sym.Line {
 			end = sym.Line
 		}
-		chunks = append(chunks, newChunkFromLines(filePath, "section", sym.Name, sym.Line, end, lines, indexedAt))
+		chunk := newChunkFromLines(filePath, "section", sym.Name, sym.Line, end, lines, indexedAt)
+		chunk.HeadingPath = joinHeadingPath(ancestors[:level])
+		chunks = append(chunks, chunk)
 	}
 	return chunks
+}
+
+// maxMarkdownHeadingLevel matches the h1–h3 range the parser extracts.
+const maxMarkdownHeadingLevel = 3
+
+// markdownHeadingLevel maps the parser's "h1".."h3" symbol kind back to its
+// depth. Anything unexpected is treated as a top-level heading rather than
+// dropped, so a section always gets a heading path.
+func markdownHeadingLevel(kind string) int {
+	if len(kind) == 2 && kind[0] == 'h' {
+		if level := int(kind[1] - '0'); level >= 1 && level <= maxMarkdownHeadingLevel {
+			return level
+		}
+	}
+	return 1
+}
+
+// joinHeadingPath slash-joins the open headings, skipping levels a document
+// never opened (a file that starts at "##" has no h1 to inherit).
+func joinHeadingPath(ancestors []string) string {
+	segments := make([]string, 0, len(ancestors))
+	for _, heading := range ancestors {
+		heading = strings.TrimSpace(heading)
+		if heading == "" {
+			continue
+		}
+		segments = append(segments, heading)
+	}
+	return strings.Join(segments, "/")
 }
 
 func buildPythonChunks(filePath, relPath, content string, indexedAt time.Time) []models.Chunk {
