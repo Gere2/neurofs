@@ -467,13 +467,14 @@ retrieval regression gate, the search-surface counterpart of 'neurofs gate'.`,
 
 func newLearnFeedbackCmd() *cobra.Command {
 	var (
-		repoPath string
-		rating   string
-		query    string
-		symbols  []string
-		paths    []string
-		missing  []string
-		comment  string
+		repoPath    string
+		rating      string
+		query       string
+		retrievalID string
+		symbols     []string
+		paths       []string
+		missing     []string
+		comment     string
 	)
 	cmd := &cobra.Command{
 		Use:   "feedback",
@@ -500,8 +501,19 @@ func newLearnFeedbackCmd() *cobra.Command {
 				UsefulPaths:   paths,
 				MissingFacts:  missing,
 				Comment:       strings.TrimSpace(comment),
+				ActorKind:     "human",
 			}
-			if matched, ok := usage.MatchEntry(entries, fb.Query); ok {
+			if strings.TrimSpace(retrievalID) != "" {
+				matched, ok := usage.MatchEntryByID(entries, retrievalID)
+				if !ok {
+					return fmt.Errorf("retrieval id %q was not found in the usage ledger", retrievalID)
+				}
+				if fb.Query != "" && !strings.EqualFold(fb.Query, strings.TrimSpace(matched.Query)) {
+					return fmt.Errorf("--query does not match --retrieval-id")
+				}
+				fb.UsageID = matched.ID
+				fb.Query = matched.Query
+			} else if matched, ok := usage.MatchEntry(entries, fb.Query); ok {
 				fb.UsageID = matched.ID
 				if fb.Query == "" {
 					fb.Query = matched.Query
@@ -521,6 +533,7 @@ func newLearnFeedbackCmd() *cobra.Command {
 	cmd.Flags().StringVar(&repoPath, "repo", "", "Repository path (default: cwd)")
 	cmd.Flags().StringVar(&rating, "rating", "", `Judgement: yes, no, or partial (required)`)
 	cmd.Flags().StringVar(&query, "query", "", "Query being judged (default: most recent logged retrieval)")
+	cmd.Flags().StringVar(&retrievalID, "retrieval-id", "", "Exact retrieval id to judge (preferred over query matching)")
 	cmd.Flags().StringArrayVar(&symbols, "symbol", nil, "Identifier that was actually useful (repeatable)")
 	cmd.Flags().StringArrayVar(&paths, "path", nil, "Repo-relative path that was actually useful (repeatable)")
 	cmd.Flags().StringArrayVar(&missing, "missing", nil, "Identifier that should have been retrieved but wasn't (repeatable)")

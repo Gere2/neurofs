@@ -389,7 +389,9 @@ func weightParams() []weightParam {
 		{"test_downrank", func(w *retrieval.Weights) *float64 { return &w.TestDownrank }},
 		{"tiny_chunk_keep", func(w *retrieval.Weights) *float64 { return &w.TinyChunkKeep }},
 		{"impl_kind", func(w *retrieval.Weights) *float64 { return &w.ImplKind }},
+		{"heading_path_match", func(w *retrieval.Weights) *float64 { return &w.HeadingPathMatch }},
 		{"legacy_path_keep", func(w *retrieval.Weights) *float64 { return &w.LegacyPathKeep }},
+		{"path_affinity_keep", func(w *retrieval.Weights) *float64 { return &w.PathAffinityKeep }},
 	}
 }
 
