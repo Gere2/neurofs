@@ -214,6 +214,8 @@ func Run(opts Opts) (Result, error) {
 			Query:      query,
 			BundleHash: bundle.BundleHash,
 			Files:      files,
+			Command:    "neurofs task",
+			Outcome:    "context_ready",
 			Notes:      notes,
 		}
 		if joinKey != nil {
@@ -849,6 +851,7 @@ func chunkHitsFromRetrieval(searchRes retrieval.Response, files []models.FileRec
 			TokenEstimate: hit.TokenEstimate,
 			ContentHash:   hit.ContentHash,
 			Snippet:       hit.Snippet,
+			AlsoAt:        hit.AlsoAt,
 		})
 	}
 	return hits
