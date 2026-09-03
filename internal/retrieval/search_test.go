@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1151,5 +1152,90 @@ func TestDedupeSameSymbol(t *testing.T) {
 	}
 	if out[1].Symbol != "option" {
 		t.Errorf("distinct symbol squeezed out: %+v", out[1])
+	}
+}
+
+// The three keep-fraction penalties (test, legacy path, tiny chunk) once
+// applied their fraction twice: the helper multiplied the score itself and
+// then handed addPenalty the difference, which addPenalty subtracted again.
+// Effective keep was 2*keep-1 clamped at 0, so every keep <= 0.5 collapsed
+// to a zero score and the tuner could not tell those values apart. These
+// tests pin the exact post-penalty score so a regression cannot pass by
+// asserting only "score went down".
+
+func TestKeepFractionPenaltiesApplyOnce(t *testing.T) {
+	const base = 10.0
+
+	testHit := func(keep float64) float64 {
+		w := DefaultWeights()
+		w.TestDownrank = keep
+		cands := []candidate{{hit: Hit{Path: "internal/foo_test.go", Score: base}}}
+		applyTestPenalty(cands, "how does authentication work?", &w)
+		return cands[0].hit.Score
+	}
+	legacyHit := func(keep float64) float64 {
+		w := DefaultWeights()
+		w.LegacyPathKeep = keep
+		cands := []candidate{{hit: Hit{Path: "src/compat/render.go", Score: base}}}
+		applyLegacyPathPenalty(cands, "how does authentication work?", &w)
+		return cands[0].hit.Score
+	}
+	tinyHit := func(keep float64) float64 {
+		w := DefaultWeights()
+		w.TinyChunkKeep = keep
+		cands := []candidate{{hit: Hit{Path: "src/stub.ts", Kind: "chunk", Score: base, TokenEstimate: 14}}}
+		applyTinyChunkPenalty(cands, &w)
+		return cands[0].hit.Score
+	}
+
+	for _, penalty := range []struct {
+		name string
+		fn   func(float64) float64
+	}{
+		{"test_downrank", testHit},
+		{"legacy_path_keep", legacyHit},
+		{"tiny_chunk_keep", tinyHit},
+	} {
+		t.Run(penalty.name, func(t *testing.T) {
+			// Every keep in (0, 1) must land at exactly base*keep, and
+			// distinct keeps must stay distinguishable — including the
+			// <= 0.5 half that used to collapse to zero.
+			for _, keep := range []float64{0.1, 0.3, 0.5, 0.6, 0.72, 0.8, 0.9} {
+				want := base * keep
+				if got := penalty.fn(keep); math.Abs(got-want) > 1e-9 {
+					t.Errorf("keep=%.2f: score = %v, want %v (fraction applied twice?)", keep, got, want)
+				}
+			}
+			if got := penalty.fn(1.0); math.Abs(got-base) > 1e-9 {
+				t.Errorf("keep=1.0 must be neutral, got %v want %v", got, base)
+			}
+		})
+	}
+}
+
+func TestKeepFractionPenaltyReasonRecordsTheDelta(t *testing.T) {
+	w := DefaultWeights()
+	w.TestDownrank = 0.72
+	cands := []candidate{{hit: Hit{Path: "internal/foo_test.go", Score: 10.0}}}
+	applyTestPenalty(cands, "how does authentication work?", &w)
+
+	if got, want := cands[0].hit.Score, 7.2; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("score = %v, want %v", got, want)
+	}
+	if !containsString(cands[0].hit.Reasons, "test_like_downrank") {
+		t.Errorf("expected test_like_downrank reason, got %v", cands[0].hit.Reasons)
+	}
+}
+
+// A keep-fraction can never drive a positive score below zero, so the
+// clamp inside addPenalty must not be what produces the result.
+func TestKeepFractionPenaltyNeverClampsToZero(t *testing.T) {
+	w := DefaultWeights()
+	w.TestDownrank = 0.05 // the lowest value clampWeights permits
+	cands := []candidate{{hit: Hit{Path: "internal/foo_test.go", Score: 10.0}}}
+	applyTestPenalty(cands, "how does authentication work?", &w)
+
+	if got, want := cands[0].hit.Score, 0.5; math.Abs(got-want) > 1e-9 {
+		t.Errorf("keep=0.05: score = %v, want %v", got, want)
 	}
 }

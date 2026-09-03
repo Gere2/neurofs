@@ -1199,9 +1199,7 @@ func applyLegacyPathPenalty(candidates []candidate, query string, w *Weights) {
 		if candidates[i].hit.Score <= 0 {
 			continue
 		}
-		before := candidates[i].hit.Score
-		candidates[i].hit.Score = before * w.LegacyPathKeep
-		addPenalty(&candidates[i].hit, "legacy_path_downrank", before-candidates[i].hit.Score)
+		addPenalty(&candidates[i].hit, "legacy_path_downrank", candidates[i].hit.Score*(1-w.LegacyPathKeep))
 	}
 }
 
@@ -1223,9 +1221,7 @@ func applyTinyChunkPenalty(candidates []candidate, w *Weights) {
 		if hit.TokenEstimate <= 0 || hit.TokenEstimate >= tinyChunkTokenThreshold {
 			continue
 		}
-		before := hit.Score
-		hit.Score = before * w.TinyChunkKeep
-		addPenalty(hit, "tiny_chunk_downrank", before-hit.Score)
+		addPenalty(hit, "tiny_chunk_downrank", hit.Score*(1-w.TinyChunkKeep))
 	}
 }
 
@@ -1242,9 +1238,7 @@ func applyTestPenalty(candidates []candidate, query string, w *Weights) {
 		if candidates[i].hit.Score <= 0 {
 			continue
 		}
-		before := candidates[i].hit.Score
-		candidates[i].hit.Score = before * w.TestDownrank
-		addPenalty(&candidates[i].hit, "test_like_downrank", before-candidates[i].hit.Score)
+		addPenalty(&candidates[i].hit, "test_like_downrank", candidates[i].hit.Score*(1-w.TestDownrank))
 	}
 }
 

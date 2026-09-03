@@ -143,6 +143,40 @@ CLAUDE.md snippet for any repo where NeuroFS is registered:
   wasn't.
 ```
 
+## Declined tune (2026-09-02, keep-fraction fix)
+
+Fixing the double-applied keep-fractions (`applyTestPenalty`,
+`applyLegacyPathPenalty`, `applyTinyChunkPenalty` each scaled the score and
+then handed `addPenalty` the difference, which it subtracted again — so
+effective keep was `2*keep-1` clamped at 0) made the lower half of both
+knobs reachable for the first time. A 3-corpus tune immediately used it:
+
+    test_downrank   0.9 -> 0.54   (under the bug this meant effective 0.08)
+    tiny_chunk_keep 1.0 -> 0.8    (declined at every prior tune)
+    recall 74.5% -> 83.5% over 24 fixtures
+      NeuroFS 84.6% -> 87.2%, click 66.7% -> 80.0%, vue 72.2% -> 83.3%
+
+**Not applied.** It moved the bench the wrong way: search top-3
+**75.0% -> 58.3%**, under the 70% `check-retrieval` floor, and context
+top-3 75.0% -> 66.7% (reproduced twice). Top-*1* rose (50.0% -> 58.3%)
+while top-3 fell, which is the shape of constraint 2 below: the tuner
+maximises fact recall at `--limit 8` and will spend ranks 2-3 to buy it.
+The code fix shipped alone, on the weights fitted before it, and costs
+nothing measurable: bundle/search/context top-3 all unchanged at
+66.7/75.0/75.0%, and G3 identical at 87.8% with the same 9 perfect
+fixtures on the clean-clone G5 measurement either side of the fix.
+
+One caveat learned the hard way here: a single local `neurofs gate` run is
+not a measurement. An intermediate run of this work read G3 at 86%, and it
+did not reproduce — the same code and the same weights read 88% before and
+after. Local G3 drifts with accumulated session state (`working_set` is a
+scored signal). Trust `scripts/g5_remeasure.sh`, which measures from a
+clean clone, and re-run anything surprising before writing it down.
+
+The knobs are now honest, so this is worth re-running as fixtures grow —
+but a tune that trades top-3 for recall needs the objective fixed first,
+not the floor lowered.
+
 ## Honesty constraints (read before trusting a tune)
 
 1. **Overfit warning.** Under 10 fixtures the tuner will happily overfit;
